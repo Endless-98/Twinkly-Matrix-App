@@ -17,7 +17,6 @@ class DotMatrix:
         blend_power=0.2,
         show_source_preview=False,
         supersample=3,
-        debug_log=True,
     ):
         self.width = width
         self.height = height
@@ -27,7 +26,6 @@ class DotMatrix:
         self.blend_power = blend_power
         self.show_source_preview = show_source_preview
         self.supersample = max(1, int(supersample))
-        self.debug_log = debug_log
         pygame.init()
 
         self.bg_color = (0, 0, 0)
@@ -101,27 +99,6 @@ class DotMatrix:
         scaled_surface = pygame.transform.smoothscale(working_surface, (base_w, base_h))
         canvas_width, canvas_height = scaled_surface.get_size()
         
-        ###
-        debug_stats = None
-        if self.debug_log:
-            debug_stats = {
-                "luminance_min": float("inf"),
-                "luminance_max": float("-inf"),
-                "t_min": float("inf"),
-                "t_max": float("-inf"),
-                "t_sum": 0.0,
-                "count": 0,
-                "samples": {},
-            }
-            sample_points = {
-                "center": (self.width // 2, self.height // 2),
-                "tl": (0, 0),
-                "tr": (self.width - 1, 0),
-                "bl": (0, self.height - 1),
-                "br": (self.width - 1, self.height - 1),
-            }
-        ###
-
         samples = []
         max_luminance = 0.0
         for row in range(self.height):
@@ -133,13 +110,8 @@ class DotMatrix:
                 samples.append((row, col, x, y, color, luminance))
                 if luminance > max_luminance:
                     max_luminance = luminance
-                if debug_stats is not None:
-                    debug_stats["luminance_min"] = min(debug_stats["luminance_min"], luminance)
-                    debug_stats["luminance_max"] = max(debug_stats["luminance_max"], luminance)
 
         norm = max(1.0, max_luminance)
-        if debug_stats is not None:
-            debug_stats["norm"] = norm
 
         exp = max(0.001, self.blend_power)
         for row, col, x, y, color, luminance in samples:
@@ -151,44 +123,7 @@ class DotMatrix:
             )
             self.dot_colors[row][col] = blended
 
-            ###
-            if debug_stats is not None:
-                debug_stats["t_min"] = min(debug_stats["t_min"], t)
-                debug_stats["t_max"] = max(debug_stats["t_max"], t)
-                debug_stats["t_sum"] += t
-                debug_stats["count"] += 1
-                for label, (sx, sy) in sample_points.items():
-                    if col == sx and row == sy:
-                        debug_stats["samples"][label] = {
-                            "src_xy": (x, y),
-                            "src_color": color,
-                            "luminance": round(luminance, 3),
-                            "t": round(t, 3),
-                            "blended": blended,
-                        }
-            ###
-
         self.display_matrix()
-
-        ###
-        if debug_stats is not None and debug_stats["count"]:
-            avg_t = debug_stats["t_sum"] / debug_stats["count"]
-            print("[DotMatrix Debug] blend_power=%.3f" % self.blend_power)
-            print(
-                "[DotMatrix Debug] luminance min/max=%.2f/%.2f (norm=%.2f)" %
-                (debug_stats["luminance_min"], debug_stats.get("luminance_max", 0), debug_stats.get("norm", 0))
-            )
-            print(
-                "[DotMatrix Debug] t min/max/avg=%.3f/%.3f/%.3f" %
-                (debug_stats["t_min"], debug_stats["t_max"], avg_t)
-            )
-            for label, sample in debug_stats["samples"].items():
-                print(
-                    f"[DotMatrix Debug] sample {label}: src_xy={sample['src_xy']} "
-                    f"color={sample['src_color']} luminance={sample['luminance']} "
-                    f"t={sample['t']} blended={sample['blended']}"
-                )
-        ###
 
     def render_sample_pattern(self):
         hi_w = self.width * self.supersample
