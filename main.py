@@ -1,5 +1,5 @@
 import time
-import dot_matrix_display as DotMatrix
+import dotmatrix.dot_matrix as DotMatrix
 
 friendly_current_time = time.time()
 sleep_duration_secs = 1
@@ -14,6 +14,10 @@ def main():
     # master_loop()
     matrix = DotMatrix.DotMatrix(show_source_preview=True)
     matrix.render_sample_pattern()
+    # time.sleep(1)
+    # matrix.render_image("assets/sample_image.jpg")
+
     matrix.wait_for_exit()
+
 if __name__ == "__main__":
     main()

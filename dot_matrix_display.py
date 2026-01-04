@@ -3,38 +3,8 @@ import mmap
 import pygame
 import time
 
-try:
-    from pygame._sdl2.video import Window as SDLWindow, Renderer as SDLRenderer, Texture as SDLTexture
-except ImportError:  # Optional dependency; preview window will be skipped if unavailable.
-    SDLWindow = SDLRenderer = SDLTexture = None
+from source_canvas import CanvasSource, SourcePreview
 
-
-class CanvasSource:
-    def __init__(self, source_surface):
-        self.surface = source_surface
-
-    @classmethod
-    def from_window(cls, window_surface=None):
-        surface = window_surface or pygame.display.get_surface()
-        if surface is None:
-            raise RuntimeError("No Pygame display surface is available to capture.")
-        return cls(surface)
-
-    @classmethod
-    def from_size(cls, width, height):
-        surface = pygame.Surface((width, height)).convert()
-        return cls(surface)
-
-    def update_from_window(self, window_surface=None):
-        surface = window_surface or pygame.display.get_surface()
-        if surface is None:
-            raise RuntimeError("No Pygame display surface is available to capture.")
-        target_size = self.surface.get_size()
-        if surface.get_size() != target_size:
-            self.surface = pygame.transform.smoothscale(surface, target_size)
-        else:
-            self.surface.blit(surface, (0, 0))
-        return self.surface
 
 class DotMatrix:
     def __init__(
@@ -68,11 +38,7 @@ class DotMatrix:
         self.screen = pygame.display.set_mode((window_width, window_height))
         pygame.display.set_caption("Dot Matrix Display")
 
-        self.source_window = None
-        self.source_renderer = None
-        self.source_texture = None
-        if self.show_source_preview and SDLWindow and SDLRenderer:
-            self._init_source_preview()
+        self.preview = SourcePreview(self.width, self.height, enabled=self.show_source_preview)
         
         self.clock = pygame.time.Clock()
         self.running = True
@@ -117,8 +83,8 @@ class DotMatrix:
     def convert_canvas_to_matrix(self, canvas):
         # Accepts either a CanvasSource or a raw Pygame surface.
         source_surface = canvas.surface if isinstance(canvas, CanvasSource) else canvas
-        if self.show_source_preview:
-            self._maybe_update_preview(source_surface)
+        if self.preview:
+            self.preview.update(source_surface)
         canvas_width, canvas_height = source_surface.get_size()
         for row in range(self.height):
             for col in range(self.width):
@@ -136,35 +102,6 @@ class DotMatrix:
                 self.dot_colors[row][col] = blended
         self.display_matrix()
 
-    def _init_source_preview(self):
-        # Uses pygame._sdl2 to open a second window to visualize the source canvas.
-        self.source_window = SDLWindow("Source Canvas", size=(self.width, self.height), position=(50, 50))
-        self.source_renderer = SDLRenderer(self.source_window)
-        self.source_texture = None
-
-    def _maybe_update_preview(self, surface):
-        if not (self.source_renderer and SDLTexture):
-            return
-        try:
-            # Recreate texture each time to keep things simple and robust across formats.
-            texture = SDLTexture.from_surface(self.source_renderer, surface)
-            self.source_renderer.clear()
-            if hasattr(self.source_renderer, "copy"):
-                # copy supports optional src/dst rects; let it stretch to window size.
-                self.source_renderer.copy(texture, None, None)
-            elif hasattr(texture, "draw"):
-                # draw accepts an optional dest rect or None to fill the target.
-                texture.draw(None)
-            else:
-                return
-            self.source_renderer.present()
-            self.source_texture = texture
-        except Exception:
-            # If preview rendering fails on this platform/build, disable it to avoid crashing.
-            self.source_renderer = None
-            self.source_window = None
-            self.source_texture = None
-
     def render_sample_pattern(self):
         source_canvas = CanvasSource.from_size(self.width, self.height)
         source_canvas.surface.fill((0, 0, 0))
@@ -180,6 +117,10 @@ class DotMatrix:
                 source_canvas.surface.get_height(),
             ) // 3,
         )
+        self.convert_canvas_to_matrix(source_canvas)
+
+    def render_image(self, image_path):
+        source_canvas = CanvasSource.from_image(image_path, size=(self.width, self.height))
         self.convert_canvas_to_matrix(source_canvas)
 
     def wait_for_exit(self):
