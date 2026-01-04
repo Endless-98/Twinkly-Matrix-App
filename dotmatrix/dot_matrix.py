@@ -67,22 +67,7 @@ class DotMatrix:
         y = self.spacing + row * (self.dot_size + self.spacing) + (stagger_offset * (col % 2))
         return x, y
 
-    def handle_click(self, pos):
-        mx, my = pos
-        radius_sq = self.dot_size * self.dot_size
-        for row in range(self.height):
-            for col in range(self.width):
-                x, y = self._dot_position(row, col)
-                dx = mx - x
-                dy = my - y
-                if dx * dx + dy * dy <= radius_sq:
-                    new_color = self.off_color if self.dot_colors[row][col] == self.on_color else self.on_color
-                    self.dot_colors[row][col] = new_color
-                    self.draw_dot(x, y, color=new_color)
-                    pygame.display.update()
-                    return
-
-    def convert_canvas_to_matrix(self, canvas):
+    def convert_canvas_to_matrix(self, canvas): # Used for rendering live windows
         # Accepts either a CanvasSource or a raw Pygame surface.
         source_surface = canvas.surface if isinstance(canvas, CanvasSource) else canvas
         if self.preview:
