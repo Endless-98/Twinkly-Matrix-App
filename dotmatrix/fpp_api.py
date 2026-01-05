@@ -4,6 +4,8 @@ import json
 
 class FPPController:
     def __init__(self, fpp_host="localhost", fpp_port=32322):
+        self.fpp_host = fpp_host
+        self.fpp_port = fpp_port
         self.base_url = f"http://{fpp_host}:{fpp_port}/api"
         self.timeout = 5
     
@@ -13,7 +15,6 @@ class FPPController:
             response = requests.get(f"{self.base_url}/system/status", timeout=self.timeout)
             return response.json()
         except Exception as e:
-            print(f"Error getting FPP status: {e}")
             return None
     
     def enable_pixel_overlay(self, model_name="Light_Wall"):
@@ -34,11 +35,8 @@ class FPPController:
                 return False
                 
         except requests.exceptions.ConnectionError:
-            print(f"✗ Cannot connect to FPP at {self.base_url}")
-            print("  Make sure FPP daemon is running")
             return False
         except Exception as e:
-            print(f"✗ Error enabling pixel overlay: {e}")
             return False
     
     def is_connected(self):

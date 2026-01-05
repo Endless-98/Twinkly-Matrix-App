@@ -173,6 +173,7 @@ class DotMatrix:
                         self.dot_colors[row][col] = (100, 100, 255)
                     else:
                         self.dot_colors[row][col] = self.off_color
+            self.draw_on_twinklys()
             return
             
         hi_w = self.width * self.supersample
