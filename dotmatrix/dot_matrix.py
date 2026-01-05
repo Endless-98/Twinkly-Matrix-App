@@ -61,17 +61,26 @@ class DotMatrix:
             'scaling': [],
             'luminance_sampling': [],
             'blending': [],
-            'grid_scaling': [],
+            'pygame_window': [],
+            'grid_remapping': [],
             'buffer_creation': [],
-            'fpp_write': [],
-            'visualization': [],
+            'memory_write': [],
             'total': []
         }
 
     def _initialize_fpp(self, fpp_file):
         fpp_buffer_size = self.width * self.height * 3  # 90 * 50 * 3 = 13,500 bytes
         try:
+            file_needs_creation = False
+            
             if not os.path.exists(fpp_file):
+                file_needs_creation = True
+            else:
+                actual_file_size = os.path.getsize(fpp_file)
+                if actual_file_size != fpp_buffer_size:
+                    file_needs_creation = True
+            
+            if file_needs_creation:
                 try:
                     with open(fpp_file, 'wb') as fpp_file_handle:
                         fpp_file_handle.write(b'\x00' * fpp_buffer_size)
@@ -81,11 +90,8 @@ class DotMatrix:
                     print("          sudo chmod 666 {}".format(fpp_file))
                     raise
             
-            actual_file_size = os.path.getsize(fpp_file)
-            mmap_size = min(fpp_buffer_size, actual_file_size)
-            
             self.fpp_memory_buffer_file = open(fpp_file, 'r+b')
-            self.fpp_memory_map = mmap.mmap(self.fpp_memory_buffer_file.fileno(), mmap_size)
+            self.fpp_memory_map = mmap.mmap(self.fpp_memory_buffer_file.fileno(), fpp_buffer_size)
         except PermissionError:
             print(f"Permission denied accessing {fpp_file}")
             print("Fix with: sudo chmod 666 {}".format(fpp_file))
@@ -104,9 +110,9 @@ class DotMatrix:
         if not self.fpp_memory_map or not self.fpp_mapping:
             return
         
-        grid_scale_start = time.perf_counter()
+        grid_remap_start = time.perf_counter()
         scaled_grid = self._scale_grid_for_mapping(self.dot_colors)
-        grid_scale_time = (time.perf_counter() - grid_scale_start) * 1000
+        grid_remap_time = (time.perf_counter() - grid_remap_start) * 1000
         
         buffer_start = time.perf_counter()
         buffer = create_fpp_buffer_from_grid(scaled_grid, self.fpp_mapping)
@@ -118,9 +124,9 @@ class DotMatrix:
         self.fpp_memory_map.flush()
         write_time = (time.perf_counter() - write_start) * 1000
         
-        self.stage_timings['grid_scaling'].append(grid_scale_time)
+        self.stage_timings['grid_remapping'].append(grid_remap_time)
         self.stage_timings['buffer_creation'].append(buffer_time)
-        self.stage_timings['fpp_write'].append(write_time)
+        self.stage_timings['memory_write'].append(write_time)
 
     def _scale_grid_for_mapping(self, grid):
         source_height = len(grid)
@@ -231,20 +237,18 @@ class DotMatrix:
             self.dot_colors[row][col] = blended
         blending_time = (time.perf_counter() - blending_start) * 1000
 
-        viz_start = time.perf_counter()
+        pygame_start = time.perf_counter()
         self.visualize_matrix()
-        viz_time = (time.perf_counter() - viz_start) * 1000
+        pygame_time = (time.perf_counter() - pygame_start) * 1000
         
-        fpp_start = time.perf_counter()
         self.draw_on_twinklys()
-        fpp_time = (time.perf_counter() - fpp_start) * 1000
         
         total_time = (time.perf_counter() - frame_start) * 1000
         
         self.stage_timings['scaling'].append(scaling_time)
         self.stage_timings['luminance_sampling'].append(luminance_time)
         self.stage_timings['blending'].append(blending_time)
-        self.stage_timings['visualization'].append(viz_time)
+        self.stage_timings['pygame_window'].append(pygame_time)
         self.stage_timings['total'].append(total_time)
         
         self.frame_count += 1
