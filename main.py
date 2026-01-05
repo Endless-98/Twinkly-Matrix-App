@@ -28,7 +28,6 @@ print(f"FPP Output: {ON_PI}\n")
 
 
 def main():
-    """Run bouncing ball demo with auto-detected platform settings."""
     # Create matrix with platform-appropriate settings
     matrix = DotMatrix(
         headless=HEADLESS,
@@ -60,24 +59,7 @@ def main():
                     if event.type == pygame.QUIT:
                         running = False
             
-            # Update physics
-            ball_x += velocity_x
-            ball_y += velocity_y
             
-            # Bounce off walls
-            if ball_x - radius < 0 or ball_x + radius > canvas_width:
-                velocity_x *= -1
-            if ball_y - radius < 0 or ball_y + radius > canvas_height:
-                velocity_y *= -1
-            
-            # Clear and redraw
-            canvas.surface.fill((0, 0, 0))
-            pygame.draw.circle(
-                canvas.surface,
-                (0, 200, 255),
-                (int(ball_x), int(ball_y)),
-                radius
-            )
             
             # Render to matrix
             matrix.render_frame(canvas)
@@ -93,3 +75,27 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def animate_test_circle(canvas, ball_x, ball_y, velocity_x, velocity_y, radius, canvas_width, canvas_height):
+                """Update ball physics and render to canvas."""
+                # Update physics
+                ball_x += velocity_x
+                ball_y += velocity_y
+                
+                # Bounce off walls
+                if ball_x - radius < 0 or ball_x + radius > canvas_width:
+                    velocity_x *= -1
+                if ball_y - radius < 0 or ball_y + radius > canvas_height:
+                    velocity_y *= -1
+                
+                # Clear and redraw
+                canvas.surface.fill((0, 0, 0))
+                pygame.draw.circle(
+                    canvas.surface,
+                    (0, 200, 255),
+                    (int(ball_x), int(ball_y)),
+                    radius
+                )
+                
+                return ball_x, ball_y, velocity_x, velocity_y
