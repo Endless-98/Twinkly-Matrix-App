@@ -21,7 +21,7 @@ def main():
     
     print("\nPress Ctrl+C to stop")
     
-    fpp.test_color_wash(fps=40)
+    fpp.test_color_wash(fps=2)
     fpp.close()
 
 if __name__ == "__main__":

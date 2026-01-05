@@ -49,18 +49,12 @@ class FPPController:
 
 
 def setup_fpp_overlay(model_name="Light_Wall"):
-    """Initialize FPP and enable pixel overlay"""
+    """Initialize FPP and enable pixel overlay (non-fatal if API unavailable)"""
     controller = FPPController()
     
     if not controller.is_connected():
-        print("WARNING: FPP daemon not accessible")
-        print("You may need to enable Pixel Overlay manually via FPP web interface:")
-        print(f"  1. Go to http://<fpp-ip>/")
-        print(f"  2. Click 'Models'")
-        print(f"  3. Click '{model_name}'")
-        print(f"  4. Check 'Enable Pixel Overlay'")
-        print(f"  5. Click Save")
-        return False
+        print("Note: FPP API not accessible (but direct file writing should work)")
+        return
     
     status = controller.get_status()
     if status:
