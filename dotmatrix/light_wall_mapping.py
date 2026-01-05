@@ -35,7 +35,7 @@ def load_light_wall_mapping(csv_file="dotmatrix/Light Wall Mapping.csv"):
     if mapping:
         max_pixel = max(mapping.values())
         min_pixel = min(mapping.values())
-        print(f"Pixel indices range: {min_pixel} to {max_pixel} (expected 0-4349 for 87×50 matrix)")
+        print(f"Pixel indices range: {min_pixel} to {max_pixel} (valid range 0-4349 for 87×50 physical matrix)")
     
     return mapping
 
@@ -57,8 +57,7 @@ def create_fpp_buffer_from_grid(dot_colors, mapping):
         if row < len(dot_colors) and col < len(dot_colors[0]):
             # Bounds check: ensure pixel index is valid (0-4349 for 87x50 matrix)
             if pixel_idx < 0 or pixel_idx >= 4350:
-                print(f"Warning: Invalid pixel index {pixel_idx} at grid ({row}, {col})")
-                continue
+                continue  # Skip invalid indices silently
             
             r, g, b = dot_colors[row][col]
             # Each pixel takes 3 bytes (RGB)

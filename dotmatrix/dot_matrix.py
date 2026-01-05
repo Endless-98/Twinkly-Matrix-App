@@ -9,7 +9,7 @@ from .light_wall_mapping import load_light_wall_mapping, create_fpp_buffer_from_
 class DotMatrix:
     def __init__(
         self,
-        width=87,
+        width=90,
         height=50,
         dot_size=6,
         spacing=15,
@@ -184,27 +184,49 @@ class DotMatrix:
     
     def _render_circle_pattern(self):
         """Render a cyan circle directly without pygame surfaces (safe for headless FPP)"""
-        # Center and radius
-        center_x = self.width / 2
-        center_y = self.height / 2
-        radius = min(self.width, self.height) / 3
+        # Use supersampled dimensions for better circle quality
+        ss_width = self.width * self.supersample
+        ss_height = self.height * self.supersample
+        
+        # Center and radius in supersampled space
+        center_x = ss_width / 2
+        center_y = ss_height / 2
+        radius = min(ss_width, ss_height) / 3
         
         cyan = (0, 200, 255)
         off = self.off_color
         
-        # Draw circle using distance calculation
-        for row in range(self.height):
-            for col in range(self.width):
-                dx = col - center_x
-                dy = row - center_y
+        # Create supersampled grid and downsample
+        ss_grid = [[off for _ in range(ss_width)] for _ in range(ss_height)]
+        
+        # Draw circle in supersampled space
+        for ss_row in range(ss_height):
+            for ss_col in range(ss_width):
+                dx = ss_col - center_x
+                dy = ss_row - center_y
                 dist = (dx * dx + dy * dy) ** 0.5
                 
                 if dist <= radius:
-                    # Inside circle - use cyan
-                    self.dot_colors[row][col] = cyan
-                else:
-                    # Outside circle - use off color
-                    self.dot_colors[row][col] = off
+                    ss_grid[ss_row][ss_col] = cyan
+        
+        # Downsample back to grid resolution
+        for row in range(self.height):
+            for col in range(self.width):
+                # Average the supersampled pixels
+                r_sum = g_sum = b_sum = 0
+                count = 0
+                for ss_row in range(row * self.supersample, (row + 1) * self.supersample):
+                    for ss_col in range(col * self.supersample, (col + 1) * self.supersample):
+                        r, g, b = ss_grid[ss_row][ss_col]
+                        r_sum += r
+                        g_sum += g
+                        b_sum += b
+                        count += 1
+                
+                r_avg = int(r_sum / count)
+                g_avg = int(g_sum / count)
+                b_avg = int(b_sum / count)
+                self.dot_colors[row][col] = (r_avg, g_avg, b_avg)
 
     def render_image(self, image_path):
         source_canvas = CanvasSource.from_image(image_path, size=(self.width, self.height))
@@ -217,6 +239,8 @@ class DotMatrix:
                     time.sleep(1)
             except KeyboardInterrupt:
                 pass
+            finally:
+                self._turn_off_all_lights()
         else:
             try:
                 while self.running:
@@ -231,7 +255,17 @@ class DotMatrix:
             except KeyboardInterrupt:
                 pass
             finally:
+                self._turn_off_all_lights()
                 pygame.quit()
+    
+    def _turn_off_all_lights(self):
+        """Turn off all LEDs by setting them to black and writing to FPP"""
+        for row in range(self.height):
+            for col in range(self.width):
+                self.dot_colors[row][col] = (0, 0, 0)
+        
+        if self.fpp_mm:
+            self.draw_on_twinklys()
         
         if self.fpp_mm:
             self.fpp_mm.close()
