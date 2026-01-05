@@ -335,40 +335,52 @@ class DotMatrix:
     
     def _sample_blend_numpy(self, surface):
         """Optimized numpy implementation - heavily optimized for Pi performance."""
+        import sys
+        debug = False  # Set to True to enable detailed logging
+        
         # Get direct view (no copy) - shape is (width, height, 3)
+        t0 = time.perf_counter() if debug else 0
         pixel_view = surfarray.pixels3d(surface)
+        if debug: print(f"  pixels3d: {(time.perf_counter()-t0)*1000:.2f}ms")
         
         # Transpose directly to (height, width, 3) - stay in uint8
+        t0 = time.perf_counter() if debug else 0
         rgb = np.transpose(pixel_view, (1, 0, 2))
+        if debug: print(f"  transpose: {(time.perf_counter()-t0)*1000:.2f}ms")
         
         # Luminance calculation - fast integer version
         # 213r + 715g + 72b, normalize by 1000
+        t0 = time.perf_counter() if debug else 0
         r = rgb[:, :, 0].astype(np.uint16)
         g = rgb[:, :, 1].astype(np.uint16)
         b = rgb[:, :, 2].astype(np.uint16)
         luminance = ((r * 213 + g * 715 + b * 72) // 1000).astype(np.uint8)
+        if debug: print(f"  luminance: {(time.perf_counter()-t0)*1000:.2f}ms")
         
         # Find max and normalize
+        t0 = time.perf_counter() if debug else 0
         max_lum = int(np.max(luminance))
         max_lum = max(1, max_lum)
-        
-        # Normalize luminance to 0-255
         normalized = (luminance.astype(np.float32) * 255.0 / max_lum).astype(np.uint8)
+        if debug: print(f"  normalize: {(time.perf_counter()-t0)*1000:.2f}ms")
         
         # Apply blend power only if needed
+        t0 = time.perf_counter() if debug else 0
         if self._use_power:
             blend_f = np.power(normalized.astype(np.float32) / 255.0, self.blend_power)
             blend_factors = (blend_f * 255.0).astype(np.uint8)
+            if debug: print(f"  power: {(time.perf_counter()-t0)*1000:.2f}ms")
         else:
             blend_factors = normalized
+            if debug: print(f"  power: skipped")
         
         # Blend: very tight loop optimized
-        # off_color * (1 - blend) + rgb * blend
-        # This is the bottleneck - make it as fast as possible
+        t0 = time.perf_counter() if debug else 0
         inv_blend = 255 - blend_factors
         
         # Use einsum for ultra-fast broadcasting if possible
         try:
+            t_einsum = time.perf_counter() if debug else 0
             result = np.einsum(
                 'ijk,ij->ijk',
                 rgb.astype(np.uint32),
@@ -379,8 +391,12 @@ class DotMatrix:
                 inv_blend.astype(np.uint32)
             )
             blended = (result // 255).astype(np.uint8)
-        except:
+            if debug: print(f"  einsum blend: {(time.perf_counter()-t_einsum)*1000:.2f}ms")
+            if debug: print(f"  blend total: {(time.perf_counter()-t0)*1000:.2f}ms (einsum)")
+        except Exception as e:
+            if debug: print(f"  einsum failed ({e}), using fallback")
             # Fallback if einsum not available or slower
+            t_fallback = time.perf_counter() if debug else 0
             blend_3d = blend_factors[:, :, np.newaxis].astype(np.uint32)
             inv_blend_3d = inv_blend[:, :, np.newaxis].astype(np.uint32)
             blended = (
@@ -388,13 +404,20 @@ class DotMatrix:
                 (self._off_color_cache.astype(np.uint32) * inv_blend_3d)
             ) // 255
             blended = blended.astype(np.uint8)
+            if debug: print(f"  fallback blend: {(time.perf_counter()-t_fallback)*1000:.2f}ms")
+            if debug: print(f"  blend total: {(time.perf_counter()-t0)*1000:.2f}ms (fallback)")
         
-        # Convert to tuples - fastest way with tuple()
+        # Convert to tuples - CRITICAL BOTTLENECK - use fastest method
+        t0 = time.perf_counter() if debug else 0
         h, w = self.height, self.width
-        self.dot_colors = [
-            [tuple(blended[r, c]) for c in range(w)]
-            for r in range(h)
-        ]
+        
+        # Fastest approach: use numpy's tuple() on arrays directly
+        # This leverages compiled numpy code instead of Python loops
+        self.dot_colors = [list(map(tuple, blended[r])) for r in range(h)]
+        
+        if debug: print(f"  tuple conversion: {(time.perf_counter()-t0)*1000:.2f}ms")
+        if debug: print()
+
     
     def _sample_blend_fallback(self, surface):
         """Fallback implementation using pygame.Surface.get_at()."""
