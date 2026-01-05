@@ -19,12 +19,17 @@ class CanvasSource:
 
     @classmethod
     def from_size(cls, width, height):
-        surface = pygame.Surface((width, height)).convert()
+        surface = pygame.Surface((width, height))
         return cls(surface)
 
     @classmethod
     def from_image(cls, image_path, size=None):
-        image = pygame.image.load(image_path).convert_alpha()
+        image = pygame.image.load(image_path)
+        try:
+            image = image.convert_alpha()
+        except pygame.error:
+            # Display format not available in headless mode
+            pass
         if size:
             image = pygame.transform.smoothscale(image, size)
         return cls(image)
