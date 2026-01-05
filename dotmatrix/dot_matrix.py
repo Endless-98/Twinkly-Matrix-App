@@ -1,5 +1,7 @@
 import pygame
 import time
+import mmap
+import os
 from .source_canvas import CanvasSource, SourcePreview
 
 
@@ -15,6 +17,8 @@ class DotMatrix:
         show_source_preview=False,
         supersample=3,
         headless=False,
+        fpp_output=False,
+        fpp_memory_buffer_file="/dev/shm/FPP-Model-Data-Light_Wall",
     ):
         self.width = width
         self.height = height
@@ -25,6 +29,11 @@ class DotMatrix:
         self.supersample = max(1, int(supersample))
         self.headless = headless
         self.running = True
+        
+        self.fpp_mm = None
+        self.fpp_memory_buffer_file = None
+        if fpp_output:
+            self._initialize_fpp(fpp_memory_buffer_file)
         
         if not headless:
             pygame.init()
@@ -45,11 +54,46 @@ class DotMatrix:
         self.preview = SourcePreview(self.width, self.height, enabled=show_source_preview)
         self.clock = pygame.time.Clock() if not headless else None
 
+    def _initialize_fpp(self, fpp_file):
+        buffer_size = self.width * self.height * 3
+        try:
+            if not os.path.exists(fpp_file):
+                with open(fpp_file, 'wb') as f:
+                    f.write(b'\x00' * buffer_size)
+            
+            self.fpp_memory_buffer_file = open(fpp_file, 'r+b')
+            self.fpp_mm = mmap.mmap(self.fpp_memory_buffer_file.fileno(), buffer_size)
+        except Exception as e:
+            print(f"FPP output initialization failed: {e}")
+            if self.fpp_memory_buffer_file:
+                self.fpp_memory_buffer_file.close()
+            self.fpp_mm = None
+            self.fpp_memory_buffer_file = None
+
+    def draw_on_twinklys(self):
+        if not self.fpp_mm:
+            return
+        
+        buffer = bytearray(self.width * self.height * 3)
+        idx = 0
+        
+        for row in range(self.height):
+            for col in range(self.width):
+                r, g, b = self.dot_colors[row][col]
+                buffer[idx] = r
+                buffer[idx + 1] = g
+                buffer[idx + 2] = b
+                idx += 3
+        
+        self.fpp_mm.seek(0)
+        self.fpp_mm.write(buffer)
+        self.fpp_mm.flush()
+
     def draw_dot(self, x, y, color):
         if self.screen:
             pygame.draw.circle(self.screen, color, (x, y), self.dot_size)
 
-    def visualize_matrix(self):
+    def visualize_matrix(self): # Only in non-headless mode
         if self.headless:
             return
             
@@ -70,7 +114,7 @@ class DotMatrix:
         y = self.spacing + row * (self.dot_size + self.spacing) + (stagger_offset * (col % 2))
         return x, y
 
-    def convert_canvas_to_matrix(self, canvas):
+    def convert_canvas_to_matrix(self, canvas): # TODO - Move to source_canvas
         source_surface = canvas.surface if isinstance(canvas, CanvasSource) else canvas
         if self.preview:
             self.preview.update(source_surface)
@@ -106,6 +150,7 @@ class DotMatrix:
             self.dot_colors[row][col] = blended
 
         self.visualize_matrix()
+        self.draw_on_twinklys()
 
     def render_sample_pattern(self):
         if self.headless:
@@ -154,3 +199,8 @@ class DotMatrix:
                 pass
             finally:
                 pygame.quit()
+        
+        if self.fpp_mm:
+            self.fpp_mm.close()
+        if self.fpp_memory_buffer_file:
+            self.fpp_memory_buffer_file.close()

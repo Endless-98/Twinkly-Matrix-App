@@ -12,7 +12,8 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 def main():
     matrix = DotMatrix(
         show_source_preview=(not HEADLESS),
-        headless=HEADLESS
+        headless=HEADLESS,
+        fpp_output=True
     )
     matrix.render_sample_pattern()
     matrix.wait_for_exit()
