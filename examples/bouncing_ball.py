@@ -67,10 +67,6 @@ def bouncing_ball_demo(headless=False, enable_fpp=False):
             
             # Render
             matrix.render_frame(canvas)
-            
-            # Frame rate control
-            if matrix.clock:
-                matrix.clock.tick(40)
     
     except KeyboardInterrupt:
         pass

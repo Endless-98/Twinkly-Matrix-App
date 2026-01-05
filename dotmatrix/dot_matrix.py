@@ -232,7 +232,8 @@ class DotMatrix:
         show_source_preview=False,
         fpp_output=False,
         fpp_memory_buffer_file="/dev/shm/FPP-Model-Data-Light_Wall",
-        enable_performance_monitor=True
+        enable_performance_monitor=True,
+        max_fps=40
     ):
         """
         Initialize DotMatrix renderer.
@@ -258,6 +259,7 @@ class DotMatrix:
         self.blend_power = max(0.001, blend_power)
         self.supersample = max(1, int(supersample))
         self.headless = headless
+        self.max_fps = max_fps if max_fps and max_fps > 0 else None
         
         # Visual appearance
         self.bg_color = (0, 0, 0)
@@ -340,6 +342,17 @@ class DotMatrix:
         total_time = (time.perf_counter() - frame_start) * 1000
         self.monitor.record('total', total_time)
         self.monitor.frame_complete()
+
+        # Frame cap: use pygame clock when available; otherwise sleep
+        if self.max_fps:
+            if self.clock:
+                self.clock.tick(self.max_fps)
+            else:
+                # Headless: simple sleep based on target frame time
+                target_ms = 1000.0 / self.max_fps
+                remaining_ms = target_ms - total_time
+                if remaining_ms > 0:
+                    time.sleep(remaining_ms / 1000.0)
         
         return total_time
     

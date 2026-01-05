@@ -84,10 +84,6 @@ def main():
             frame_count += 1
             if frame_count == 1:
                 print(f"First frame rendered successfully")
-            
-            # Control frame rate
-            if matrix.clock:
-                matrix.clock.tick(40)
     
     except KeyboardInterrupt:
         print("\nShutting down...")
