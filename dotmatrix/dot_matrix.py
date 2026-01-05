@@ -33,8 +33,10 @@ class DotMatrix:
         self.fpp_memory_map = None
         self.fpp_memory_buffer_file = None
         self.fpp_mapping = load_light_wall_mapping() if fpp_output else None
+        self.pixel_routing_table = None
         if fpp_output:
             self._initialize_fpp(fpp_memory_buffer_file)
+            self._build_pixel_routing_table()
         
         if not headless:
             pygame.init()
@@ -62,8 +64,6 @@ class DotMatrix:
             'luminance_sampling': [],
             'blending': [],
             'pygame_window': [],
-            'grid_remapping': [],
-            'buffer_creation': [],
             'memory_write': [],
             'total': []
         }
@@ -106,43 +106,58 @@ class DotMatrix:
             self.fpp_memory_map = None
             self.fpp_memory_buffer_file = None
 
+    def _build_pixel_routing_table(self):
+        """Pre-compute routing from visual grid (90x50) to FPP buffer positions.
+        
+        Each visual grid cell maps to 2 physical rows in the LED layout.
+        This table is built once at initialization to avoid recalculation every frame.
+        """
+        self.pixel_routing_table = {}
+        
+        for visual_row in range(self.height):
+            for visual_col in range(self.width):
+                fpp_byte_indices = []
+                
+                for row_offset in range(2):
+                    physical_row = visual_row * 2 + row_offset
+                    physical_col = visual_col
+                    
+                    if (physical_row, physical_col) in self.fpp_mapping:
+                        pixel_index = self.fpp_mapping[(physical_row, physical_col)]
+                        if 0 <= pixel_index < 4500:
+                            byte_index = pixel_index * 3
+                            fpp_byte_indices.append(byte_index)
+                
+                if fpp_byte_indices:
+                    self.pixel_routing_table[(visual_row, visual_col)] = fpp_byte_indices
+
     def draw_on_twinklys(self):
-        if not self.fpp_memory_map or not self.fpp_mapping:
+        if not self.fpp_memory_map or not self.pixel_routing_table:
             return
         
-        grid_remap_start = time.perf_counter()
-        scaled_grid = self._scale_grid_for_mapping(self.dot_colors)
-        grid_remap_time = (time.perf_counter() - grid_remap_start) * 1000
-        
-        buffer_start = time.perf_counter()
-        buffer = create_fpp_buffer_from_grid(scaled_grid, self.fpp_mapping)
-        buffer_time = (time.perf_counter() - buffer_start) * 1000
-        
         write_start = time.perf_counter()
+        buffer = bytearray(13500)
+        
+        for visual_row in range(self.height):
+            for visual_col in range(self.width):
+                if (visual_row, visual_col) not in self.pixel_routing_table:
+                    continue
+                
+                red, green, blue = self.dot_colors[visual_row][visual_col]
+                fpp_byte_indices = self.pixel_routing_table[(visual_row, visual_col)]
+                
+                for byte_index in fpp_byte_indices:
+                    buffer[byte_index] = red
+                    buffer[byte_index + 1] = green
+                    buffer[byte_index + 2] = blue
+        
+        write_time = (time.perf_counter() - write_start) * 1000
+        
         self.fpp_memory_map.seek(0)
         self.fpp_memory_map.write(buffer)
         self.fpp_memory_map.flush()
-        write_time = (time.perf_counter() - write_start) * 1000
         
-        self.stage_timings['grid_remapping'].append(grid_remap_time)
-        self.stage_timings['buffer_creation'].append(buffer_time)
         self.stage_timings['memory_write'].append(write_time)
-
-    def _scale_grid_for_mapping(self, grid):
-        source_height = len(grid)
-        source_width = len(grid[0]) if source_height else 0
-        target_height = 100
-        target_width = 90
-        scaled = [[self.off_color for _ in range(target_width)] for _ in range(target_height)]
-        for source_row in range(source_height):
-            target_row_1 = source_row * 2
-            target_row_2 = target_row_1 + 1
-            for source_col in range(source_width):
-                color = grid[source_row][source_col]
-                scaled[target_row_1][source_col] = color
-                if target_row_2 < target_height:
-                    scaled[target_row_2][source_col] = color
-        return scaled
 
     def _log_performance_if_needed(self):
         current_time = time.time()
