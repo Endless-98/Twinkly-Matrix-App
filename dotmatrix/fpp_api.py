@@ -1,0 +1,71 @@
+import requests
+import json
+
+
+class FPPController:
+    def __init__(self, fpp_host="localhost", fpp_port=32322):
+        self.base_url = f"http://{fpp_host}:{fpp_port}/api"
+        self.timeout = 5
+    
+    def get_status(self):
+        """Get FPP daemon status"""
+        try:
+            response = requests.get(f"{self.base_url}/system/status", timeout=self.timeout)
+            return response.json()
+        except Exception as e:
+            print(f"Error getting FPP status: {e}")
+            return None
+    
+    def enable_pixel_overlay(self, model_name="Light_Wall"):
+        """Enable Pixel Overlay Model State for specified model"""
+        try:
+            # URL encode the command properly
+            command = f"Pixel Overlay Model State"
+            command_url = f"{self.base_url}/command/{command.replace(' ', '%20')}/{model_name}/1"
+            
+            response = requests.get(command_url, timeout=self.timeout)
+            
+            if response.status_code == 200:
+                print(f"✓ Pixel Overlay enabled for {model_name}")
+                return True
+            else:
+                print(f"✗ Failed to enable Pixel Overlay: {response.status_code}")
+                print(f"  Response: {response.text}")
+                return False
+                
+        except requests.exceptions.ConnectionError:
+            print(f"✗ Cannot connect to FPP at {self.base_url}")
+            print("  Make sure FPP daemon is running")
+            return False
+        except Exception as e:
+            print(f"✗ Error enabling pixel overlay: {e}")
+            return False
+    
+    def is_connected(self):
+        """Check if FPP API is accessible"""
+        try:
+            response = requests.get(f"{self.base_url}/system/status", timeout=self.timeout)
+            return response.status_code == 200
+        except:
+            return False
+
+
+def setup_fpp_overlay(model_name="Light_Wall"):
+    """Initialize FPP and enable pixel overlay"""
+    controller = FPPController()
+    
+    if not controller.is_connected():
+        print("WARNING: FPP daemon not accessible")
+        print("You may need to enable Pixel Overlay manually via FPP web interface:")
+        print(f"  1. Go to http://<fpp-ip>/")
+        print(f"  2. Click 'Models'")
+        print(f"  3. Click '{model_name}'")
+        print(f"  4. Check 'Enable Pixel Overlay'")
+        print(f"  5. Click Save")
+        return False
+    
+    status = controller.get_status()
+    if status:
+        print(f"FPP Status: {status.get('status_name', 'Unknown')}")
+    
+    return controller.enable_pixel_overlay(model_name)

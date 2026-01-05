@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 import time
-from dotmatrix import FPPOutput
+from dotmatrix import FPPOutput, setup_fpp_overlay
 
 def main():
-    fpp = FPPOutput(width=90, height=50)
+    print("Initializing FPP...")
+    setup_fpp_overlay()
     
-    print("Starting FPP color wash test...")
+    print("\nStarting FPP color wash test...")
     print("Verifying FPP shared memory write access...")
+    
+    fpp = FPPOutput(width=90, height=50)
     
     if not fpp.verify_write():
         print("\nTroubleshooting:")
