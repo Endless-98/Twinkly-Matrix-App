@@ -31,6 +31,7 @@ class PerformanceMonitor:
             'scaling': [],
             'sampling_blend': [],
             'visualization': [],
+            'fpp_convert': [],
             'fpp_write': [],
             'total': []
         }
@@ -149,23 +150,14 @@ class FPPOutput:
         
         start = time.perf_counter()
         
-        # Handle both numpy arrays and legacy nested lists
-        if isinstance(dot_colors, np.ndarray):
-            # Fast path: numpy array (4500x faster than tuple access)
-            for (row, col), byte_indices in self.routing_table.items():
-                r, g, b = dot_colors[row, col]
-                for byte_idx in byte_indices:
-                    self.buffer[byte_idx] = r
-                    self.buffer[byte_idx + 1] = g
-                    self.buffer[byte_idx + 2] = b
-        else:
-            # Legacy path: nested list of tuples
-            for (row, col), byte_indices in self.routing_table.items():
-                r, g, b = dot_colors[row][col]
-                for byte_idx in byte_indices:
-                    self.buffer[byte_idx] = r
-                    self.buffer[byte_idx + 1] = g
-                    self.buffer[byte_idx + 2] = b
+        # Assume dot_colors is already in tuple format (converted in render_frame)
+        # This keeps FPP write time accurate
+        for (row, col), byte_indices in self.routing_table.items():
+            r, g, b = dot_colors[row][col]
+            for byte_idx in byte_indices:
+                self.buffer[byte_idx] = r
+                self.buffer[byte_idx + 1] = g
+                self.buffer[byte_idx + 2] = b
         
         # Single write operation
         self.memory_map.seek(0)
@@ -281,32 +273,50 @@ class DotMatrix:
         frame_start = time.perf_counter()
         
         # Extract pygame surface
+        t1 = time.perf_counter()
         if isinstance(source_surface, CanvasSource):
             source_surface = source_surface.surface
         
         # Update preview if enabled
         if self.preview:
             self.preview.update(source_surface)
+        preview_time = (time.perf_counter() - t1) * 1000
         
         # Scale to target resolution
-        t1 = time.perf_counter()
+        t2 = time.perf_counter()
         scaled = self._scale_surface(source_surface)
-        self.monitor.record('scaling', (time.perf_counter() - t1) * 1000)
+        self.monitor.record('scaling', (time.perf_counter() - t2) * 1000)
         
         # Sample and blend colors
-        t2 = time.perf_counter()
+        t3 = time.perf_counter()
         self._sample_and_blend(scaled)
-        self.monitor.record('sampling_blend', (time.perf_counter() - t2) * 1000)
+        self.monitor.record('sampling_blend', (time.perf_counter() - t3) * 1000)
         
         # Visualize if not headless
-        t3 = time.perf_counter()
+        t4 = time.perf_counter()
         self._visualize()
-        self.monitor.record('visualization', (time.perf_counter() - t3) * 1000)
+        self.monitor.record('visualization', (time.perf_counter() - t4) * 1000)
         
         # Write to FPP if enabled
+        t5 = time.perf_counter()
         if self.fpp:
-            fpp_time = self.fpp.write(self.dot_colors)
-            self.monitor.record('fpp_write', fpp_time)
+            # Convert numpy array to tuple format if needed
+            if isinstance(self.dot_colors, np.ndarray):
+                h, w = self.dot_colors.shape[0], self.dot_colors.shape[1]
+                fpp_input = [list(map(tuple, self.dot_colors[r])) for r in range(h)]
+            else:
+                fpp_input = self.dot_colors
+            
+            conversion_time = (time.perf_counter() - t5) * 1000
+            
+            # Now write to FPP
+            t_write = time.perf_counter()
+            fpp_time = self.fpp.write(fpp_input)
+            write_time = (time.perf_counter() - t_write) * 1000
+            
+            # Record both separately for clarity
+            self.monitor.record('fpp_convert', conversion_time)
+            self.monitor.record('fpp_write', write_time)
         
         # Complete frame
         total_time = (time.perf_counter() - frame_start) * 1000
