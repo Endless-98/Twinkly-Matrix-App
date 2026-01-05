@@ -58,11 +58,24 @@ class DotMatrix:
         buffer_size = self.width * self.height * 3
         try:
             if not os.path.exists(fpp_file):
-                with open(fpp_file, 'wb') as f:
-                    f.write(b'\x00' * buffer_size)
+                try:
+                    with open(fpp_file, 'wb') as f:
+                        f.write(b'\x00' * buffer_size)
+                except PermissionError:
+                    print(f"Permission denied creating {fpp_file}")
+                    print("Try running: sudo touch {}".format(fpp_file))
+                    print("          sudo chmod 666 {}".format(fpp_file))
+                    raise
             
             self.fpp_memory_buffer_file = open(fpp_file, 'r+b')
             self.fpp_mm = mmap.mmap(self.fpp_memory_buffer_file.fileno(), buffer_size)
+        except PermissionError:
+            print(f"Permission denied accessing {fpp_file}")
+            print("Fix with: sudo chmod 666 {}".format(fpp_file))
+            if self.fpp_memory_buffer_file:
+                self.fpp_memory_buffer_file.close()
+            self.fpp_mm = None
+            self.fpp_memory_buffer_file = None
         except Exception as e:
             print(f"FPP output initialization failed: {e}")
             if self.fpp_memory_buffer_file:

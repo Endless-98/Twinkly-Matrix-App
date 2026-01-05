@@ -16,11 +16,24 @@ class FPPOutput:
     def _initialize_mmap(self):
         try:
             if not os.path.exists(self.fpp_file):
-                with open(self.fpp_file, 'wb') as f:
-                    f.write(b'\x00' * self.buffer_size)
+                try:
+                    with open(self.fpp_file, 'wb') as f:
+                        f.write(b'\x00' * self.buffer_size)
+                except PermissionError:
+                    print(f"Permission denied creating {self.fpp_file}")
+                    print("Try running: sudo touch {}".format(self.fpp_file))
+                    print("          sudo chmod 666 {}".format(self.fpp_file))
+                    raise
             
             self.file = open(self.fpp_file, 'r+b')
             self.mm = mmap.mmap(self.file.fileno(), self.buffer_size)
+        except PermissionError as e:
+            print(f"Permission denied accessing {self.fpp_file}")
+            print("Fix with: sudo chmod 666 {}".format(self.fpp_file))
+            if self.file:
+                self.file.close()
+            self.mm = None
+            self.file = None
         except Exception as e:
             print(f"Failed to initialize FPP output: {e}")
             if self.file:
@@ -46,6 +59,31 @@ class FPPOutput:
         self.mm.seek(0)
         self.mm.write(buffer)
         self.mm.flush()
+    
+    def verify_write(self):
+        """Verify data is being written to shared memory"""
+        if not self.mm:
+            print("FPP output not initialized")
+            return False
+        
+        test_buffer = bytearray(self.buffer_size)
+        test_buffer[0:3] = b'\xFF\x00\x00'  # Red for first pixel
+        
+        self.mm.seek(0)
+        self.mm.write(test_buffer)
+        self.mm.flush()
+        
+        self.mm.seek(0)
+        read_back = self.mm.read(3)
+        
+        if read_back == b'\xFF\x00\x00':
+            print("✓ FPP shared memory is writable and readable")
+            return True
+        else:
+            print("✗ FPP shared memory write verification failed")
+            print(f"  Expected: b'\\xFF\\x00\\x00', got: {read_back}")
+            return False
+
     
     def test_color_wash(self, fps=40):
         if not self.mm:
