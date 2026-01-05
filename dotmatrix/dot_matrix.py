@@ -17,6 +17,7 @@ class DotMatrix:
         blend_power=0.2,
         show_source_preview=False,
         supersample=3,
+        headless=False,
     ):
         self.width = width
         self.height = height
@@ -26,6 +27,7 @@ class DotMatrix:
         self.blend_power = blend_power
         self.show_source_preview = show_source_preview
         self.supersample = max(1, int(supersample))
+        self.headless = headless
         pygame.init()
 
         self.bg_color = (0, 0, 0)
@@ -37,8 +39,12 @@ class DotMatrix:
         window_width = width * (dot_size + spacing) + spacing
         window_height = height * (dot_size + spacing) + spacing
         
-        self.screen = pygame.display.set_mode((window_width, window_height))
-        pygame.display.set_caption("Dot Matrix Display")
+        # Create minimal surface in headless mode
+        if headless:
+            self.screen = pygame.Surface((window_width, window_height))
+        else:
+            self.screen = pygame.display.set_mode((window_width, window_height))
+            pygame.display.set_caption("Dot Matrix Display")
 
         self.preview = SourcePreview(self.width, self.height, enabled=self.show_source_preview)
         
@@ -59,7 +65,8 @@ class DotMatrix:
                 y = self.spacing + row * (self.dot_size + self.spacing) + (stagger_offset * (col % 2))
                 self.draw_dot(x, y, color=self.dot_colors[row][col])
         
-        pygame.display.flip()
+        if not self.headless:
+            pygame.display.flip()
 
     def _dot_position(self, row, col):
         stagger_offset = (self.dot_size / 2) + self.spacing / 2 if self.should_stagger else 0
