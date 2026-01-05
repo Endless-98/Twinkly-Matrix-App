@@ -1,38 +1,25 @@
-import os
-import sys
+"""
+Example: Bouncing ball animation for DotMatrix display.
+"""
 
-# Set pygame to use dummy driver if headless
-def is_raspberry_pi():
-    """Detect if running on Raspberry Pi."""
-    try:
-        with open('/proc/device-tree/model', 'r') as f:
-            return 'raspberry pi' in f.read().lower()
-    except:
-        return False
-
-ON_PI = is_raspberry_pi()
-HEADLESS = ON_PI or ('DISPLAY' not in os.environ)
-
-if HEADLESS:
-    os.environ['SDL_VIDEODRIVER'] = 'dummy'
-    os.environ['SDL_AUDIODRIVER'] = 'dummy'
-os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
-
-# Import after setting environment variables
-from dotmatrix import DotMatrix, CanvasSource
 import pygame
+import sys
+import os
 
-print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
-print(f"Mode: {'Headless' if HEADLESS else 'Windowed'}")
-print(f"FPP Output: {ON_PI}\n")
+# Add parent directory to path
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from dotmatrix.dot_matrix_refactored import DotMatrix
+from dotmatrix.source_canvas import CanvasSource
 
 
-def main():
-    """Run bouncing ball demo with auto-detected platform settings."""
-    # Create matrix with platform-appropriate settings
+def bouncing_ball_demo(headless=False, enable_fpp=False):
+    """Run bouncing ball animation."""
+    
+    # Create matrix
     matrix = DotMatrix(
-        headless=HEADLESS,
-        fpp_output=ON_PI,
+        headless=headless,
+        enable_fpp=enable_fpp,
         show_source_preview=False,
         enable_performance_monitor=True
     )
@@ -49,12 +36,12 @@ def main():
     velocity_y = 2
     radius = 20
     
-    # Animation loop
+    # Main loop
     running = True
     try:
         while running:
             # Handle events
-            if not HEADLESS:
+            if not headless:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
@@ -63,13 +50,13 @@ def main():
             ball_x += velocity_x
             ball_y += velocity_y
             
-            # Bounce off walls
+            # Bounce
             if ball_x - radius < 0 or ball_x + radius > canvas_width:
                 velocity_x *= -1
             if ball_y - radius < 0 or ball_y + radius > canvas_height:
                 velocity_y *= -1
             
-            # Clear and redraw
+            # Draw
             canvas.surface.fill((0, 0, 0))
             pygame.draw.circle(
                 canvas.surface,
@@ -78,18 +65,27 @@ def main():
                 radius
             )
             
-            # Render to matrix
+            # Render
             matrix.render_frame(canvas)
             
-            # Control frame rate
+            # Frame rate control
             if matrix.clock:
                 matrix.clock.tick(40)
     
     except KeyboardInterrupt:
-        print("\nShutting down...")
+        pass
     finally:
         matrix.shutdown()
 
 
 if __name__ == "__main__":
-    main()
+    # Auto-detect if on Raspberry Pi
+    def is_pi():
+        try:
+            with open('/proc/device-tree/model', 'r') as f:
+                return 'raspberry pi' in f.read().lower()
+        except:
+            return False
+    
+    on_pi = is_pi()
+    bouncing_ball_demo(headless=on_pi, enable_fpp=on_pi)
