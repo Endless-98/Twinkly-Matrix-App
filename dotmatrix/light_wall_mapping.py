@@ -17,8 +17,9 @@ def load_light_wall_mapping(csv_file="dotmatrix/Light Wall Mapping.csv"):
                 for col_idx, cell in enumerate(row):
                     if cell.strip():  # Only process non-empty cells
                         try:
-                            pixel_index = int(cell.strip())
-                            mapping[(row_idx, col_idx)] = pixel_index
+                            pixel_index = int(cell.strip()) - 1  # Convert 1-indexed to 0-indexed
+                            if pixel_index >= 0:  # Only store valid indices
+                                mapping[(row_idx, col_idx)] = pixel_index
                         except ValueError:
                             print(f"Warning: Invalid pixel index '{cell}' at ({row_idx}, {col_idx})")
     except FileNotFoundError:
@@ -34,7 +35,7 @@ def load_light_wall_mapping(csv_file="dotmatrix/Light Wall Mapping.csv"):
     if mapping:
         max_pixel = max(mapping.values())
         min_pixel = min(mapping.values())
-        print(f"Pixel indices range: {min_pixel} to {max_pixel}")
+        print(f"Pixel indices range: {min_pixel} to {max_pixel} (expected 0-4349 for 87×50 matrix)")
     
     return mapping
 
@@ -48,14 +49,14 @@ def create_fpp_buffer_from_grid(dot_colors, mapping):
         mapping: dict of (row, col) -> pixel_index from CSV
     
     Returns:
-        bytearray of 13500 bytes with proper FPP pixel ordering
+        bytearray of 13050 bytes with proper FPP pixel ordering (87x50 matrix = 4350 pixels)
     """
-    buffer = bytearray(13500)
+    buffer = bytearray(13050)  # 87 * 50 * 3 = 13,050 bytes
     
     for (row, col), pixel_idx in mapping.items():
         if row < len(dot_colors) and col < len(dot_colors[0]):
-            # Bounds check: ensure pixel index is valid
-            if pixel_idx < 0 or pixel_idx >= 4500:
+            # Bounds check: ensure pixel index is valid (0-4349 for 87x50 matrix)
+            if pixel_idx < 0 or pixel_idx >= 4350:
                 print(f"Warning: Invalid pixel index {pixel_idx} at grid ({row}, {col})")
                 continue
             

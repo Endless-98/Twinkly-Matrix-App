@@ -9,7 +9,7 @@ from .light_wall_mapping import load_light_wall_mapping, create_fpp_buffer_from_
 class DotMatrix:
     def __init__(
         self,
-        width=90,
+        width=87,
         height=50,
         dot_size=6,
         spacing=15,
@@ -37,8 +37,7 @@ class DotMatrix:
         if fpp_output:
             self._initialize_fpp(fpp_memory_buffer_file)
         
-        if not headless:
-            pygame.init()
+        pygame.init()  # Initialize pygame for surface/drawing operations
 
         self.bg_color = (0, 0, 0)
         self.off_color = (10, 10, 10)
@@ -57,7 +56,7 @@ class DotMatrix:
         self.clock = pygame.time.Clock() if not headless else None
 
     def _initialize_fpp(self, fpp_file):
-        buffer_size = self.width * self.height * 3
+        buffer_size = self.width * self.height * 3  # 87 * 50 * 3 = 13,050 bytes
         try:
             if not os.path.exists(fpp_file):
                 try:
@@ -69,8 +68,12 @@ class DotMatrix:
                     print("          sudo chmod 666 {}".format(fpp_file))
                     raise
             
+            # Get actual file size to handle mmap correctly
+            file_size = os.path.getsize(fpp_file)
+            mmap_size = min(buffer_size, file_size)  # Use smaller of expected or actual
+            
             self.fpp_memory_buffer_file = open(fpp_file, 'r+b')
-            self.fpp_mm = mmap.mmap(self.fpp_memory_buffer_file.fileno(), buffer_size)
+            self.fpp_mm = mmap.mmap(self.fpp_memory_buffer_file.fileno(), mmap_size)
         except PermissionError:
             print(f"Permission denied accessing {fpp_file}")
             print("Fix with: sudo chmod 666 {}".format(fpp_file))
@@ -159,23 +162,14 @@ class DotMatrix:
         self.draw_on_twinklys()
 
     def render_sample_pattern(self):
-        if self.headless:
-            for row in range(self.height):
-                for col in range(self.width):
-                    if (row + col) % 2 == 0:
-                        self.dot_colors[row][col] = (100, 100, 255)
-                    else:
-                        self.dot_colors[row][col] = self.off_color
-            self.draw_on_twinklys()
-            return
-            
+        # Draw a cyan circle - works in both headless and GUI modes
         hi_w = self.width * self.supersample
         hi_h = self.height * self.supersample
         source_canvas = CanvasSource.from_size(hi_w, hi_h)
         source_canvas.surface.fill((0, 0, 0))
         pygame.draw.circle(
             source_canvas.surface,
-            (0, 200, 255),
+            (0, 200, 255),  # Cyan
             (hi_w // 2, hi_h // 2),
             min(hi_w, hi_h) // 3,
         )
