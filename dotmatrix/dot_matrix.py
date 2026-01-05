@@ -3,6 +3,7 @@ import time
 import mmap
 import os
 from .source_canvas import CanvasSource, SourcePreview
+from .light_wall_mapping import load_light_wall_mapping, create_fpp_buffer_from_grid
 
 
 class DotMatrix:
@@ -32,6 +33,7 @@ class DotMatrix:
         
         self.fpp_mm = None
         self.fpp_memory_buffer_file = None
+        self.fpp_mapping = load_light_wall_mapping() if fpp_output else None
         if fpp_output:
             self._initialize_fpp(fpp_memory_buffer_file)
         
@@ -84,19 +86,10 @@ class DotMatrix:
             self.fpp_memory_buffer_file = None
 
     def draw_on_twinklys(self):
-        if not self.fpp_mm:
+        if not self.fpp_mm or not self.fpp_mapping:
             return
         
-        buffer = bytearray(self.width * self.height * 3)
-        idx = 0
-        
-        for row in range(self.height):
-            for col in range(self.width):
-                r, g, b = self.dot_colors[row][col]
-                buffer[idx] = r
-                buffer[idx + 1] = g
-                buffer[idx + 2] = b
-                idx += 3
+        buffer = create_fpp_buffer_from_grid(self.dot_colors, self.fpp_mapping)
         
         self.fpp_mm.seek(0)
         self.fpp_mm.write(buffer)

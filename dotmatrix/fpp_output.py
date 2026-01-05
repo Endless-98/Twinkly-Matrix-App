@@ -1,6 +1,7 @@
 import mmap
 import time
 import os
+from .light_wall_mapping import load_light_wall_mapping, create_fpp_buffer_from_grid
 
 
 class FPPOutput:
@@ -11,6 +12,7 @@ class FPPOutput:
         self.buffer_size = width * height * 3
         self.mm = None
         self.file = None
+        self.mapping = load_light_wall_mapping()
         self._initialize_mmap()
     
     def _initialize_mmap(self):
@@ -45,16 +47,7 @@ class FPPOutput:
         if not self.mm:
             return
         
-        buffer = bytearray(self.buffer_size)
-        idx = 0
-        
-        for row in range(self.height):
-            for col in range(self.width):
-                r, g, b = dot_colors[row][col]
-                buffer[idx] = r
-                buffer[idx + 1] = g
-                buffer[idx + 2] = b
-                idx += 3
+        buffer = create_fpp_buffer_from_grid(dot_colors, self.mapping)
         
         self.mm.seek(0)
         self.mm.write(buffer)
