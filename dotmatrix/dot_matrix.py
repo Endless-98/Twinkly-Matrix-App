@@ -42,6 +42,7 @@ class DotMatrix:
         self.fpp_memory_buffer_file = None
         self.fpp_mapping = load_light_wall_mapping() if fpp_output else None
         self.pixel_routing_table = None
+        self.fpp_buffer = bytearray(13500) if fpp_output else None  # Pre-allocate buffer
         if fpp_output:
             self._initialize_fpp(fpp_memory_buffer_file)
             self._build_pixel_routing_table()
@@ -140,12 +141,12 @@ class DotMatrix:
                     self.pixel_routing_table[(visual_row, visual_col)] = fpp_byte_indices
 
     def draw_on_twinklys(self):
-        if not self.fpp_memory_map or not self.pixel_routing_table:
+        if not self.fpp_memory_map or not self.pixel_routing_table or not self.fpp_buffer:
             return
         
         write_start = time.perf_counter()
-        buffer = bytearray(13500)
         
+        # Reuse pre-allocated buffer instead of creating new one each frame
         for visual_row in range(self.height):
             for visual_col in range(self.width):
                 if (visual_row, visual_col) not in self.pixel_routing_table:
@@ -155,14 +156,14 @@ class DotMatrix:
                 fpp_byte_indices = self.pixel_routing_table[(visual_row, visual_col)]
                 
                 for byte_index in fpp_byte_indices:
-                    buffer[byte_index] = red
-                    buffer[byte_index + 1] = green
-                    buffer[byte_index + 2] = blue
+                    self.fpp_buffer[byte_index] = red
+                    self.fpp_buffer[byte_index + 1] = green
+                    self.fpp_buffer[byte_index + 2] = blue
         
         write_time = (time.perf_counter() - write_start) * 1000
         
         self.fpp_memory_map.seek(0)
-        self.fpp_memory_map.write(buffer)
+        self.fpp_memory_map.write(self.fpp_buffer)
         self.fpp_memory_map.flush()
         
         self.stage_timings['memory_write'].append(write_time)
@@ -272,78 +273,58 @@ class DotMatrix:
     def _sample_and_blend_optimized(self, scaled_surface):
         """Optimized single-pass luminance sampling and color blending.
         
-        Uses pygame.surfarray for batch pixel access (50-100x faster than get_at).
-        Combines luminance calculation and blending into one loop.
-        Uses numpy vectorization if available.
+        Uses numpy vectorization if available (fastest), otherwise get_at (reliable).
+        Surfarray is slower than get_at for small arrays, so not used without numpy.
         """
-        if HAS_SURFARRAY:
-            if HAS_NUMPY:
-                self._sample_and_blend_numpy(scaled_surface)
-            else:
-                self._sample_and_blend_surfarray(scaled_surface)
+        if HAS_NUMPY and HAS_SURFARRAY:
+            self._sample_and_blend_numpy(scaled_surface)
         else:
             self._sample_and_blend_fallback(scaled_surface)
     
     def _sample_and_blend_numpy(self, scaled_surface):
-        """Vectorized luminance and blending using numpy."""
-        pixel_array = surfarray.array3d(scaled_surface)
-        pixel_array_transposed = pixel_array.transpose(1, 0, 2)
+        """Fully vectorized luminance and blending using numpy."""
+        # Use pixels3d for direct view (no copy) instead of array3d
+        # pixels3d returns shape (width, height, 3), we need (height, width, 3)
+        pixel_view = surfarray.pixels3d(scaled_surface)
         
-        rgb_values = pixel_array_transposed[:, :, :3].astype(np.float32)
+        # Work with integer arrays to avoid float conversions
+        # Transpose from (width, height, 3) to (height, width, 3)
+        rgb_values = np.transpose(pixel_view, (1, 0, 2)).astype(np.uint16)
         
-        luminance_weights = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
-        luminance_array = np.dot(rgb_values, luminance_weights)
+        # Vectorized luminance calculation using integer arithmetic
+        # Multiply by 1000 to maintain precision, then divide at end
+        luminance_array = (
+            rgb_values[:, :, 0] * 213 +  # 0.2126 * 1000 ≈ 213
+            rgb_values[:, :, 1] * 715 +  # 0.7152 * 1000 ≈ 715
+            rgb_values[:, :, 2] * 72     # 0.0722 * 1000 ≈ 72
+        ) // 1000
         
+        # Vectorized blending
         max_luminance = np.max(luminance_array)
-        max_normalized_luminance = max(1.0, max_luminance)
+        max_normalized_luminance = max(1, max_luminance)
         blend_exponent = max(0.001, self.blend_power)
         
+        # Calculate blend factors using float only where necessary
         blend_factors = np.power(
-            np.clip(luminance_array / max_normalized_luminance, 0.0, 1.0),
+            np.clip(luminance_array.astype(np.float32) / max_normalized_luminance, 0.0, 1.0),
             blend_exponent
         )
         
+        # Expand dimensions for broadcasting
+        blend_factors_expanded = blend_factors[:, :, np.newaxis]
         off_color_array = np.array(self.off_color, dtype=np.float32)
         
-        for row in range(self.height):
-            for col in range(self.width):
-                blend_factor = blend_factors[row, col]
-                color = rgb_values[row, col]
-                blended = off_color_array * (1.0 - blend_factor) + color * blend_factor
-                self.dot_colors[row][col] = tuple(int(c) for c in blended)
-    
-    def _sample_and_blend_surfarray(self, scaled_surface):
-        """Optimized luminance and blending using pygame.surfarray (no numpy)."""
-        pixel_array = surfarray.array3d(scaled_surface)
-        pixel_array_transposed = pixel_array.transpose(1, 0, 2)
+        # Vectorized color blending - convert rgb to float just for this operation
+        blended_array = (
+            off_color_array * (1.0 - blend_factors_expanded) + 
+            rgb_values.astype(np.float32) * blend_factors_expanded
+        ).astype(np.uint8)
         
-        max_luminance = 0.0
-        luminance_cache = {}
-        
-        for row in range(self.height):
-            for col in range(self.width):
-                r, g, b = pixel_array_transposed[row, col, :3]
-                luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b
-                luminance_cache[(row, col)] = (r, g, b, luminance)
-                if luminance > max_luminance:
-                    max_luminance = luminance
-        
-        max_normalized_luminance = max(1.0, max_luminance)
-        blend_exponent = max(0.001, self.blend_power)
-        off_r, off_g, off_b = self.off_color
-        
-        for row in range(self.height):
-            for col in range(self.width):
-                r, g, b, luminance = luminance_cache[(row, col)]
-                blend_factor = max(0.0, min(1.0, luminance / max_normalized_luminance)) ** blend_exponent
-                inverse_blend = 1.0 - blend_factor
-                
-                blended = (
-                    int(off_r * inverse_blend + r * blend_factor),
-                    int(off_g * inverse_blend + g * blend_factor),
-                    int(off_b * inverse_blend + b * blend_factor)
-                )
-                self.dot_colors[row][col] = blended
+        # Batch convert to list of tuples - much faster than nested loops
+        self.dot_colors = [
+            [tuple(blended_array[row, col]) for col in range(self.width)]
+            for row in range(self.height)
+        ]
 
     def _sample_and_blend_fallback(self, scaled_surface):
         """Fallback luminance and blending using pygame.get_at (slower but always available)."""
