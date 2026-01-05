@@ -19,6 +19,9 @@ if HEADLESS:
     os.environ['SDL_AUDIODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
+print(f"Running on Pi: {is_raspberry_pi()}")
+print(f"Headless mode: {HEADLESS}")
+
 
 def main():
     matrix = DotMatrix(
