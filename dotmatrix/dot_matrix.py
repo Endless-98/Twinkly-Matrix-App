@@ -93,11 +93,30 @@ class DotMatrix:
         if not self.fpp_mm or not self.fpp_mapping:
             return
         
-        buffer = create_fpp_buffer_from_grid(self.dot_colors, self.fpp_mapping)
+        # Scale 90x50 visual grid to 100x90 mapping grid (CSV layout)
+        scaled_grid = self._scale_grid_for_mapping(self.dot_colors)
+        buffer = create_fpp_buffer_from_grid(scaled_grid, self.fpp_mapping)
         
         self.fpp_mm.seek(0)
         self.fpp_mm.write(buffer)
         self.fpp_mm.flush()
+
+    def _scale_grid_for_mapping(self, grid):
+        """Scale the visual 90x50 grid to the 100x90 CSV grid (2x height)."""
+        src_h = len(grid)
+        src_w = len(grid[0]) if src_h else 0
+        tgt_h = 100
+        tgt_w = 90
+        scaled = [[self.off_color for _ in range(tgt_w)] for _ in range(tgt_h)]
+        for r in range(src_h):
+            tr1 = r * 2
+            tr2 = tr1 + 1
+            for c in range(src_w):
+                color = grid[r][c]
+                scaled[tr1][c] = color
+                if tr2 < tgt_h:
+                    scaled[tr2][c] = color
+        return scaled
 
     def draw_dot(self, x, y, color):
         if self.screen:
