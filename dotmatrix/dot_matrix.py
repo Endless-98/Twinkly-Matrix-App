@@ -233,7 +233,7 @@ class DotMatrix:
         fpp_output=False,
         fpp_memory_buffer_file="/dev/shm/FPP-Model-Data-Light_Wall",
         enable_performance_monitor=True,
-        max_fps=40
+        max_fps=100
     ):
         """
         Initialize DotMatrix renderer.
