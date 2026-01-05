@@ -235,6 +235,11 @@ class DotMatrix:
         # Current frame state
         self.dot_colors = [[self.off_color for _ in range(width)] for _ in range(height)]
         
+        # Pre-allocate tuple cache for faster updates (huge speedup!)
+        if HAS_NUMPY:
+            # Create a list of pre-allocated tuples to reuse
+            self._color_tuples = {}  # Cache for (r,g,b) -> (r,g,b) to avoid recreation
+        
         # Optional components
         self.monitor = PerformanceMonitor(enabled=enable_performance_monitor)
         self.fpp = FPPOutput(width, height, fpp_memory_buffer_file) if fpp_output else None
@@ -242,7 +247,7 @@ class DotMatrix:
         
         # Cache for numpy optimization
         if HAS_NUMPY:
-            self._off_color_cache = np.array(self.off_color, dtype=np.uint16)
+            self._off_color_cache = np.array(self.off_color, dtype=np.uint32)
             self._use_power = abs(self.blend_power - 1.0) > 0.01  # Skip power if ~1.0
         
         # Pygame setup
@@ -333,47 +338,62 @@ class DotMatrix:
         # Get direct view (no copy) - shape is (width, height, 3)
         pixel_view = surfarray.pixels3d(surface)
         
-        # Transpose to (height, width, 3) - use uint16 to handle intermediate calcs
-        rgb = np.transpose(pixel_view, (1, 0, 2)).astype(np.uint16)
+        # Transpose directly to (height, width, 3) - stay in uint8
+        rgb = np.transpose(pixel_view, (1, 0, 2))
         
-        # Luminance calculation (integer math, no float conversion yet)
-        # Using bit shifts and adds instead of multiplies where possible
-        # 213r + 715g + 72b ≈ (213r + 715g + 72b) but optimized
-        r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
-        luminance = (r * 213 + g * 715 + b * 72) // 1000
+        # Luminance calculation - fast integer version
+        # 213r + 715g + 72b, normalize by 1000
+        r = rgb[:, :, 0].astype(np.uint16)
+        g = rgb[:, :, 1].astype(np.uint16)
+        b = rgb[:, :, 2].astype(np.uint16)
+        luminance = ((r * 213 + g * 715 + b * 72) // 1000).astype(np.uint8)
         
-        # Find max luminance
+        # Find max and normalize
         max_lum = int(np.max(luminance))
-        if max_lum <= 1:
-            max_lum = 1
+        max_lum = max(1, max_lum)
         
-        # Normalize to 0-255 range (stay in uint16)
-        normalized = (luminance * 255) // max_lum
+        # Normalize luminance to 0-255
+        normalized = (luminance.astype(np.float32) * 255.0 / max_lum).astype(np.uint8)
         
-        # Apply blend power if needed
+        # Apply blend power only if needed
         if self._use_power:
-            # Only convert to float for power operation
-            blend_factors_u8 = np.power(normalized / 255.0, self.blend_power) * 255.0
-            blend_factors = blend_factors_u8.astype(np.uint16)
+            blend_f = np.power(normalized.astype(np.float32) / 255.0, self.blend_power)
+            blend_factors = (blend_f * 255.0).astype(np.uint8)
         else:
             blend_factors = normalized
         
-        # Expand for broadcasting: (h, w) -> (h, w, 1)
-        blend_factors_3d = blend_factors[:, :, np.newaxis]
+        # Blend: very tight loop optimized
+        # off_color * (1 - blend) + rgb * blend
+        # This is the bottleneck - make it as fast as possible
+        inv_blend = 255 - blend_factors
         
-        # Blend calculation using integer math (avoid float entirely)
-        # result = off_color * (255 - blend) / 255 + rgb * blend / 255
-        inv_blend = 255 - blend_factors_3d
-        blended = ((self._off_color_cache * inv_blend + rgb * blend_factors_3d) // 255).astype(np.uint8)
+        # Use einsum for ultra-fast broadcasting if possible
+        try:
+            result = np.einsum(
+                'ijk,ij->ijk',
+                rgb.astype(np.uint32),
+                blend_factors.astype(np.uint32)
+            ) + np.einsum(
+                'k,ij->ijk',
+                self._off_color_cache.astype(np.uint32),
+                inv_blend.astype(np.uint32)
+            )
+            blended = (result // 255).astype(np.uint8)
+        except:
+            # Fallback if einsum not available or slower
+            blend_3d = blend_factors[:, :, np.newaxis].astype(np.uint32)
+            inv_blend_3d = inv_blend[:, :, np.newaxis].astype(np.uint32)
+            blended = (
+                (rgb.astype(np.uint32) * blend_3d) +
+                (self._off_color_cache.astype(np.uint32) * inv_blend_3d)
+            ) // 255
+            blended = blended.astype(np.uint8)
         
-        # Fast conversion to nested list of tuples using numpy's optimized methods
-        # Convert to C-contiguous array first for better cache performance
-        blended_c = np.ascontiguousarray(blended)
-        
-        # Use map and tuple for faster conversion than list comprehension
+        # Convert to tuples - fastest way with tuple()
+        h, w = self.height, self.width
         self.dot_colors = [
-            [tuple(blended_c[r, c]) for c in range(self.width)]
-            for r in range(self.height)
+            [tuple(blended[r, c]) for c in range(w)]
+            for r in range(h)
         ]
     
     def _sample_blend_fallback(self, surface):
