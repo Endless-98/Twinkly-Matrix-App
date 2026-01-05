@@ -31,7 +31,6 @@ class PerformanceMonitor:
             'scaling': [],
             'sampling_blend': [],
             'visualization': [],
-            'fpp_convert': [],
             'fpp_write': [],
             'total': []
         }
@@ -144,20 +143,36 @@ class FPPOutput:
                     self.routing_table[(visual_row, visual_col)] = byte_indices
     
     def write(self, dot_colors):
-        """Write color data to FPP buffer and flush to memory map."""
+        """Write color data to FPP buffer and flush to memory map.
+        
+        This is optimized for numpy array input (no tuple conversion needed).
+        For legacy tuple input, falls back to slower method.
+        """
         if not self.memory_map:
             return 0.0
         
         start = time.perf_counter()
         
-        # Assume dot_colors is already in tuple format (converted in render_frame)
-        # This keeps FPP write time accurate
-        for (row, col), byte_indices in self.routing_table.items():
-            r, g, b = dot_colors[row][col]
-            for byte_idx in byte_indices:
-                self.buffer[byte_idx] = r
-                self.buffer[byte_idx + 1] = g
-                self.buffer[byte_idx + 2] = b
+        # Fast path: numpy arrays - write directly using routing table without tuple conversion
+        if isinstance(dot_colors, np.ndarray):
+            # Iterate through routing table and write bytes directly from numpy array
+            for (row, col), byte_indices in self.routing_table.items():
+                # Get RGB values directly as integers (no tuple creation)
+                pixel = dot_colors[row, col]
+                r, g, b = int(pixel[0]), int(pixel[1]), int(pixel[2])
+                
+                for byte_idx in byte_indices:
+                    self.buffer[byte_idx] = r
+                    self.buffer[byte_idx + 1] = g
+                    self.buffer[byte_idx + 2] = b
+        else:
+            # Slow path: legacy tuple format
+            for (row, col), byte_indices in self.routing_table.items():
+                r, g, b = dot_colors[row][col]
+                for byte_idx in byte_indices:
+                    self.buffer[byte_idx] = r
+                    self.buffer[byte_idx + 1] = g
+                    self.buffer[byte_idx + 2] = b
         
         # Single write operation
         self.memory_map.seek(0)
@@ -300,23 +315,9 @@ class DotMatrix:
         # Write to FPP if enabled
         t5 = time.perf_counter()
         if self.fpp:
-            # Convert numpy array to tuple format if needed
-            if isinstance(self.dot_colors, np.ndarray):
-                h, w = self.dot_colors.shape[0], self.dot_colors.shape[1]
-                fpp_input = [list(map(tuple, self.dot_colors[r])) for r in range(h)]
-            else:
-                fpp_input = self.dot_colors
-            
-            conversion_time = (time.perf_counter() - t5) * 1000
-            
-            # Now write to FPP
-            t_write = time.perf_counter()
-            fpp_time = self.fpp.write(fpp_input)
-            write_time = (time.perf_counter() - t_write) * 1000
-            
-            # Record both separately for clarity
-            self.monitor.record('fpp_convert', conversion_time)
-            self.monitor.record('fpp_write', write_time)
+            # Pass numpy array directly - no conversion needed!
+            fpp_time = self.fpp.write(self.dot_colors)
+            self.monitor.record('fpp_write', fpp_time)
         
         # Complete frame
         total_time = (time.perf_counter() - frame_start) * 1000

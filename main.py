@@ -51,6 +51,7 @@ def main():
     
     # Animation loop
     running = True
+    frame_count = 0
     try:
         while running:
             # Handle events
@@ -80,6 +81,9 @@ def main():
             
             # Render to matrix
             matrix.render_frame(canvas)
+            frame_count += 1
+            if frame_count == 1:
+                print(f"First frame rendered successfully")
             
             # Control frame rate
             if matrix.clock:
