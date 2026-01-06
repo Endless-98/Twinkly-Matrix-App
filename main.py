@@ -31,7 +31,7 @@ print(f"FPP Output: {ON_PI}\n")
 def main():
     # Create matrix with platform-appropriate settings
     matrix = DotMatrix(
-        headless=HEADLESS,
+        headless=class,
         fpp_output=ON_PI,
         show_source_preview=True,
         enable_performance_monitor=False
@@ -42,7 +42,7 @@ def main():
     canvas_height = matrix.height * matrix.supersample
     canvas = pygame.Surface((canvas_width, canvas_height))
     
-    tetris = Tetris(canvas)
+    tetris = Tetris(canvas, HEADLESS)
 
     # Frame loop
     running = True

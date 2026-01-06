@@ -7,7 +7,7 @@ import numpy
 
 
 class Tetris:
-    def __init__(self, canvas):
+    def __init__(self, canvas, HEADLESS):
         pygame.init() # Redundant?
         
         self.blocks_width = 10
@@ -24,7 +24,9 @@ class Tetris:
 
     def tick(self): # Called in main
         self.screen.fill((35,35,35))
-        pygame.display.flip()
+        
+        if not HEADLESS:
+            pygame.display.flip()
 
         x_start = numpy.round(self.screen.get_width() / self.block_size).astype(int)
         # Draw cells
