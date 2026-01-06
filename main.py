@@ -37,10 +37,9 @@ def main():
         enable_performance_monitor=False,
         disable_blending=True,
         supersample=1,
-        # FPP brightness reduction
-        fpp_gamma=None,
-        fpp_color_order="RGB",
-        fpp_channel_gains=(0.5, 0.5, 0.5)  # 50% brightness
+        # Apply gamma 2.2 to FPP to correct for human perception
+        fpp_gamma=2.2,
+        fpp_color_order="RGB"
     )
     
     # Create drawing surface directly
