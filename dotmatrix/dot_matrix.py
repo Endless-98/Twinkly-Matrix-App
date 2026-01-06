@@ -71,7 +71,7 @@ class DotMatrix:
         
         # Visual appearance
         self.bg_color = (0, 0, 0)
-        self.off_color = (10, 10, 10)
+        self.off_color = (0, 0, 0)
         
         # Current frame state
         self.dot_colors = [[self.off_color for _ in range(width)] for _ in range(height)]
