@@ -89,7 +89,12 @@ class DotMatrix:
         self.fpp = FPPOutput(width, height, fpp_memory_buffer_file) if fpp_output else None
         # Scale preview window 6x for better visibility
         preview_scale = 6
-        self.preview = SourcePreview(width * preview_scale, height * preview_scale, enabled=show_source_preview)
+        self.preview = SourcePreview(
+            width * preview_scale,
+            height * preview_scale,
+            enabled=show_source_preview,
+            min_preview_color=(15, 15, 15)
+        )
         
         # Cache for numpy optimization
         if HAS_NUMPY:
@@ -237,10 +242,31 @@ class DotMatrix:
     
     def _sample_and_blend(self, surface):
         """Sample colors from surface and blend with luminance."""
+        # Fast path: bypass blending entirely for sharp output
+        if self.disable_blending:
+            if HAS_NUMPY:
+                self._sample_no_blend_numpy(surface)
+            else:
+                self._sample_no_blend_fallback(surface)
+            return
+
         if HAS_NUMPY:
             self._sample_blend_numpy(surface)
         else:
             self._sample_blend_fallback(surface)
+
+    def _sample_no_blend_numpy(self, surface):
+        """Directly sample colors without luminance blending (numpy path)."""
+        pixel_view = surfarray.pixels3d(surface)
+        # Copy to avoid holding a locked view on the source surface
+        self.dot_colors = np.transpose(pixel_view, (1, 0, 2)).copy(order='C')
+        del pixel_view
+
+    def _sample_no_blend_fallback(self, surface):
+        """Direct sampling without blending (fallback path)."""
+        for row in range(self.height):
+            for col in range(self.width):
+                self.dot_colors[row][col] = surface.get_at((col, row))[:3]
     
     def _sample_blend_numpy(self, surface):
         """Optimized numpy implementation - heavily optimized for Pi performance."""
@@ -254,13 +280,10 @@ class DotMatrix:
         
         # Transpose directly to (height, width, 3) - stay in uint8
         t0 = time.perf_counter() if debug else 0
-        rgb = np.transpose(pixel_view, (1, 0, 2))
+        # Copy to avoid holding the surface lock after this function
+        rgb = np.transpose(pixel_view, (1, 0, 2)).copy(order='C')
+        del pixel_view
         if debug: print(f"  transpose: {(time.perf_counter()-t0)*1000:.2f}ms")
-        
-        # Skip blending for sharp mode
-        if self.disable_blending:
-            self.dot_colors = rgb
-            return
         
         # Luminance calculation - fast integer version
         # 213r + 715g + 72b, normalize by 1000
@@ -336,13 +359,6 @@ class DotMatrix:
     
     def _sample_blend_fallback(self, surface):
         """Fallback implementation using pygame.Surface.get_at()."""
-        if self.disable_blending:
-            for row in range(self.height):
-                for col in range(self.width):
-                    color = surface.get_at((col, row))[:3]
-                    self.dot_colors[row][col] = color
-            return
-        
         # First pass: sample and calculate max luminance
         samples = []
         max_lum = 0.0

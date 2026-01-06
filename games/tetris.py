@@ -13,7 +13,7 @@ class Tetris:
         self.headless = HEADLESS
         self.blocks_width = 10
         self.blocks_height = 20
-        self.block_size = canvas.get_height() / self.blocks_height
+        self.block_size = canvas.get_height() // self.blocks_height
         print(f"block_size: {self.block_size}")
         self.screen = canvas
 
@@ -39,9 +39,11 @@ class Tetris:
         if not self.headless:
             pygame.display.flip()
 
-        x_offset = numpy.round(self.screen.get_width() / self.block_size).astype(int)
+        x_offset = self.screen.get_width() // self.block_size
+        y_offset = self.blocks_height - (self.screen.get_height() // self.block_size)
         # Draw cells
         for y_index, row in enumerate(self.grid):
+            y_position = y_index - y_offset
             for x_index, value in enumerate(row):
                 x_position = x_offset - x_index - 1
-                self.screen.blit(self.block_images[self.grid[y_index][x_index]], (x_position * self.block_size, y_index * self.block_size) )
+                self.screen.blit(self.block_images[self.grid[y_index][x_index]], (x_position * self.block_size, y_position * self.block_size) )

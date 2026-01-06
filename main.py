@@ -35,7 +35,8 @@ def main():
         fpp_output=ON_PI,
         show_source_preview=True,
         enable_performance_monitor=False,
-        disable_blending= True
+        disable_blending= True,
+        supersample=1
     )
     
     # Create drawing surface directly
