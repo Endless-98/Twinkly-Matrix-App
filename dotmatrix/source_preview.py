@@ -30,7 +30,7 @@ class SourcePreview:
             self.renderer = SDLRenderer(self.window)
 
     def _apply_min_brightness(self, surface):
-        """Clamp surface so every channel is at least the preview minimum."""
+        """Lift only near-black pixels up to the preview minimum, leave others unchanged."""
         if self.min_preview_color == (0, 0, 0):
             return surface
 
@@ -39,17 +39,20 @@ class SourcePreview:
 
         if HAS_NUMPY:
             pixels = pygame.surfarray.pixels3d(clamped)
-            np.maximum(pixels, self._min_preview_array, out=pixels)
+            thr = self._min_preview_array
+            mask = (pixels[:, :, 0] < thr[0]) & (pixels[:, :, 1] < thr[1]) & (pixels[:, :, 2] < thr[2])
+            pixels[mask] = thr
             del pixels  # release view
             return clamped
 
-        # Fallback: per-pixel clamp (preview-only, so acceptable if slower)
+        # Fallback: per-pixel clamp (only when all channels are below threshold)
         min_r, min_g, min_b = self.min_preview_color
         width, height = clamped.get_size()
         for y in range(height):
             for x in range(width):
                 r, g, b, *_ = clamped.get_at((x, y))
-                clamped.set_at((x, y), (max(r, min_r), max(g, min_g), max(b, min_b)))
+                if r < min_r and g < min_g and b < min_b:
+                    clamped.set_at((x, y), (min_r, min_g, min_b))
         return clamped
 
     def update(self, surface):

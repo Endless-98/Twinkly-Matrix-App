@@ -41,6 +41,9 @@ class DotMatrix:
         show_source_preview=False,
         fpp_output=False,
         fpp_memory_buffer_file="/dev/shm/FPP-Model-Data-Light_Wall",
+        fpp_color_order="RGB",
+        fpp_gamma=None,
+        fpp_channel_gains=(1.0, 1.0, 1.0),
         enable_performance_monitor=True,
         max_fps=20
     ):
@@ -59,6 +62,9 @@ class DotMatrix:
             show_source_preview: Show separate preview window of source
             fpp_output: Enable FPP memory-mapped output
             fpp_memory_buffer_file: Path to FPP memory buffer
+            fpp_color_order: One of RGB/GRB/BGR/BRG/RBG/GBR for hardware wiring
+            fpp_gamma: Optional gamma correction applied only to FPP output
+            fpp_channel_gains: Per-channel gain tuple applied only to FPP output
             enable_performance_monitor: Track and log performance
         """
         self.width = width
@@ -86,7 +92,13 @@ class DotMatrix:
         
         # Optional components
         self.monitor = PerformanceMonitor(enabled=enable_performance_monitor)
-        self.fpp = FPPOutput(width, height, fpp_memory_buffer_file) if fpp_output else None
+        # FPP output: pass through color correction and channel order
+        self.fpp = FPPOutput(
+            width, height, fpp_memory_buffer_file,
+            color_order=fpp_color_order,
+            gamma=fpp_gamma,
+            channel_gains=fpp_channel_gains,
+        ) if fpp_output else None
         # Scale preview window 6x for better visibility
         preview_scale = 6
         self.preview = SourcePreview(
@@ -231,7 +243,12 @@ class DotMatrix:
         if current_size == target_size:
             return source
         
-        # Apply supersampling if configured
+        # Choose scaling filter: nearest for sharp mode; smooth otherwise
+        if self.disable_blending:
+            # In sharp mode avoid any filtering to preserve exact colors
+            return pygame.transform.scale(source, target_size)
+
+        # Apply supersampling if configured (smooth scaling)
         if self.supersample > 1:
             upsampled_size = (self.width * self.supersample, self.height * self.supersample)
             if current_size != upsampled_size:
