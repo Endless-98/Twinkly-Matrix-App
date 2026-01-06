@@ -31,7 +31,7 @@ print(f"FPP Output: {ON_PI}\n")
 def main():
     # Create matrix with platform-appropriate settings
     matrix = DotMatrix(
-        headless=class,
+        headless=HEADLESS,
         fpp_output=ON_PI,
         show_source_preview=True,
         enable_performance_monitor=False

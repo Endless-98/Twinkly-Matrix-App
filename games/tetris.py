@@ -10,6 +10,7 @@ class Tetris:
     def __init__(self, canvas, HEADLESS):
         pygame.init() # Redundant?
         
+        self.headless = HEADLESS
         self.blocks_width = 10
         self.blocks_height = 20
         self.block_size = canvas.get_height() / self.blocks_height
@@ -25,7 +26,7 @@ class Tetris:
     def tick(self): # Called in main
         self.screen.fill((35,35,35))
         
-        if not HEADLESS:
+        if not self.headless:
             pygame.display.flip()
 
         x_start = numpy.round(self.screen.get_width() / self.block_size).astype(int)
