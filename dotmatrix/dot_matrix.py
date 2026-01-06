@@ -34,7 +34,8 @@ class DotMatrix:
         dot_size=6,
         spacing=15,
         should_stagger=True,
-        blend_power=0.2,
+        blend_power=0,        
+        disable_blending=True,        
         supersample=3,
         headless=False,
         show_source_preview=False,
@@ -52,6 +53,7 @@ class DotMatrix:
             spacing: Pixels between dots in visualization
             should_stagger: Offset alternating columns (hexagonal pattern)
             blend_power: Exponent for luminance blending (0.0-1.0)
+            disable_blending: If True, skip blending and use raw sampled colors for sharp rendering
             supersample: Antialiasing factor for source scaling
             headless: Skip pygame window creation
             show_source_preview: Show separate preview window of source
@@ -65,6 +67,7 @@ class DotMatrix:
         self.spacing = spacing
         self.should_stagger = should_stagger
         self.blend_power = max(0.001, blend_power)
+        self.disable_blending = disable_blending
         self.supersample = max(1, int(supersample))
         self.headless = headless
         self.max_fps = max_fps if max_fps and max_fps > 0 else None
@@ -254,6 +257,11 @@ class DotMatrix:
         rgb = np.transpose(pixel_view, (1, 0, 2))
         if debug: print(f"  transpose: {(time.perf_counter()-t0)*1000:.2f}ms")
         
+        # Skip blending for sharp mode
+        if self.disable_blending:
+            self.dot_colors = rgb
+            return
+        
         # Luminance calculation - fast integer version
         # 213r + 715g + 72b, normalize by 1000
         t0 = time.perf_counter() if debug else 0
@@ -328,6 +336,13 @@ class DotMatrix:
     
     def _sample_blend_fallback(self, surface):
         """Fallback implementation using pygame.Surface.get_at()."""
+        if self.disable_blending:
+            for row in range(self.height):
+                for col in range(self.width):
+                    color = surface.get_at((col, row))[:3]
+                    self.dot_colors[row][col] = color
+            return
+        
         # First pass: sample and calculate max luminance
         samples = []
         max_lum = 0.0

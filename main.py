@@ -34,7 +34,8 @@ def main():
         headless=HEADLESS,
         fpp_output=ON_PI,
         show_source_preview=True,
-        enable_performance_monitor=False
+        enable_performance_monitor=False,
+        disable_blending= True
     )
     
     # Create drawing surface directly
