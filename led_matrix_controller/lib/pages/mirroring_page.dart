@@ -183,6 +183,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     try {
       if (isCapturing) {
         final success = await ScreenCaptureService.stopCapture();
+        // Clean up DDP socket to prevent buffer buildup
+        DDPSender.disposeStatic();
         if (success) {
           setState(() {
             isCapturing = false;

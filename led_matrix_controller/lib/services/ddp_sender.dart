@@ -20,6 +20,8 @@ class DDPSender {
   // DDP header is 10 bytes, keep data <= 1200 bytes for safety
   static const int _maxChunkData = 1200;
   static File? _logFile;
+  static int _framesSinceSocketRecreate = 0;
+  static const int _socketRecreateInterval = 500; // Recreate socket every 500 frames to prevent buffer buildup
 
   /// Initialize log file
   static Future<void> _initLogFile() async {
@@ -116,12 +118,26 @@ class DDPSender {
           await Future.delayed(Duration(milliseconds: 50 - since));
         }
       }
-      // Initialize socket if needed
-      if (_staticSocket == null) {
+      // Initialize socket if needed or recreate periodically to prevent buffer buildup
+      if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
+        // Close old socket if recreating
+        if (_staticSocket != null) {
+          _staticSocket!.close();
+          _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
+        }
+        
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-        _staticSocket!.broadcastEnabled = true; // Enable broadcast just in case
+        _staticSocket!.broadcastEnabled = true;
+        
+        // Set socket options to minimize buffering
+        _staticSocket!.writeEventsEnabled = false; // We don't care about write events
+        _staticSocket!.readEventsEnabled = false;  // No incoming data expected
+        
+        _framesSinceSocketRecreate = 0;
         _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
       }
+      
+      _framesSinceSocketRecreate++;
 
       final addr = InternetAddress(host);
       
@@ -224,6 +240,7 @@ class DDPSender {
   static void disposeStatic() {
     _staticSocket?.close();
     _staticSocket = null;
+    _framesSinceSocketRecreate = 0;
   }
 }
 
