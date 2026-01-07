@@ -31,6 +31,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Verbose shell logging in debug mode
+if [ $DEBUG_MODE -eq 1 ]; then
+    set -x
+fi
+
 echo '🚀 Setting up/updating TwinklyWall on FPP...'
 
 # Sync repository
@@ -137,9 +142,9 @@ if [ $DEBUG_MODE -eq 1 ]; then
     echo '🧪 Debug mode: stopping any running services to avoid conflicts.'
     sudo systemctl stop twinklywall || true
     sudo systemctl stop ddp_bridge || true
-    echo 'ℹ️ Run the bridge manually:'
-    echo '    source ~/TwinklyWall_Project/TwinklyWall/.venv/bin/activate'
-    echo "    python3 ~/TwinklyWall_Project/TwinklyWall/ddp_bridge.py --port 4049 --width $WIDTH --height $HEIGHT --model \"$MODEL\" --verbose"
+    echo '▶️ Launching ddp_bridge in foreground (Ctrl+C to exit)...'
+    /home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin/python /home/fpp/TwinklyWall_Project/TwinklyWall/ddp_bridge.py --port 4049 --width "$WIDTH" --height "$HEIGHT" --model "$MODEL" --verbose
+    exit 0
 fi
 
 echo '✅ Setup/update complete!'
