@@ -4,6 +4,13 @@ import socket
 import struct
 import sys
 import time
+from collections import deque
+
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except Exception:
+    HAS_NUMPY = False
 
 # Local module to write to FPP Pixel Overlay mmap
 from dotmatrix.fpp_output import FPPOutput
@@ -29,6 +36,11 @@ class DdpBridge:
         self.verbose = verbose
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Increase receive buffer to reduce packet drops
+        try:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)  # 1MB
+        except Exception:
+            pass
         self.sock.bind(self.addr)
         # Use FPPOutput to target overlay mmap
         mmap_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
@@ -39,6 +51,16 @@ class DdpBridge:
         self.bytes_written = 0
         self.last_seq = None
         self.frames = 0
+        self.frames_written = 0
+        self.frames_dropped = 0
+        self.chunks_in_frame = 0
+        self.frame_start_ts = 0.0
+        self.last_write_ts = 0.0
+        self.write_ms_acc = 0.0
+        self._sec_start = time.time()
+        self._sec_frames_in = 0
+        self._sec_frames_out = 0
+        self._sec_dropped = 0
 
     def _log(self, msg):
         if self.verbose:
@@ -64,10 +86,13 @@ class DdpBridge:
             if len(payload) != ln:
                 continue
 
-            # If new sequence and offset==0, treat as new frame
-            if off == 0 and self.bytes_written > 0:
-                # Incomplete previous frame; reset
-                self.bytes_written = 0
+            # If new sequence start
+            if off == 0:
+                if self.bytes_written > 0:
+                    # Incomplete previous frame; reset counters
+                    self.bytes_written = 0
+                self.chunks_in_frame = 0
+                self.frame_start_ts = time.time()
 
             end_of_frame = (flags & 0x01) != 0
 
@@ -78,32 +103,61 @@ class DdpBridge:
 
             self.buf[off:end] = payload
             self.bytes_written = max(self.bytes_written, end)
+            self.chunks_in_frame += 1
 
             if end_of_frame and self.bytes_written >= self.frame_size:
-                # Write to overlay
+                # Rate gate: do not write faster than 20 FPS
+                now = time.time()
+                since_last = (now - self.last_write_ts) * 1000.0
+                if since_last < 50.0:
+                    # Drop this frame to keep FPP pacing
+                    self.frames_dropped += 1
+                    self._sec_dropped += 1
+                    self.bytes_written = 0
+                    continue
+
+                # Write to overlay using numpy fast path when available
                 try:
-                    # Interpret buffer as flat RGB rows; FPPOutput.write expects per-pixel triplets
-                    # We can provide a Python list of rows to avoid numpy requirement
-                    # But FPPOutput has a numpy fast path. Keep it simple: build a list-of-lists view.
-                    rows = self.height
-                    cols = self.width
-                    view = [
-                        [
-                            (self.buf[(r*cols + c)*3 + 0],
-                             self.buf[(r*cols + c)*3 + 1],
-                             self.buf[(r*cols + c)*3 + 2])
-                            for c in range(cols)
+                    write_start = time.perf_counter()
+                    if HAS_NUMPY:
+                        arr = np.frombuffer(self.buf, dtype=np.uint8).reshape(self.height, self.width, 3)
+                        ms = self.out.write(arr)
+                    else:
+                        rows = self.height
+                        cols = self.width
+                        view = [
+                            [
+                                (self.buf[(r*cols + c)*3 + 0],
+                                 self.buf[(r*cols + c)*3 + 1],
+                                 self.buf[(r*cols + c)*3 + 2])
+                                for c in range(cols)
+                            ]
+                            for r in range(rows)
                         ]
-                        for r in range(rows)
-                    ]
-                    self.out.write(view)
-                    self.frames += 1
-                    if self.frames % 60 == 0:
-                        self._log(f"Frames bridged: {self.frames}")
+                        ms = self.out.write(view)
+                    write_elapsed = (time.perf_counter() - write_start) * 1000.0
+                    self.write_ms_acc += write_elapsed
+                    self.frames_written += 1
+                    self._sec_frames_out += 1
+                    self.last_write_ts = now
                 except Exception as e:
                     self._log(f"Write error: {e}")
                 finally:
                     self.bytes_written = 0
+
+                # Per-second logging
+                self._sec_frames_in += 1
+                sec_elapsed = time.time() - self._sec_start
+                if sec_elapsed >= 1.0:
+                    avg_write_ms = (self.write_ms_acc / max(1, self._sec_frames_out))
+                    self._log(
+                        f"[FPP] 1s stats: in={self._sec_frames_in} fps | out={self._sec_frames_out} fps | drop={self._sec_dropped} | write {avg_write_ms:.2f}ms | chunks/frame={self.chunks_in_frame}"
+                    )
+                    self._sec_start = time.time()
+                    self._sec_frames_in = 0
+                    self._sec_frames_out = 0
+                    self._sec_dropped = 0
+                    self.write_ms_acc = 0.0
 
 
 def main():
