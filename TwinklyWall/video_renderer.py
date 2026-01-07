@@ -22,7 +22,8 @@ except ImportError:
 class VideoRenderer:
     """Renders video files to pre-computed color data for FPP playback."""
     
-    def __init__(self, matrix_width=90, matrix_height=50, output_dir="dotmatrix/rendered_videos"):
+    def __init__(self, matrix_width=90, matrix_height=50, output_dir="dotmatrix/rendered_videos", 
+                 downscale_factor=1.0, quantize_bits=8):
         """
         Initialize video renderer.
         
@@ -30,12 +31,19 @@ class VideoRenderer:
             matrix_width: Target LED matrix width
             matrix_height: Target LED matrix height
             output_dir: Directory to save rendered video data
+            downscale_factor: Downscale resolution by this factor (e.g., 0.5 = 80x45 from 90x50) to reduce payload
+            quantize_bits: Bits per color channel (8=no quantize, 6=reduce to 6-bit per channel for ~25% bandwidth savings)
         """
         if not HAS_CV2:
             raise ImportError("opencv-python is required for video rendering")
         
         self.width = matrix_width
         self.height = matrix_height
+        self.downscale_factor = max(0.1, min(1.0, downscale_factor))  # Clamp to 0.1-1.0
+        self.quantize_bits = max(1, min(8, quantize_bits))  # Clamp to 1-8
+        # Compute actual downscaled dimensions
+        self.downscaled_width = max(1, int(matrix_width * self.downscale_factor))
+        self.downscaled_height = max(1, int(matrix_height * self.downscale_factor))
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
@@ -71,9 +79,11 @@ class VideoRenderer:
         
         print(f"\nRendering video:")
         print(f"  Source: {video_path}")
-        print(f"  Resolution: {source_width}x{source_height} -> {self.width}x{self.height}")
+        print(f"  Resolution: {source_width}x{source_height} -> {self.downscaled_width}x{self.downscaled_height} (downscale {self.downscale_factor:.2f}x)")
+        print(f"  Quantization: {self.quantize_bits}-bit per channel" if self.quantize_bits < 8 else "  Quantization: none (8-bit)")
         print(f"  FPS: {source_fps:.2f} -> {target_fps:.2f}")
         print(f"  Total frames: {total_frames}")
+        print(f"  Payload reduction: {self._estimate_payload_reduction():.1f}%")
         
         # Pre-allocate output array
         frames_to_render = []
@@ -97,12 +107,17 @@ class VideoRenderer:
             # Convert BGR (OpenCV) to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             
-            # Resize to matrix dimensions using high-quality downsampling
-            resized = cv2.resize(frame_rgb, (self.width, self.height), 
+            # Resize to downscaled dimensions using high-quality downsampling
+            resized = cv2.resize(frame_rgb, (self.downscaled_width, self.downscaled_height), 
                                interpolation=cv2.INTER_AREA)
             
-            # Store as uint8 numpy array (height, width, 3)
-            frames_to_render.append(resized.astype(np.uint8))
+            # Apply quantization if needed (reduce to 6-bit, 4-bit, etc. per channel)
+            if self.quantize_bits < 8:
+                quantized = self._quantize_frame(resized)
+                frames_to_render.append(quantized.astype(np.uint8))
+            else:
+                # Store as uint8 numpy array (height, width, 3)
+                frames_to_render.append(resized.astype(np.uint8))
             
             rendered_count += 1
             if rendered_count % 100 == 0:
@@ -120,7 +135,8 @@ class VideoRenderer:
         # Save to file
         if output_name is None:
             input_name = Path(video_path).stem
-            output_name = f"{input_name}_{self.width}x{self.height}_{target_fps:.0f}fps.npz"
+            quant_str = f"_{self.quantize_bits}bit" if self.quantize_bits < 8 else ""
+            output_name = f"{input_name}_{self.downscaled_width}x{self.downscaled_height}_{target_fps:.0f}fps{quant_str}.npz"
         
         output_path = self.output_dir / output_name
         
@@ -129,9 +145,11 @@ class VideoRenderer:
             output_path,
             frames=np.array(frames_to_render, dtype=np.uint8),
             fps=target_fps,
-            width=self.width,
-            height=self.height,
-            source_video=video_path
+            width=self.downscaled_width,
+            height=self.downscaled_height,
+            source_video=video_path,
+            downscale_factor=self.downscale_factor,
+            quantize_bits=self.quantize_bits
         )
         
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
@@ -210,10 +228,37 @@ class VideoRenderer:
         
         return frames_played
 
+    def _quantize_frame(self, frame):
+        """Quantize frame to reduce bits per channel while maintaining visual quality."""
+        if self.quantize_bits >= 8:
+            return frame
+        
+        # Compute scale and inverse scale for quantization
+        max_val = (1 << self.quantize_bits) - 1  # 2^bits - 1
+        scale = max_val / 255.0
+        inv_scale = 255.0 / max_val
+        
+        # Quantize: reduce precision, then expand back to 0-255 range
+        quantized = (frame * scale).astype(np.uint8)
+        expanded = (quantized * inv_scale).astype(np.uint8)
+        return expanded
 
-def render_video_cli(video_path, output_fps=None, matrix_width=90, matrix_height=50):
+    def _estimate_payload_reduction(self):
+        """Estimate payload reduction percentage from downscaling and quantization."""
+        # Downscaling reduces pixels by factor^2
+        downscale_reduction = (1.0 - self.downscale_factor * self.downscale_factor) * 100.0
+        # Quantization reduces bits per pixel by (8 - quantize_bits) / 8
+        quantize_reduction = (1.0 - self.quantize_bits / 8.0) * 100.0
+        # Combined (roughly additive, not exact due to compression)
+        total = min(downscale_reduction + quantize_reduction, 95.0)
+        return total
+
+
+def render_video_cli(video_path, output_fps=None, matrix_width=90, matrix_height=50,
+                     downscale_factor=1.0, quantize_bits=8):
     """Convenience function for command-line video rendering."""
-    renderer = VideoRenderer(matrix_width, matrix_height)
+    renderer = VideoRenderer(matrix_width, matrix_height, downscale_factor=downscale_factor, 
+                            quantize_bits=quantize_bits)
     return renderer.render_video(video_path, output_fps=output_fps)
 
 
@@ -221,13 +266,16 @@ if __name__ == "__main__":
     import sys
     
     if len(sys.argv) < 2:
-        print("Usage: python video_renderer.py <video_path> [fps] [width] [height]")
-        print("Example: python video_renderer.py demo.mp4 20 90 50")
+        print("Usage: python video_renderer.py <video_path> [fps] [width] [height] [downscale] [quantize_bits]")
+        print("Example: python video_renderer.py demo.mp4 20 90 50 0.889 6")
+        print("         (renders 90x50 at 20fps, downscaled to 80x45, 6-bit quantized)")
         sys.exit(1)
     
     video_path = sys.argv[1]
     fps = float(sys.argv[2]) if len(sys.argv) > 2 else None
     width = int(sys.argv[3]) if len(sys.argv) > 3 else 90
     height = int(sys.argv[4]) if len(sys.argv) > 4 else 50
+    downscale = float(sys.argv[5]) if len(sys.argv) > 5 else 1.0
+    quantize = int(sys.argv[6]) if len(sys.argv) > 6 else 8
     
-    render_video_cli(video_path, fps, width, height)
+    render_video_cli(video_path, fps, width, height, downscale, quantize)

@@ -43,7 +43,7 @@ class DdpBridge:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Bind exclusively to avoid multiple bridges competing
         # (Do not enable SO_REUSEADDR for this UDP port)
-        # Increase receive buffer to reduce packet drops
+        # Increase receive buffer to reduce packet drops (4MB)
         try:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)  # 4MB
         except Exception:
@@ -64,7 +64,7 @@ class DdpBridge:
         self.frames_dropped = 0
         self.chunks_in_frame = 0
         self.frame_start_ts = 0.0
-        self.frame_timeout_ms = 100.0  # Reset incomplete frames after 100ms
+        self.frame_timeout_ms = 50.0  # Reset incomplete frames after 50ms (tightened for faster stale frame drop)
         self.last_write_ts = 0.0
         self.write_ms_acc = 0.0
         self._sec_start = time.time()
@@ -86,7 +86,7 @@ class DdpBridge:
         while True:
             # Batch-process all available packets
             packets_this_loop = 0
-            while packets_this_loop < 50:  # Process up to 50 packets per batch
+            while packets_this_loop < 200:  # Process up to 200 packets per batch (increased for burst handling)
                 try:
                     data, sender = self.sock.recvfrom(1500)
                     packets_this_loop += 1

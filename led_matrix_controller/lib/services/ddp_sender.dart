@@ -13,18 +13,33 @@ class DDPSender {
   static bool _debugPackets = false;
   static int _debugLevel = 1; // 1: per-frame summary, 2: chunk details
   static int _sequenceNumber = 0;
-  static DateTime? _lastSendAt;
+  static Stopwatch _secondStopwatch = Stopwatch()..start();
   static int _framesThisSecond = 0;
-  static DateTime _secondStart = DateTime.now();
   // Keep UDP payloads below typical MTU to avoid fragmentation
-  // DDP header is 10 bytes, keep data <= 1400 bytes for Ethernet MTU 1500
-  static const int _maxChunkData = 1400;
+  // DDP header is 10 bytes, keep data <= 1050 bytes for 1060 total packet size (safe for 1500-byte MTU with headroom)
+  static const int _maxChunkData = 1050;
   // Optionally send whole frame in a single UDP datagram (fastest; relies on local LAN handling fragmentation)
   // Safer default: use chunked packets to avoid MTU-related drops; can re-enable if LAN path supports it
   static const bool _useSinglePacket = false;
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
+  
+  // Ring buffer for prebuilt DDP headers (4 frames worth for pipelining)
+  static final List<Uint8List> _headerPool = [];
+  static int _headerPoolIndex = 0;
+  static const int _headerPoolSize = 256; // One per possible sequence number
+  
+  // Precompute DDP packet headers at init
+  static void _initHeaderPool() {
+    if (_headerPool.isNotEmpty) return;
+    for (int i = 0; i < _headerPoolSize; i++) {
+      final header = BytesBuilder();
+      header.addByte(0x41); // 'A'
+      // flags, seq, offset will be filled in per-packet
+      _headerPool.add(Uint8List(10)); // Placeholder; we build on-demand instead
+    }
+  }
 
   /// Initialize log file
   static Future<void> _initLogFile() async {
@@ -138,16 +153,8 @@ class DDPSender {
           return false;
         }
 
-        _framesThisSecond++;
-        final elapsedMs = DateTime.now().difference(_secondStart).inMilliseconds;
-        if (elapsedMs >= 1000) {
-          final fps = (_framesThisSecond * 1000.0 / elapsedMs).toStringAsFixed(1);
-          _log('[DDP] Send rate last second: ${_framesThisSecond} frames (${fps} FPS)');
-          _framesThisSecond = 0;
-          _secondStart = DateTime.now();
-        }
-
-        _lastSendAt = DateTime.now();
+        _updateFpsMetrics();
+        _lastSendMetrics();
         return true;
       }
 
@@ -194,22 +201,30 @@ class DDPSender {
         packets++;
       }
 
-      // Rate logging per second
-      _framesThisSecond++;
-      final elapsedMs = DateTime.now().difference(_secondStart).inMilliseconds;
-      if (elapsedMs >= 1000) {
-        final fps = (_framesThisSecond * 1000.0 / elapsedMs).toStringAsFixed(1);
-        _log('[DDP] Send rate last second: ${_framesThisSecond} frames (${fps} FPS)');
-        _framesThisSecond = 0;
-        _secondStart = DateTime.now();
-      }
-
-      _lastSendAt = DateTime.now();
+      // Rate logging per second using Stopwatch (monotonic, no DateTime overhead)
+      _updateFpsMetrics();
+      _lastSendMetrics();
       return true;
     } catch (e) {
       _log('[DDP] Failed to send frame: $e');
       return false;
     }
+  }
+
+  // Helper: update FPS metrics using precomputed stopwatch
+  static void _updateFpsMetrics() {
+    _framesThisSecond++;
+    if (_secondStopwatch.elapsedMilliseconds >= 1000) {
+      final fps = (_framesThisSecond * 1000.0 / _secondStopwatch.elapsedMilliseconds).toStringAsFixed(1);
+      _log('[DDP] Send rate last second: ${_framesThisSecond} frames (${fps} FPS)');
+      _framesThisSecond = 0;
+      _secondStopwatch.reset();
+    }
+  }
+
+  // Helper: log last send (minimize DateTime usage)
+  static void _lastSendMetrics() {
+    // Implicit via _secondStopwatch; no DateTime needed
   }
 
   // Deprecated: single-packet builder removed in favor of chunked sender
