@@ -30,6 +30,14 @@ print(f"Mode: {'Headless' if HEADLESS else 'Windowed'}")
 print(f"FPP Output: {ON_PI}\n")
 
 
+def _resolve_fpp_memory_file():
+    env_file = os.environ.get('FPP_MEMORY_FILE')
+    if env_file:
+        return env_file
+    model_name = os.environ.get('FPP_MODEL_NAME', 'Light Wall')
+    return f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
+
+
 def run_tetris(matrix):
     canvas_width = matrix.width * matrix.supersample
     canvas_height = matrix.height * matrix.supersample
@@ -83,6 +91,9 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
 
 
 def build_matrix():
+    fpp_memory_file = _resolve_fpp_memory_file()
+    if ON_PI:
+        print(f"FPP memory file: {fpp_memory_file}")
     return DotMatrix(
         headless=HEADLESS,
         fpp_output=ON_PI,
@@ -93,6 +104,7 @@ def build_matrix():
         # Keep FPP options configurable later; defaults here
         fpp_gamma=2.2,
         fpp_color_order="RGB",
+        fpp_memory_buffer_file=fpp_memory_file,
     )
 
 

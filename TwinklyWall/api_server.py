@@ -25,6 +25,22 @@ rendered_videos_dir = Path("dotmatrix/rendered_videos")
 source_videos_dir = Path("assets/source_videos")
 
 
+def _resolve_fpp_memory_file():
+    """Resolve the FPP memory-mapped file path from env.
+
+    Precedence:
+    - FPP_MEMORY_FILE (full path)
+    - FPP_MODEL_NAME (model name; spaces become underscores)
+    - default to Light_Wall
+    """
+    env_file = os.environ.get("FPP_MEMORY_FILE")
+    if env_file:
+        return env_file
+    model_name = os.environ.get("FPP_MODEL_NAME", "Light Wall")
+    safe_model = model_name.replace(" ", "_")
+    return f"/dev/shm/FPP-Model-Data-{safe_model}"
+
+
 def get_video_name_from_source(source_filename):
     """Convert source video filename to rendered video filename."""
     base_name = Path(source_filename).stem
@@ -47,6 +63,12 @@ def initialize_matrix():
         
         headless = on_pi or ('DISPLAY' not in os.environ)
         
+        fpp_memory_file = _resolve_fpp_memory_file()
+        print(f"DotMatrix init: headless={headless}")
+        print(f"DotMatrix FPP output enabled: {on_pi}")
+        if on_pi:
+            print(f"DotMatrix FPP memory file: {fpp_memory_file}")
+
         current_matrix = DotMatrix(
             headless=headless,
             fpp_output=on_pi,
@@ -56,6 +78,7 @@ def initialize_matrix():
             supersample=1,
             fpp_gamma=2.2,
             fpp_color_order="RGB",
+            fpp_memory_buffer_file=fpp_memory_file,
         )
     return current_matrix
 
