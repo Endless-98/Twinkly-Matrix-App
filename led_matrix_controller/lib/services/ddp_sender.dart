@@ -130,7 +130,23 @@ class DDPSender {
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
-        final bytesSent = _staticSocket!.send(packet, addr, port);
+        
+        int bytesSent = 0;
+        int retries = 0;
+        while (bytesSent == 0 && retries < 3) {
+          bytesSent = _staticSocket!.send(packet, addr, port);
+          if (bytesSent == 0) {
+            _log('[DDP] Send returned 0, retrying... (attempt ${retries + 1})');
+            await Future.delayed(Duration(milliseconds: 10));
+            retries++;
+          }
+        }
+        
+        if (bytesSent == 0) {
+          _log('[DDP] ERROR: Failed to send packet after 3 retries. Socket may be blocked by firewall.');
+          return false;
+        }
+        
         if (bytesSent != packet.length) {
           _log('[DDP] WARNING: Tried to send ${packet.length} bytes, only $bytesSent sent');
         }
