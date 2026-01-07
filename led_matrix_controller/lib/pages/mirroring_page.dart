@@ -316,7 +316,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
               padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Center(

@@ -21,7 +21,7 @@ class ControllerPage extends ConsumerWidget {
               padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
+                child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Text(
