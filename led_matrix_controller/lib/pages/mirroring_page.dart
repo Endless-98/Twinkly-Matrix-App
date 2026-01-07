@@ -39,6 +39,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
   Future<void> _startDesktopCapture() async {
     final fppIp = ref.read(fppIpProvider);
+    final fppPort = ref.read(fppDdpPortProvider);
     
     setState(() {
       isCapturing = true;
@@ -46,7 +47,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       frameCount = 0;
     });
 
-    debugPrint("[MIRRORING] Starting desktop capture, target FPP: $fppIp:4048");
+    debugPrint("[MIRRORING] Starting desktop capture, target FPP: $fppIp:$fppPort");
     DDPSender.setDebugLevel(2); // Verbose per-chunk logging for diagnostics
 
     // Capture at ~20 FPS (50ms per frame)
@@ -61,11 +62,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             debugPrint("[MIRRORING] WARNING: Frame size ${screenshotData.length} != 13500");
           }
           
-          debugPrint("[MIRRORING] Sending frame $frameCount (${screenshotData.length} bytes) to $fppIp");
+          debugPrint("[MIRRORING] Sending frame $frameCount (${screenshotData.length} bytes) to $fppIp:$fppPort");
           
           // Send to FPP via DDP
           final sendStart = DateTime.now();
-          final sent = await DDPSender.sendFrameStatic(fppIp, screenshotData);
+          final sent = await DDPSender.sendFrameStatic(fppIp, screenshotData, port: fppPort);
           final sendDuration = DateTime.now().difference(sendStart);
           
           if (sent) {
@@ -155,6 +156,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
   /// Send a solid red test frame to verify DDP connectivity
   Future<void> _sendTestFrame() async {
     final fppIp = ref.read(fppIpProvider);
+    final fppPort = ref.read(fppDdpPortProvider);
     setState(() {
       statusMessage = "Sending test frame (red)...";
     });
@@ -168,7 +170,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     }
 
     DDPSender.setDebug(true);
-    final sent = await DDPSender.sendFrameStatic(fppIp, testFrame);
+    final sent = await DDPSender.sendFrameStatic(fppIp, testFrame, port: fppPort);
     
     setState(() {
       if (sent) {
@@ -184,6 +186,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
   @override
   Widget build(BuildContext context) {
     final fppIp = ref.watch(fppIpProvider);
+    final fppPort = ref.watch(fppDdpPortProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -249,7 +252,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'FPP: $fppIp:4048',
+                    'FPP: $fppIp:$fppPort',
                     style: const TextStyle(color: Colors.white54, fontSize: 12),
                   ),
                   const SizedBox(height: 8),
