@@ -21,6 +21,9 @@ class ScreenCaptureService {
   static Uint8List _stdoutRemainder = Uint8List(0);
   static StreamQueue<List<int>>? _stdoutQueue;
   static bool _receivedFirstFrame = false;
+  static Uint8List? _preFrameBuffer;
+  static Uint8List? _outFrameBuffer;
+  static Uint8List? _gammaLut;
   
   // Frame dimensions - will auto-detect from display
   static int _screenWidth = 1920;
@@ -319,6 +322,10 @@ class ScreenCaptureService {
       });
       
       debugPrint("[FFMPEG] Process started, PID: ${_ffmpegProcess!.pid}");
+      // Prepare buffers
+      _preFrameBuffer = Uint8List(_preTargetFrameSize);
+      _outFrameBuffer = Uint8List(_targetFrameSize);
+      _initGammaLut(2.2);
       return true;
     } catch (e) {
       debugPrint("[FFMPEG] Failed to start stream: $e");
@@ -420,6 +427,8 @@ class ScreenCaptureService {
       }
       // Read pre-target size (90x100) from FFmpeg
       final frameSize = _preTargetFrameSize;
+      final preBuf = _preFrameBuffer ?? Uint8List(_preTargetFrameSize);
+      int writeOffset = 0;
 
       // Ensure we have a continuous buffer to pull exact frame sizes
       final builder = BytesBuilder(copy: false);
@@ -434,17 +443,28 @@ class ScreenCaptureService {
         return null;
       }
 
-      while (builder.length < frameSize) {
+      // Consume any remainder first
+      if (_stdoutRemainder.isNotEmpty && writeOffset < frameSize) {
+        final copyLen = (frameSize - writeOffset) < _stdoutRemainder.length
+            ? (frameSize - writeOffset)
+            : _stdoutRemainder.length;
+        preBuf.setRange(writeOffset, writeOffset + copyLen, _stdoutRemainder);
+        writeOffset += copyLen;
+        _stdoutRemainder = (_stdoutRemainder.length > copyLen)
+            ? Uint8List.sublistView(_stdoutRemainder, copyLen)
+            : Uint8List(0);
+      }
+
+      while (writeOffset < frameSize) {
         try {
           // Use longer timeout for first frame to allow FFmpeg warmup
           final timeout = _receivedFirstFrame
               ? const Duration(milliseconds: 150)
               : const Duration(seconds: 3);
           final hasNext = await queue.hasNext.timeout(timeout);
-
           if (!hasNext) {
-            if (builder.length > 0) {
-              debugPrint("[STREAM] Incomplete frame: ${builder.length}/$frameSize bytes");
+            if (writeOffset > 0) {
+              debugPrint("[STREAM] Incomplete frame: ${writeOffset}/$frameSize bytes");
             }
             _streamInitialized = false;
             return null;
@@ -454,7 +474,14 @@ class ScreenCaptureService {
           if (chunk.isEmpty) {
             continue;
           }
-          builder.add(chunk);
+          final remaining = frameSize - writeOffset;
+          final copyLen = chunk.length <= remaining ? chunk.length : remaining;
+          preBuf.setRange(writeOffset, writeOffset + copyLen, chunk);
+          writeOffset += copyLen;
+          if (chunk.length > copyLen) {
+            // Save remainder for next frame
+            _stdoutRemainder = Uint8List.sublistView(chunk, copyLen);
+          }
         } on StateError catch (e) {
           debugPrint("[STREAM] Queue error: $e");
           _streamInitialized = false;
@@ -466,26 +493,12 @@ class ScreenCaptureService {
         }
       }
 
-      final combined = builder.takeBytes();
-      final frameBytesPre = Uint8List.sublistView(combined, 0, frameSize);
-      final remainingLength = combined.length - frameSize;
-      _stdoutRemainder = remainingLength > 0
-          ? Uint8List.sublistView(combined, frameSize)
-          : Uint8List(0);
-
-      // Mark first frame received
       _receivedFirstFrame = true;
 
-      // Fold 90x100 into 90x50 to match DDP matrix
-      final folded = _foldVertical(frameBytesPre, _targetWidth, _preTargetHeight);
-      if (folded == null) {
-        debugPrint('[STREAM] Fold failed');
-        _streamInitialized = false;
-        return null;
-      }
-
-      // Apply gamma 2.2 correction to avoid washed out appearance
-      return _applyGamma(folded, 2.2);
+      // Fold + gamma in single pass using LUT
+      final outBuf = _outFrameBuffer ?? Uint8List(_targetFrameSize);
+      _foldAndGammaInterleave(preBuf, outBuf);
+      return outBuf;
     } catch (e) {
       debugPrint("[STREAM] Error reading frame: $e");
       _streamInitialized = false;
@@ -493,29 +506,20 @@ class ScreenCaptureService {
     }
   }
 
-  /// Apply gamma correction with exponent (e.g., 2.2)
-  static Uint8List _applyGamma(Uint8List rgbData, double gamma) {
-    final out = Uint8List(rgbData.length);
-    for (int i = 0; i < rgbData.length; i += 3) {
-      final r = rgbData[i] / 255.0;
-      final g = rgbData[i + 1] / 255.0;
-      final b = rgbData[i + 2] / 255.0;
-      out[i] = (255.0 * Math.pow(r, gamma)).round().clamp(0, 255);
-      out[i + 1] = (255.0 * Math.pow(g, gamma)).round().clamp(0, 255);
-      out[i + 2] = (255.0 * Math.pow(b, gamma)).round().clamp(0, 255);
+  /// Initialize gamma LUT for fast per-channel mapping
+  static void _initGammaLut(double gamma) {
+    final lut = Uint8List(256);
+    for (int v = 0; v < 256; v++) {
+      lut[v] = (255.0 * Math.pow(v / 255.0, gamma)).round().clamp(0, 255);
     }
-    return out;
+    _gammaLut = lut;
   }
 
-  /// Fold a 90x100 RGB buffer into 90x50 by interleaving columns:
-  /// even x uses top half row y, odd x uses bottom half row y+50.
-  /// This preserves full-screen content on staggered matrices.
-  static Uint8List? _foldVertical(Uint8List rgbData, int width, int height) {
-    if (height % 2 != 0) {
-      return null;
-    }
-    final half = height ~/ 2; // 50
-    final out = Uint8List(width * half * 3);
+  /// Fold 90x100 -> 90x50 and apply gamma via LUT in one pass
+  static void _foldAndGammaInterleave(Uint8List pre, Uint8List out) {
+    final width = _targetWidth;
+    final half = _preTargetHeight ~/ 2; // 50
+    final lut = _gammaLut ?? Uint8List(256);
 
     int outIdx = 0;
     for (int y = 0; y < half; y++) {
@@ -524,12 +528,11 @@ class ScreenCaptureService {
       for (int x = 0; x < width; x++) {
         final srcY = (x % 2 == 0) ? yTop : yBottom;
         final srcIdx = (srcY * width + x) * 3;
-        out[outIdx++] = rgbData[srcIdx];
-        out[outIdx++] = rgbData[srcIdx + 1];
-        out[outIdx++] = rgbData[srcIdx + 2];
+        out[outIdx++] = lut[pre[srcIdx]];
+        out[outIdx++] = lut[pre[srcIdx + 1]];
+        out[outIdx++] = lut[pre[srcIdx + 2]];
       }
     }
-    return out;
   }
 
   /// Process raw RGB24 data: resize to 90x50, return as RGB

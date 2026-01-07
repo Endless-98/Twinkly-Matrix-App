@@ -13,6 +13,9 @@ class DDPSender {
   static bool _debugPackets = false;
   static int _debugLevel = 1; // 1: per-frame summary, 2: chunk details
   static int _sequenceNumber = 0;
+  static DateTime? _lastSendAt;
+  static int _framesThisSecond = 0;
+  static DateTime _secondStart = DateTime.now();
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1200 bytes for safety
   static const int _maxChunkData = 1200;
@@ -105,6 +108,14 @@ class DDPSender {
     }
 
     try {
+      // Enforce <= 20 FPS internal gate
+      final now = DateTime.now();
+      if (_lastSendAt != null) {
+        final since = now.difference(_lastSendAt!).inMilliseconds;
+        if (since < 50) {
+          await Future.delayed(Duration(milliseconds: 50 - since));
+        }
+      }
       // Initialize socket if needed
       if (_staticSocket == null) {
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
@@ -135,6 +146,17 @@ class DDPSender {
         packets++;
       }
 
+      // Rate logging per second
+      _framesThisSecond++;
+      final elapsedMs = DateTime.now().difference(_secondStart).inMilliseconds;
+      if (elapsedMs >= 1000) {
+        final fps = (_framesThisSecond * 1000.0 / elapsedMs).toStringAsFixed(1);
+        _log('[DDP] Send rate last second: ${_framesThisSecond} frames (${fps} FPS)');
+        _framesThisSecond = 0;
+        _secondStart = DateTime.now();
+      }
+
+      _lastSendAt = DateTime.now();
       return true;
     } catch (e) {
       _log('[DDP] Failed to send frame: $e');
