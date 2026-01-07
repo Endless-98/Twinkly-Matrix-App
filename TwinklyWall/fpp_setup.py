@@ -59,6 +59,16 @@ def install_service(tw_dir: Path, service_name: str = "twinklywall"):
     run(["systemctl", "enable", service_name], sudo=True, check=False)
 
 
+def install_ddp_bridge_service(tw_dir: Path, service_name: str = "ddp_bridge"):
+    unit_src = tw_dir / "ddp_bridge.service"
+    unit_dst = Path("/etc/systemd/system") / f"{service_name}.service"
+    if not unit_src.exists():
+        raise FileNotFoundError(f"Missing service file: {unit_src}")
+    run(["cp", str(unit_src), str(unit_dst)], sudo=True)
+    run(["systemctl", "daemon-reload"], sudo=True)
+    run(["systemctl", "enable", service_name], sudo=True, check=False)
+
+
 def restart_service(service_name: str = "twinklywall"):
     run(["systemctl", "restart", service_name], sudo=True)
     # Small delay for Flask to bind
@@ -126,8 +136,14 @@ def main():
     print("\n== Installing/Updating systemd service ==")
     install_service(tw_dir, service_name=args.service)
 
+    print("\n== Installing/Updating DDP bridge service ==")
+    install_ddp_bridge_service(tw_dir, service_name="ddp_bridge")
+
     print("\n== Restarting service ==")
     restart_service(service_name=args.service)
+
+    print("\n== Restarting DDP bridge service ==")
+    restart_service(service_name="ddp_bridge")
 
     print("\n== Waiting for API health ==")
     ok = wait_for_health()
@@ -143,7 +159,8 @@ def main():
         print("\nRendered videos present or render step skipped.")
 
     print("\nAll set. API is running at http://localhost:5000")
-    print("Tip: Ensure FPP Bridge Mode is ON and no playlist is overriding inputs.")
+    print("DDP bridge listening on UDP :4049 → Pixel Overlay Light_Wall")
+    print("Tip: You can target the bridge by sending DDP frames to port 4049.")
 
 
 if __name__ == "__main__":
