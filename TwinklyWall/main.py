@@ -1,6 +1,7 @@
 import os
 import sys
 import argparse
+import signal
 
 # Set pygame to use dummy driver if headless
 def is_raspberry_pi():
@@ -120,10 +121,27 @@ def main():
     parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")
     args = parser.parse_args()
 
+    # Install graceful shutdown for SIGTERM/SIGINT so systemd stops cleanly
+    def _graceful_exit(signum, frame):
+        try:
+            print(f"Received signal {signum}, shutting down...")
+            # Best-effort cleanup for API mode if imported
+            try:
+                from api_server import cleanup
+                cleanup()
+            except Exception:
+                pass
+        finally:
+            sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _graceful_exit)
+    signal.signal(signal.SIGINT, _graceful_exit)
+
     if args.mode == "api":
         # Run the API server
         print("Starting API server mode...")
         from api_server import app
+        # Ensure no reloader threads and clean exit on signals
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     else:
         matrix = build_matrix()
