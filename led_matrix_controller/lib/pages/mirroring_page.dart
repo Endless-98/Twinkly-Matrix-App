@@ -93,10 +93,21 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     int totalMsAcc = 0;
     int captureMsAcc = 0;
     int sendMsAcc = 0;
+    int waitMsAcc = 0;
+    DateTime? lastSendAt;
     while (isCapturing) {
       try {
         final frameStart = DateTime.now();
-        final screenshotStart = frameStart;
+        // Enforce 20 FPS pacing before sending
+        if (lastSendAt != null) {
+          final sinceLast = frameStart.difference(lastSendAt!).inMilliseconds;
+          final preWait = sinceLast < 50 ? 50 - sinceLast : 0;
+          if (preWait > 0) {
+            await Future.delayed(Duration(milliseconds: preWait));
+            waitMsAcc += preWait;
+          }
+        }
+        final screenshotStart = DateTime.now();
         final screenshotData = await ScreenCaptureService.captureScreenshot();
         final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
 
@@ -113,12 +124,10 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
             break;
           }
+          lastSendAt = DateTime.now();
 
           final totalMs = DateTime.now().difference(frameStart).inMilliseconds;
-          final sleepMs = totalMs < 50 ? 50 - totalMs : 0;
-          if (sleepMs > 0) {
-            await Future.delayed(Duration(milliseconds: sleepMs));
-          }
+          // totalMs includes pre-wait + capture + send
 
           frameCount++;
           totalMsAcc += totalMs;
@@ -129,15 +138,17 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             final avgFrameMs = (totalMsAcc / 20).toStringAsFixed(1);
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
+            final avgWaitMs = (waitMsAcc / 20).toStringAsFixed(1);
             final fps = (1000 / double.parse(avgFrameMs)).toStringAsFixed(1);
             totalMsAcc = 0;
             captureMsAcc = 0;
             sendMsAcc = 0;
+            waitMsAcc = 0;
 
             setState(() {
-              statusMessage = "Streaming @ $fps FPS | frame ${avgFrameMs}ms (capture ${avgCaptureMs}ms, send ${avgSendMs}ms) | total $frameCount";
+              statusMessage = "Streaming @ $fps FPS | frame ${avgFrameMs}ms (wait ${avgWaitMs}ms, capture ${avgCaptureMs}ms, send ${avgSendMs}ms) | total $frameCount";
             });
-            debugPrint("[MIRRORING] $frameCount frames | ${fps} FPS | frame ${avgFrameMs}ms (capture ${avgCaptureMs}ms, send ${avgSendMs}ms)");
+            debugPrint("[MIRRORING] $frameCount frames | ${fps} FPS | frame ${avgFrameMs}ms (wait ${avgWaitMs}ms, capture ${avgCaptureMs}ms, send ${avgSendMs}ms)");
           }
         } else {
           debugPrint("[MIRRORING] ERROR: Capture returned null");
