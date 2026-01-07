@@ -7,8 +7,7 @@ import 'package:async/async.dart';
 import 'package:image/image.dart' as img;
 import 'dart:ffi' as ffi;
 import 'package:ffi/ffi.dart';
-
-enum CaptureMode { desktop, appWindow, region }
+import '../providers/app_state.dart';
 
 /// Persistent FFmpeg stream for continuous screen capture
 /// Keeps FFmpeg running and streams raw RGB data for multiple frames
