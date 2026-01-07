@@ -242,13 +242,15 @@ class ScreenCaptureService {
             break;
         }
         
-        // Output scaling - force format conversion BEFORE scale to prevent reconfiguration
-        // gdigrab outputs bgr0/bgra, we need to convert to rgb24 explicitly
+        // Output scaling and format conversion
+        // Reorder filters: scale first, then format
+        // Explicitly set output size to satisfy rawvideo muxer
         ffmpegArgs.addAll([
-          '-vf', 'format=rgb24,scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear,format=rgb24',
           '-pix_fmt', 'rgb24',
+          '-s', '${_targetWidth}x${_targetHeight}',
           '-f', 'rawvideo',
-          '-'  // Pipe to stdout (standard output)
+          'pipe:1'
         ]);
       } else {
         // Linux: Use x11grab (only desktop mode supported for now)
