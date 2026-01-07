@@ -235,9 +235,21 @@ class DotMatrix:
         return total_time
     
     def _scale_surface(self, source):
-        """Scale source surface to matrix dimensions with supersampling."""
-        target_size = (self.width, self.height)
+        """Scale source surface to matrix dimensions with supersampling.
+        
+        Special case: if source is 90×100 (staggered canvas), use it as-is.
+        The 100px height accounts for the stagger where odd columns sample different rows.
+        """
         current_size = source.get_size()
+        
+        # Special case: staggered canvas (90 × height*2) should not be scaled
+        # This allows proper sampling of staggered columns
+        staggered_size = (self.width, self.height * 2)
+        if self.should_stagger and current_size == staggered_size:
+            # Canvas is already at staggered size; no scaling needed
+            return source
+        
+        target_size = (self.width, self.height)
         
         # Skip scaling if already at target size
         if current_size == target_size:
@@ -273,17 +285,62 @@ class DotMatrix:
             self._sample_blend_fallback(surface)
 
     def _sample_no_blend_numpy(self, surface):
-        """Directly sample colors without luminance blending (numpy path)."""
+        """Directly sample colors without luminance blending (numpy path).
+        
+        Handles staggered canvas (90×100) by extracting rows based on column parity.
+        """
         pixel_view = surfarray.pixels3d(surface)
-        # Copy to avoid holding a locked view on the source surface
-        self.dot_colors = np.transpose(pixel_view, (1, 0, 2)).copy(order='C')
+        # pixel_view shape is (width, height, 3)
+        w, h = pixel_view.shape[0], pixel_view.shape[1]
+        
+        # Check if this is a staggered canvas (height = width * 2)
+        if self.should_stagger and h == self.height * 2:
+            # Staggered canvas: sample with column-dependent row offsets
+            # Even columns sample from rows [0,2,4,...], Odd columns from [1,3,5,...]
+            result = np.zeros((self.height, self.width, 3), dtype=np.uint8)
+            for col in range(self.width):
+                if col % 2 == 0:
+                    # Even column: sample every other row starting at 0
+                    src_rows = np.arange(0, h, 2, dtype=np.int32)
+                else:
+                    # Odd column: sample every other row starting at 1
+                    src_rows = np.arange(1, h, 2, dtype=np.int32)
+                
+                # Copy sampled rows for this column
+                for dst_row, src_row in enumerate(src_rows):
+                    if src_row < h:
+                        result[dst_row, col] = pixel_view[col, src_row]
+            self.dot_colors = result
+        else:
+            # Regular canvas: standard transpose
+            self.dot_colors = np.transpose(pixel_view, (1, 0, 2)).copy(order='C')
         del pixel_view
 
     def _sample_no_blend_fallback(self, surface):
-        """Direct sampling without blending (fallback path)."""
-        for row in range(self.height):
+        """Direct sampling without blending (fallback path).
+        
+        Handles staggered canvas (90×100) by extracting rows based on column parity.
+        """
+        w, h = surface.get_size()
+        
+        if self.should_stagger and h == self.height * 2:
+            # Staggered canvas: sample with column-dependent row offsets
             for col in range(self.width):
-                self.dot_colors[row][col] = surface.get_at((col, row))[:3]
+                if col % 2 == 0:
+                    # Even column: sample every other row starting at 0
+                    src_rows = list(range(0, h, 2))
+                else:
+                    # Odd column: sample every other row starting at 1
+                    src_rows = list(range(1, h, 2))
+                
+                for dst_row, src_row in enumerate(src_rows):
+                    if src_row < h:
+                        self.dot_colors[dst_row][col] = surface.get_at((col, src_row))[:3]
+        else:
+            # Regular canvas: direct sampling
+            for row in range(self.height):
+                for col in range(self.width):
+                    self.dot_colors[row][col] = surface.get_at((col, row))[:3]
     
     def _sample_blend_numpy(self, surface):
         """Optimized numpy implementation - heavily optimized for Pi performance."""

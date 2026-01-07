@@ -41,7 +41,9 @@ def _resolve_fpp_memory_file():
 
 def run_tetris(matrix):
     canvas_width = matrix.width * matrix.supersample
-    canvas_height = matrix.height * matrix.supersample
+    # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row + offset row
+    # This ensures each dot gets unique pixel data when staggered columns are sampled
+    canvas_height = (matrix.height * 2) * matrix.supersample  # 50 * 2 = 100px tall
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
 
