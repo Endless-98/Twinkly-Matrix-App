@@ -19,6 +19,8 @@ class DDPSender {
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1400 bytes for Ethernet MTU 1500
   static const int _maxChunkData = 1400;
+  // Optionally send whole frame in a single UDP datagram (fastest; relies on local LAN handling fragmentation)
+  static const bool _useSinglePacket = true;
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
@@ -110,6 +112,44 @@ class DDPSender {
     }
 
     try {
+      // Fast-path: single UDP packet for the entire frame (13500B + 10B header)
+      if (_useSinglePacket && rgbData.length <= 60000) {
+        // Initialize socket if needed or recreate periodically to prevent buffer buildup
+        if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
+          if (_staticSocket != null) {
+            _staticSocket!.close();
+            _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
+          }
+          _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+          _staticSocket!.broadcastEnabled = true;
+          _staticSocket!.writeEventsEnabled = false;
+          _staticSocket!.readEventsEnabled = false;
+          _framesSinceSocketRecreate = 0;
+          _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
+        }
+
+        _framesSinceSocketRecreate++;
+        final addr = InternetAddress(host);
+        final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true);
+        final bytesSent = _staticSocket!.send(packet, addr, port);
+        if (bytesSent == 0) {
+          _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
+          return false;
+        }
+
+        _framesThisSecond++;
+        final elapsedMs = DateTime.now().difference(_secondStart).inMilliseconds;
+        if (elapsedMs >= 1000) {
+          final fps = (_framesThisSecond * 1000.0 / elapsedMs).toStringAsFixed(1);
+          _log('[DDP] Send rate last second: ${_framesThisSecond} frames (${fps} FPS)');
+          _framesThisSecond = 0;
+          _secondStart = DateTime.now();
+        }
+
+        _lastSendAt = DateTime.now();
+        return true;
+      }
+
       // Initialize socket if needed or recreate periodically to prevent buffer buildup
       if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
         // Close old socket if recreating
