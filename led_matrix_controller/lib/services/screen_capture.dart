@@ -20,7 +20,7 @@ class ScreenCaptureService {
   static int _screenWidth = 1920;
   static int _screenHeight = 1080;
   static const int _targetWidth = 90;
-  static const int _targetHeight = 100;
+  static const int _targetHeight = 50;
   static const int _bytesPerPixel = 3; // RGB24
   static const int _targetFrameSize = _targetWidth * _targetHeight * _bytesPerPixel;
 
@@ -289,7 +289,7 @@ class ScreenCaptureService {
     }
   }
 
-  /// Process raw RGB24 data: resize to 90x100, return as RGB
+  /// Process raw RGB24 data: resize to 90x50, return as RGB
   static Future<Uint8List?> _processRawRGBData(Uint8List rgbData) async {
     final processStartTime = DateTime.now();
     debugPrint("[PROCESS] Input: ${rgbData.length} bytes (raw RGB24)");
@@ -329,7 +329,7 @@ class ScreenCaptureService {
       final decodeDuration = DateTime.now().difference(decodeStartTime);
       debugPrint("[PROCESS] Decode: ${decodeDuration.inMilliseconds}ms");
 
-      // Resize to 90x100
+      // Resize to 90x50
       final resizeStartTime = DateTime.now();
       final resized = img.copyResize(
         image,
@@ -340,7 +340,7 @@ class ScreenCaptureService {
       final resizeDuration = DateTime.now().difference(resizeStartTime);
       debugPrint("[PROCESS] Resize: ${resizeDuration.inMilliseconds}ms");
 
-      // Convert to raw RGB data (27,000 bytes: 90 * 100 * 3)
+      // Convert to raw RGB data (13,500 bytes: 90 * 50 * 3)
       final convertStartTime = DateTime.now();
       final outputSize = _targetFrameSize;
       final rgbOutput = Uint8List(outputSize);
