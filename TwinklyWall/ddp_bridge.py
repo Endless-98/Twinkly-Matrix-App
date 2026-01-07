@@ -64,6 +64,7 @@ class DdpBridge:
         self.frames_dropped = 0
         self.chunks_in_frame = 0
         self.frame_start_ts = 0.0
+        self.frame_timeout_ms = 100.0  # Reset incomplete frames after 100ms
         self.last_write_ts = 0.0
         self.write_ms_acc = 0.0
         self._sec_start = time.time()
@@ -116,12 +117,24 @@ class DdpBridge:
                 # If new sequence start
                 if off == 0:
                     if self.bytes_written > 0:
-                        # Incomplete previous frame; reset counters
+                        # Incomplete previous frame; reset counters and unlock sender
                         self.bytes_written = 0
+                        current_sender = None
                     self.chunks_in_frame = 0
                     self.frame_start_ts = time.time()
                     # Lock to sender for this frame
                     current_sender = sender
+                
+                # Timeout check: if frame has been assembling for too long, reset it
+                if self.frame_start_ts > 0:
+                    frame_age_ms = (time.time() - self.frame_start_ts) * 1000.0
+                    if frame_age_ms > self.frame_timeout_ms and self.bytes_written > 0:
+                        if self.verbose:
+                            self._log(f"Frame timeout after {frame_age_ms:.1f}ms with {self.bytes_written} bytes")
+                        self.bytes_written = 0
+                        self.chunks_in_frame = 0
+                        current_sender = None
+                        self._sec_incomplete += 1
 
                 # Ignore packets from other senders mid-frame
                 if current_sender is not None and sender != current_sender:
@@ -153,16 +166,17 @@ class DdpBridge:
                         
                     # Optional pacing to avoid overrunning FPP; sleep instead of dropping frames
                     if self.max_fps > 0.0:
-                        min_interval_ms = 1000.0 / self.max_fps
+                        min_interval_s = 1.0 / self.max_fps
                         now_perf = self._clock()
                         # Convert last_write_ts to perf clock domain when first used
                         if self.last_write_ts == 0.0:
-                            self.last_write_ts = now_perf - (min_interval_ms / 1000.0)
-                        since_last_ms = (now_perf - self.last_write_ts) * 1000.0
-                        if since_last_ms < min_interval_ms:
-                            remaining_ms = min_interval_ms - since_last_ms
-                            # Sleep the remainder to hit target interval
-                            time.sleep(remaining_ms / 1000.0)
+                            self.last_write_ts = now_perf - min_interval_s
+                        since_last_s = now_perf - self.last_write_ts
+                        if since_last_s < min_interval_s:
+                            remaining_s = min_interval_s - since_last_s
+                            # Only sleep if remaining time is significant (>0.5ms)
+                            if remaining_s > 0.0005:
+                                time.sleep(remaining_s)
 
                     # Write to overlay using numpy fast path when available
                     try:
@@ -213,7 +227,7 @@ class DdpBridge:
             
             # Sleep briefly when no packets to avoid CPU spinning
             if packets_this_loop == 0:
-                time.sleep(0.001)
+                time.sleep(0.0001)  # 0.1ms
 
 
 def main():
