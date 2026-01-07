@@ -35,6 +35,15 @@ class ScreenCaptureService {
         _isCapturingDesktop = true;
         debugPrint("[START] Desktop screen capture started");
         
+        // Log environment info for debugging
+        final display = Platform.environment['DISPLAY'] ?? 'not set';
+        final sessionType = Platform.environment['XDG_SESSION_TYPE'] ?? 'unknown';
+        debugPrint("[START] DISPLAY=$display, XDG_SESSION_TYPE=$sessionType");
+        
+        if (sessionType == 'wayland') {
+          debugPrint("[START] WARNING: Wayland session detected. x11grab may not work. Consider switching to X11 session or running on Windows.");
+        }
+        
         // Detect screen size
         await _detectScreenSize();
         
