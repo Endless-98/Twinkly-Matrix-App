@@ -25,7 +25,7 @@ def parse_args():
     p.add_argument("--height", type=int, default=50, help="Matrix height")
     # Default model name comes from environment if available
     p.add_argument("--model", default=os.environ.get("FPP_MODEL_NAME", "Light_Wall"), help="Overlay model name (for mmap file)")
-    p.add_argument("--max-fps", type=float, default=float(os.environ.get("DDP_MAX_FPS", 30)), help="Maximum write FPS to FPP (0 disables pacing)")
+    p.add_argument("--max-fps", type=float, default=float(os.environ.get("DDP_MAX_FPS", 20)), help="Maximum write FPS to FPP (0 disables pacing)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
@@ -45,10 +45,12 @@ class DdpBridge:
         # (Do not enable SO_REUSEADDR for this UDP port)
         # Increase receive buffer to reduce packet drops
         try:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)  # 1MB
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)  # 4MB
         except Exception:
             pass
         self.sock.bind(self.addr)
+        # Make non-blocking to batch-process packets
+        self.sock.setblocking(False)
         # Use FPPOutput to target overlay mmap
         mmap_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
         self.out = FPPOutput(width, height, mapping_file=mmap_path)
@@ -68,6 +70,8 @@ class DdpBridge:
         self._sec_frames_in = 0
         self._sec_frames_out = 0
         self._sec_dropped = 0
+        self._sec_incomplete = 0
+        self._sec_packets = 0
 
     def _log(self, msg):
         if self.verbose:
@@ -77,109 +81,139 @@ class DdpBridge:
         pacing = f"pacing at <= {self.max_fps:.1f} FPS" if self.max_fps > 0.0 else "no pacing"
         self._log(f"DDP bridge listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})")
         current_sender = None
+        
         while True:
-            data, sender = self.sock.recvfrom(1500)
-            if not data or data[0] != 0x41:
-                continue
-
-            # DDP v1 header (10 bytes): 'A' flags seq off24 len16 dataId16
-            if len(data) < 10:
-                continue
-            flags = data[1]
-            seq = data[2]
-            off = (data[3] << 16) | (data[4] << 8) | data[5]
-            ln = (data[6] << 8) | data[7]
-            # dataId = data[8:10] (unused)
-            payload = data[10:10+ln]
-
-            if len(payload) != ln:
-                continue
-
-            # If new sequence start
-            if off == 0:
-                if self.bytes_written > 0:
-                    # Incomplete previous frame; reset counters
-                    self.bytes_written = 0
-                self.chunks_in_frame = 0
-                self.frame_start_ts = time.time()
-                # Lock to sender for this frame
-                current_sender = sender
-
-            # Ignore packets from other senders mid-frame
-            if current_sender is not None and sender != current_sender:
-                if self.verbose:
-                    print(f"Ignoring packet from {sender} (current {current_sender})", flush=True)
-                continue
-
-            end_of_frame = (flags & 0x01) != 0
-
-            # Bounds check
-            end = off + ln
-            if end > self.frame_size:
-                continue
-
-            self.buf[off:end] = payload
-            self.bytes_written = max(self.bytes_written, end)
-            self.chunks_in_frame += 1
-
-            if end_of_frame and self.bytes_written >= self.frame_size:
-                # Optional pacing to avoid overrunning FPP; sleep instead of dropping frames
-                if self.max_fps > 0.0:
-                    min_interval_ms = 1000.0 / self.max_fps
-                    now_perf = self._clock()
-                    # Convert last_write_ts to perf clock domain when first used
-                    if self.last_write_ts == 0.0:
-                        self.last_write_ts = now_perf - (min_interval_ms / 1000.0)
-                    since_last_ms = (now_perf - self.last_write_ts) * 1000.0
-                    if since_last_ms < min_interval_ms:
-                        remaining_ms = min_interval_ms - since_last_ms
-                        # Sleep the remainder to hit target interval
-                        time.sleep(remaining_ms / 1000.0)
-
-                # Write to overlay using numpy fast path when available
+            # Batch-process all available packets
+            packets_this_loop = 0
+            while packets_this_loop < 50:  # Process up to 50 packets per batch
                 try:
-                    write_start = time.perf_counter()
-                    if HAS_NUMPY:
-                        arr = np.frombuffer(self.buf, dtype=np.uint8).reshape(self.height, self.width, 3)
-                        ms = self.out.write(arr)
-                    else:
-                        rows = self.height
-                        cols = self.width
-                        view = [
-                            [
-                                (self.buf[(r*cols + c)*3 + 0],
-                                 self.buf[(r*cols + c)*3 + 1],
-                                 self.buf[(r*cols + c)*3 + 2])
-                                for c in range(cols)
-                            ]
-                            for r in range(rows)
-                        ]
-                        ms = self.out.write(view)
-                    write_elapsed = (time.perf_counter() - write_start) * 1000.0
-                    self.write_ms_acc += write_elapsed
-                    self.frames_written += 1
-                    self._sec_frames_out += 1
-                    # Update last write using perf clock for accuracy
-                    self.last_write_ts = self._clock()
+                    data, sender = self.sock.recvfrom(1500)
+                    packets_this_loop += 1
+                    self._sec_packets += 1
+                except BlockingIOError:
+                    # No more packets available right now
+                    break
                 except Exception as e:
-                    self._log(f"Write error: {e}")
-                finally:
-                    self.bytes_written = 0
-                    current_sender = None
+                    self._log(f"Socket error: {e}")
+                    continue
+                
+                if not data or data[0] != 0x41:
+                    continue
 
-                # Per-second logging
-                self._sec_frames_in += 1
-                sec_elapsed = time.time() - self._sec_start
-                if sec_elapsed >= 1.0:
-                    avg_write_ms = (self.write_ms_acc / max(1, self._sec_frames_out))
-                    self._log(
-                        f"[FPP] 1s stats: in={self._sec_frames_in} fps | out={self._sec_frames_out} fps | drop={self._sec_dropped} | write {avg_write_ms:.2f}ms | chunks/frame={self.chunks_in_frame}"
-                    )
-                    self._sec_start = time.time()
-                    self._sec_frames_in = 0
-                    self._sec_frames_out = 0
-                    self._sec_dropped = 0
-                    self.write_ms_acc = 0.0
+                # DDP v1 header (10 bytes): 'A' flags seq off24 len16 dataId16
+                if len(data) < 10:
+                    continue
+                flags = data[1]
+                seq = data[2]
+                off = (data[3] << 16) | (data[4] << 8) | data[5]
+                ln = (data[6] << 8) | data[7]
+                # dataId = data[8:10] (unused)
+                payload = data[10:10+ln]
+
+                if len(payload) != ln:
+                    continue
+
+                # If new sequence start
+                if off == 0:
+                    if self.bytes_written > 0:
+                        # Incomplete previous frame; reset counters
+                        self.bytes_written = 0
+                    self.chunks_in_frame = 0
+                    self.frame_start_ts = time.time()
+                    # Lock to sender for this frame
+                    current_sender = sender
+
+                # Ignore packets from other senders mid-frame
+                if current_sender is not None and sender != current_sender:
+                    if self.verbose:
+                        print(f"Ignoring packet from {sender} (current {current_sender})", flush=True)
+                    continue
+
+                end_of_frame = (flags & 0x01) != 0
+
+                # Bounds check
+                end = off + ln
+                if end > self.frame_size:
+                    continue
+
+                self.buf[off:end] = payload
+                self.bytes_written = max(self.bytes_written, end)
+                self.chunks_in_frame += 1
+
+                if end_of_frame:
+                    # Check if frame is complete
+                    is_complete = self.bytes_written >= self.frame_size
+                    if not is_complete:
+                        self._sec_incomplete += 1
+                        if self.verbose:
+                            self._log(f"Incomplete frame: {self.bytes_written}/{self.frame_size} bytes, {self.chunks_in_frame} chunks")
+                        self.bytes_written = 0
+                        self.chunks_in_frame = 0
+                        continue
+                        
+                    # Optional pacing to avoid overrunning FPP; sleep instead of dropping frames
+                    if self.max_fps > 0.0:
+                        min_interval_ms = 1000.0 / self.max_fps
+                        now_perf = self._clock()
+                        # Convert last_write_ts to perf clock domain when first used
+                        if self.last_write_ts == 0.0:
+                            self.last_write_ts = now_perf - (min_interval_ms / 1000.0)
+                        since_last_ms = (now_perf - self.last_write_ts) * 1000.0
+                        if since_last_ms < min_interval_ms:
+                            remaining_ms = min_interval_ms - since_last_ms
+                            # Sleep the remainder to hit target interval
+                            time.sleep(remaining_ms / 1000.0)
+
+                    # Write to overlay using numpy fast path when available
+                    try:
+                        write_start = time.perf_counter()
+                        if HAS_NUMPY:
+                            arr = np.frombuffer(self.buf, dtype=np.uint8).reshape(self.height, self.width, 3)
+                            ms = self.out.write(arr)
+                        else:
+                            rows = self.height
+                            cols = self.width
+                            view = [
+                                [
+                                    (self.buf[(r*cols + c)*3 + 0],
+                                     self.buf[(r*cols + c)*3 + 1],
+                                     self.buf[(r*cols + c)*3 + 2])
+                                    for c in range(cols)
+                                ]
+                                for r in range(rows)
+                            ]
+                            ms = self.out.write(view)
+                        write_elapsed = (time.perf_counter() - write_start) * 1000.0
+                        self.write_ms_acc += write_elapsed
+                        self.frames_written += 1
+                        self._sec_frames_out += 1
+                        # Update last write using perf clock for accuracy
+                        self.last_write_ts = self._clock()
+                    except Exception as e:
+                        self._log(f"Write error: {e}")
+                    finally:
+                        self.bytes_written = 0
+                        current_sender = None
+
+                    # Per-second logging
+                    self._sec_frames_in += 1
+                    sec_elapsed = time.time() - self._sec_start
+                    if sec_elapsed >= 1.0:
+                        avg_write_ms = (self.write_ms_acc / max(1, self._sec_frames_out))
+                        self._log(
+                            f"[FPP] 1s stats: in={self._sec_frames_in} fps | out={self._sec_frames_out} fps | drop={self._sec_dropped} | incomplete={self._sec_incomplete} | pkts={self._sec_packets} | write {avg_write_ms:.2f}ms"
+                        )
+                        self._sec_start = time.time()
+                        self._sec_frames_in = 0
+                        self._sec_frames_out = 0
+                        self._sec_dropped = 0
+                        self._sec_incomplete = 0
+                        self._sec_packets = 0
+                        self.write_ms_acc = 0.0
+            
+            # Sleep briefly when no packets to avoid CPU spinning
+            if packets_this_loop == 0:
+                time.sleep(0.001)
 
 
 def main():
