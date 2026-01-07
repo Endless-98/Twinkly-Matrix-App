@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 
 class DDPSender {
   late RawDatagramSocket _socket;
@@ -15,14 +16,39 @@ class DDPSender {
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1200 bytes for safety
   static const int _maxChunkData = 1200;
+  static File? _logFile;
 
-  /// Log helper that works in both debug and release modes
+  /// Initialize log file
+  static Future<void> _initLogFile() async {
+    if (_logFile != null) return;
+    try {
+      final docDir = await getApplicationDocumentsDirectory();
+      final logDir = Directory('${docDir.path}/TwinklyWall');
+      if (!logDir.existsSync()) {
+        logDir.createSync(recursive: true);
+      }
+      _logFile = File('${logDir.path}/ddp_debug.log');
+      _log('=== DDP Log Started ===');
+    } catch (e) {
+      print('Failed to init log file: $e');
+    }
+  }
+
+  /// Log helper that writes to file
   static void _log(String message) {
-    // Use print() which always outputs to console on Windows
-    print(message);
-    // Also use debugPrint for debug builds
-    if (kDebugMode) {
-      debugPrint(message);
+    final timestamp = DateTime.now().toIso8601String();
+    final logMsg = '[$timestamp] $message';
+    
+    // Print to console if possible
+    print(logMsg);
+    
+    // Write to file
+    if (_logFile != null) {
+      try {
+        _logFile!.writeAsStringSync('$logMsg\n', mode: FileMode.append);
+      } catch (e) {
+        print('Failed to write to log: $e');
+      }
     }
   }
 
@@ -68,6 +94,11 @@ class DDPSender {
 
   /// Static method to send a frame directly (for desktop screen mirroring)
   static Future<bool> sendFrameStatic(String host, Uint8List rgbData, {int port = 4048}) async {
+    // Initialize log file on first call
+    if (_logFile == null) {
+      await _initLogFile();
+    }
+    
     if (rgbData.length != frameSize) {
       _log('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return false;
