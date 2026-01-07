@@ -68,23 +68,43 @@ class ScreenCaptureService {
     }
   }
 
-  /// Detect screen resolution using xrandr
+  /// Detect screen resolution
   static Future<void> _detectScreenSize() async {
     try {
-      final result = await Process.run('xrandr', []).timeout(const Duration(seconds: 2));
-      final output = result.stdout.toString();
-      
-      // Parse xrandr output for primary display resolution
-      // Format: "HDMI-1 connected primary 1920x1080+0+0"
-      final lines = output.split('\n');
-      for (final line in lines) {
-        if (line.contains('connected primary')) {
-          final match = RegExp(r'(\d+)x(\d+)').firstMatch(line);
-          if (match != null) {
-            _screenWidth = int.parse(match.group(1)!);
-            _screenHeight = int.parse(match.group(2)!);
-            debugPrint("[DETECT] Screen size: ${_screenWidth}x${_screenHeight}");
-            return;
+      if (Platform.isWindows) {
+        // On Windows, use PowerShell to get screen resolution
+        final result = await Process.run('powershell', [
+          '-Command',
+          r'[System.Windows.Forms.Screen]::PrimaryScreen.Bounds | Select-Object Width, Height'
+        ]).timeout(const Duration(seconds: 2));
+        
+        final output = result.stdout.toString();
+        final widthMatch = RegExp(r'Width\s*:\s*(\d+)').firstMatch(output);
+        final heightMatch = RegExp(r'Height\s*:\s*(\d+)').firstMatch(output);
+        
+        if (widthMatch != null && heightMatch != null) {
+          _screenWidth = int.parse(widthMatch.group(1)!);
+          _screenHeight = int.parse(heightMatch.group(1)!);
+          debugPrint("[DETECT] Windows screen size: ${_screenWidth}x${_screenHeight}");
+          return;
+        }
+      } else {
+        // Linux: use xrandr
+        final result = await Process.run('xrandr', []).timeout(const Duration(seconds: 2));
+        final output = result.stdout.toString();
+        
+        // Parse xrandr output for primary display resolution
+        // Format: "HDMI-1 connected primary 1920x1080+0+0"
+        final lines = output.split('\n');
+        for (final line in lines) {
+          if (line.contains('connected primary')) {
+            final match = RegExp(r'(\d+)x(\d+)').firstMatch(line);
+            if (match != null) {
+              _screenWidth = int.parse(match.group(1)!);
+              _screenHeight = int.parse(match.group(2)!);
+              debugPrint("[DETECT] Screen size: ${_screenWidth}x${_screenHeight}");
+              return;
+            }
           }
         }
       }
@@ -97,40 +117,66 @@ class ScreenCaptureService {
   static Future<bool> _startFFmpegStream() async {
     try {
       debugPrint("[FFMPEG] Starting persistent stream");
-      debugPrint("[FFMPEG] Display: :0.0, Capture: ${_screenWidth}x${_screenHeight}, Output: ${_targetWidth}x${_targetHeight}");
+      debugPrint("[FFMPEG] Display: Capture: ${_screenWidth}x${_screenHeight}, Output: ${_targetWidth}x${_targetHeight}");
       
       // Kill any existing process
       _ffmpegProcess?.kill();
       await _stdoutQueue?.cancel();
       _stdoutQueue = null;
       
-      // Start FFmpeg with x11grab, downscale and output raw RGB24 to stdout
-      // Low latency flags keep buffering minimal so reads stay aligned
-      final display = Platform.environment['DISPLAY'] ?? ':0.0';
-      debugPrint("[FFMPEG] Using display: $display");
-      _ffmpegProcess = await Process.start(
-        'ffmpeg',
-        [
+      List<String> ffmpegArgs;
+      
+      if (Platform.isWindows) {
+        // Windows: Use gdigrab for screen capture
+        debugPrint("[FFMPEG] Using Windows gdigrab input");
+        ffmpegArgs = [
           '-hide_banner',
-          '-loglevel', 'info',           // Show info to debug
-          '-nostdin',                    // Do not wait on stdin
-          '-fflags', 'nobuffer',         // Reduce buffering
+          '-loglevel', 'info',
+          '-nostdin',
+          '-fflags', 'nobuffer',
           '-flags', 'low_delay',
           '-rtbufsize', '0',
           '-probesize', '32',
           '-analyzeduration', '0',
           '-flush_packets', '1',
-          '-f', 'x11grab',                // X11 screen capture input
+          '-f', 'gdigrab',                 // Windows screen capture
+          '-framerate', '60',
+          '-offset_x', '0',
+          '-offset_y', '0',
           '-video_size', '${_screenWidth}x${_screenHeight}',
-          '-framerate', '60',             // Higher source framerate to reduce frame wait time
-          '-vsync', '0',                  // Do not sync to timestamps
-          '-i', display,                  // X11 display from env
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear', // Downscale before output
-          '-pix_fmt', 'rgb24',            // Output format: RGB24 (3 bytes per pixel)
-          '-f', 'rawvideo',               // Raw video output format
-          'pipe:1'                        // Write to stdout
-        ],
-      );
+          '-i', 'desktop',                 // Capture entire desktop
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
+          '-pix_fmt', 'rgb24',
+          '-f', 'rawvideo',
+          'pipe:1'
+        ];
+      } else {
+        // Linux: Use x11grab
+        final display = Platform.environment['DISPLAY'] ?? ':0.0';
+        debugPrint("[FFMPEG] Using display: $display");
+        ffmpegArgs = [
+          '-hide_banner',
+          '-loglevel', 'info',
+          '-nostdin',
+          '-fflags', 'nobuffer',
+          '-flags', 'low_delay',
+          '-rtbufsize', '0',
+          '-probesize', '32',
+          '-analyzeduration', '0',
+          '-flush_packets', '1',
+          '-f', 'x11grab',
+          '-video_size', '${_screenWidth}x${_screenHeight}',
+          '-framerate', '60',
+          '-vsync', '0',
+          '-i', display,
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
+          '-pix_fmt', 'rgb24',
+          '-f', 'rawvideo',
+          'pipe:1'
+        ];
+      }
+      
+      _ffmpegProcess = await Process.start('ffmpeg', ffmpegArgs);
       
       if (_ffmpegProcess == null) {
         debugPrint("[FFMPEG] Failed to start process");
