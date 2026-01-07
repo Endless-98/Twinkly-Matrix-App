@@ -101,7 +101,12 @@ class FPPOutput:
             self._cleanup()
 
     def _build_routing_table(self):
-        """Pre-compute routing from visual grid to FPP buffer positions."""
+        """Pre-compute routing from visual grid to FPP buffer positions.
+        
+        Maps visual canvas (50×90) to physical LED wall (99×90 with staggering).
+        Physical row is determined by: visual_row * 2 + (0 or 1 depending on column stagger).
+        Odd columns (1, 3, 5...) are staggered by 0.5 units, offsetting their physical rows.
+        """
         if not self.mapping:
             return
 
@@ -109,12 +114,24 @@ class FPPOutput:
         src_indices = []
         for visual_row in range(self.height):
             for visual_col in range(self.width):
+                # Even columns (0, 2, 4...): use rows [row*2, row*2+1]
+                # Odd columns (1, 3, 5...): use rows [row*2+1, row*2+2] (staggered down by 1)
+                is_odd_col = visual_col % 2
+                
+                if is_odd_col:
+                    # Staggered odd column: offset down by 1 physical row
+                    physical_rows = [visual_row * 2 + 1, visual_row * 2 + 2]
+                else:
+                    # Even column: standard double-height mapping
+                    physical_rows = [visual_row * 2, visual_row * 2 + 1]
+                
                 byte_indices = []
-
-                for row_offset in range(2):  # Each visual cell maps to 2 physical LED rows
-                    physical_row = visual_row * 2 + row_offset
+                for physical_row in physical_rows:
+                    # Clamp physical_row to valid range (0-98 for 99-row LED wall)
+                    if physical_row >= 99:
+                        continue
                     physical_col = visual_col
-
+                    
                     if (physical_row, physical_col) in self.mapping:
                         pixel_idx = self.mapping[(physical_row, physical_col)]
                         if 0 <= pixel_idx < 4500:
