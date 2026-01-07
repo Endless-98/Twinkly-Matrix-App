@@ -113,7 +113,6 @@ def check_git() -> bool:
         return False
 
 
-<<<<<<< Updated upstream
 def check_chocolate() -> bool:
     """Check if Chocolatey package manager is installed."""
     code, out, err = run_cmd(['choco', '--version'], check=False)
