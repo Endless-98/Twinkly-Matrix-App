@@ -5,6 +5,10 @@ import 'dart:io';
 import 'dart:convert';
 import 'package:async/async.dart';
 import 'package:image/image.dart' as img;
+import 'dart:ffi' as ffi;
+import 'package:ffi/ffi.dart';
+
+enum CaptureMode { desktop, appWindow, region }
 
 /// Persistent FFmpeg stream for continuous screen capture
 /// Keeps FFmpeg running and streams raw RGB data for multiple frames
@@ -24,6 +28,92 @@ class ScreenCaptureService {
   static const int _targetHeight = 50;
   static const int _bytesPerPixel = 3; // RGB24
   static const int _targetFrameSize = _targetWidth * _targetHeight * _bytesPerPixel;
+  
+  // Capture mode settings
+  static CaptureMode _captureMode = CaptureMode.desktop;
+  static String? _selectedWindowTitle;
+  static int _regionX = 0;
+  static int _regionY = 0;
+  static int _regionWidth = 800;
+  static int _regionHeight = 600;
+
+  /// Set capture mode
+  static void setCaptureMode(CaptureMode mode, {String? windowTitle, int? x, int? y, int? width, int? height}) {
+    _captureMode = mode;
+    if (mode == CaptureMode.appWindow && windowTitle != null) {
+      _selectedWindowTitle = windowTitle;
+    } else if (mode == CaptureMode.region) {
+      if (x != null) _regionX = x;
+      if (y != null) _regionY = y;
+      if (width != null) _regionWidth = width;
+      if (height != null) _regionHeight = height;
+    }
+    debugPrint("[CONFIG] Capture mode set to: $mode");
+  }
+
+  /// Enumerate available windows (Windows only)
+  static Future<List<String>> enumerateWindows() async {
+    if (!Platform.isWindows) {
+      debugPrint("[WINDOWS] Window enumeration only supported on Windows");
+      return [];
+    }
+
+    try {
+      // Use PowerShell to get window titles
+      final result = await Process.run('powershell', [
+        '-Command',
+        r'''
+        Add-Type @"
+          using System;
+          using System.Runtime.InteropServices;
+          using System.Text;
+          public class Win32 {
+            [DllImport("user32.dll")]
+            public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
+            [DllImport("user32.dll")]
+            public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
+            [DllImport("user32.dll")]
+            public static extern bool IsWindowVisible(IntPtr hWnd);
+            public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+          }
+"@
+
+        $windows = New-Object System.Collections.ArrayList
+        $callback = {
+          param($hWnd, $lParam)
+          if ([Win32]::IsWindowVisible($hWnd)) {
+            $title = New-Object System.Text.StringBuilder 256
+            [Win32]::GetWindowText($hWnd, $title, 256)
+            $titleStr = $title.ToString()
+            if ($titleStr -ne "") {
+              [void]$windows.Add($titleStr)
+            }
+          }
+          return $true
+        }
+        
+        [Win32]::EnumWindows($callback, [IntPtr]::Zero)
+        $windows | ForEach-Object { $_ }
+        '''
+      ]).timeout(const Duration(seconds: 5));
+
+      if (result.exitCode == 0) {
+        final output = result.stdout.toString();
+        final windows = output.split('\n')
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .toList();
+        debugPrint("[WINDOWS] Found ${windows.length} windows");
+        return windows;
+      } else {
+        debugPrint("[WINDOWS] Failed to enumerate: ${result.stderr}");
+        return [];
+      }
+    } catch (e) {
+      debugPrint("[WINDOWS] Error enumerating windows: $e");
+      return [];
+    }
+  }
 
   /// Start capturing the screen
   static Future<bool> startCapture() async {
@@ -117,7 +207,7 @@ class ScreenCaptureService {
   static Future<bool> _startFFmpegStream() async {
     try {
       debugPrint("[FFMPEG] Starting persistent stream");
-      debugPrint("[FFMPEG] Display: Capture: ${_screenWidth}x${_screenHeight}, Output: ${_targetWidth}x${_targetHeight}");
+      debugPrint("[FFMPEG] Mode: $_captureMode, Capture: ${_screenWidth}x${_screenHeight}, Output: ${_targetWidth}x${_targetHeight}");
       
       // Kill any existing process
       _ffmpegProcess?.kill();
@@ -129,6 +219,8 @@ class ScreenCaptureService {
       if (Platform.isWindows) {
         // Windows: Use gdigrab for screen capture
         debugPrint("[FFMPEG] Using Windows gdigrab input");
+        
+        // Base args
         ffmpegArgs = [
           '-hide_banner',
           '-loglevel', 'info',
@@ -139,21 +231,62 @@ class ScreenCaptureService {
           '-probesize', '32',
           '-analyzeduration', '0',
           '-flush_packets', '1',
-          '-f', 'gdigrab',                 // Windows screen capture
+          '-f', 'gdigrab',
           '-framerate', '60',
-          '-offset_x', '0',
-          '-offset_y', '0',
-          '-video_size', '${_screenWidth}x${_screenHeight}',
-          '-i', 'desktop',                 // Capture entire desktop
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
+        ];
+        
+        // Mode-specific args
+        switch (_captureMode) {
+          case CaptureMode.desktop:
+            // Capture entire desktop
+            ffmpegArgs.addAll([
+              '-offset_x', '0',
+              '-offset_y', '0',
+              '-video_size', '${_screenWidth}x${_screenHeight}',
+              '-i', 'desktop',
+            ]);
+            break;
+            
+          case CaptureMode.appWindow:
+            // Capture specific window by title
+            if (_selectedWindowTitle == null || _selectedWindowTitle!.isEmpty) {
+              debugPrint("[FFMPEG] No window title specified for app capture");
+              return false;
+            }
+            debugPrint("[FFMPEG] Capturing window: $_selectedWindowTitle");
+            ffmpegArgs.addAll([
+              '-i', 'title=$_selectedWindowTitle',
+            ]);
+            break;
+            
+          case CaptureMode.region:
+            // Capture specific region
+            debugPrint("[FFMPEG] Capturing region: x=$_regionX, y=$_regionY, ${_regionWidth}x$_regionHeight");
+            ffmpegArgs.addAll([
+              '-offset_x', '$_regionX',
+              '-offset_y', '$_regionY',
+              '-video_size', '${_regionWidth}x$_regionHeight',
+              '-i', 'desktop',
+            ]);
+            break;
+        }
+        
+        // Output scaling with higher quality - use Lanczos for better downscaling
+        ffmpegArgs.addAll([
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=lanczos',
           '-pix_fmt', 'rgb24',
           '-f', 'rawvideo',
           'pipe:1'
-        ];
+        ]);
       } else {
-        // Linux: Use x11grab
+        // Linux: Use x11grab (only desktop mode supported for now)
         final display = Platform.environment['DISPLAY'] ?? ':0.0';
-        debugPrint("[FFMPEG] Using display: $display");
+        debugPrint("[FFMPEG] Using display: $display (Linux x11grab)");
+        
+        if (_captureMode != CaptureMode.desktop) {
+          debugPrint("[FFMPEG] WARNING: Only desktop capture supported on Linux currently");
+        }
+        
         ffmpegArgs = [
           '-hide_banner',
           '-loglevel', 'info',
@@ -169,7 +302,7 @@ class ScreenCaptureService {
           '-framerate', '60',
           '-vsync', '0',
           '-i', display,
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=lanczos',
           '-pix_fmt', 'rgb24',
           '-f', 'rawvideo',
           'pipe:1'

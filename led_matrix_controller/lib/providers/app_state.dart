@@ -3,6 +3,7 @@ import '../services/ddp_sender.dart';
 import '../services/command_sender.dart';
 
 enum ActiveMode { controller, mirroring, video }
+enum CaptureMode { desktop, appWindow, region }
 
 // FPP IP Address Provider
 final fppIpProvider = StateProvider<String>((ref) {
@@ -17,6 +18,21 @@ final fppDdpPortProvider = StateProvider<int>((ref) {
 // Active Mode Provider
 final activeModeProvider = StateProvider<ActiveMode>((ref) {
   return ActiveMode.controller;
+});
+
+// Capture Mode Provider (for screen mirroring)
+final captureModeProvider = StateProvider<CaptureMode>((ref) {
+  return CaptureMode.desktop;
+});
+
+// Selected Window Title Provider (for app window capture)
+final selectedWindowProvider = StateProvider<String?>((ref) {
+  return null;
+});
+
+// Capture Region Provider (for region capture: x, y, width, height)
+final captureRegionProvider = StateProvider<Map<String, int>>((ref) {
+  return {'x': 0, 'y': 0, 'width': 800, 'height': 600};
 });
 
 // DDP Sender Provider
