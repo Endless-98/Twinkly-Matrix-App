@@ -198,11 +198,11 @@ class ScreenCaptureService {
         // Base args - gdigrab needs minimal buffering flags to capture continuously
         ffmpegArgs = [
           '-hide_banner',
-          '-loglevel', 'info',
+          '-loglevel', 'fatal',  // Only show critical errors, not info spam
           '-nostdin',
           '-f', 'gdigrab',
           '-framerate', '20',  // 20fps target for LED wall
-          '-draw_mouse', '1',   // Include mouse cursor (helps verify updates)
+          '-draw_mouse', '0',   // Disable mouse to reduce pixel format changes
           '-show_region', '0',  // Don't show capture region outline
         ];
         
@@ -242,9 +242,10 @@ class ScreenCaptureService {
             break;
         }
         
-        // Output scaling with higher quality - use Lanczos for better downscaling
+        // Output scaling - force format conversion BEFORE scale to prevent reconfiguration
+        // gdigrab outputs bgr0/bgra, we need to convert to rgb24 explicitly
         ffmpegArgs.addAll([
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=lanczos',
+          '-vf', 'format=rgb24,scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
           '-pix_fmt', 'rgb24',
           '-f', 'rawvideo',
           '-vsync', '0',  // Don't sync to input framerate, output as fast as possible
@@ -363,9 +364,6 @@ class ScreenCaptureService {
 
   /// Capture a single screenshot from the persistent stream
   static Future<Uint8List?> captureScreenshot() async {
-    final startTime = DateTime.now();
-    debugPrint("[CAPTURE] ======== NEW FRAME ========");
-    
     try {
       if (Platform.isAndroid) {
         final result = await platform.invokeMethod('captureScreenshot');
@@ -385,11 +383,8 @@ class ScreenCaptureService {
           return null;
         }
         
-        final totalTime = DateTime.now().difference(startTime);
-        debugPrint("[CAPTURE] Total frame time: ${totalTime.inMilliseconds}ms");
-        
-        // Process the raw RGB data
-        return await _processRawRGBData(frameData);
+        // Process the raw RGB data (already scaled by FFmpeg)
+        return frameData;  // Skip processing, already in correct format
       }
       return null;
     } catch (e) {
@@ -401,15 +396,12 @@ class ScreenCaptureService {
   /// Read one complete frame from FFmpeg stdout
   /// FFmpeg outputs raw RGB24: width * height * 3 bytes per frame
   static Future<Uint8List?> _readFrameFromStream() async {
-    final readStartTime = DateTime.now();
-    
     try {
       if (_ffmpegProcess == null) {
-        debugPrint("[STREAM] Process is null");
+        debugPrint("[STREAM] ERROR: Process is null");
         return null;
       }
       final frameSize = _targetFrameSize;
-      debugPrint("[STREAM] Reading frame: $frameSize bytes (${_targetWidth}x${_targetHeight} @ 3bpp)");
 
       // Ensure we have a continuous buffer to pull exact frame sizes
       final builder = BytesBuilder(copy: false);
@@ -450,15 +442,6 @@ class ScreenCaptureService {
       _stdoutRemainder = remainingLength > 0
           ? Uint8List.sublistView(combined, frameSize)
           : Uint8List(0);
-
-      final readDuration = DateTime.now().difference(readStartTime);
-      // Add a quick checksum to correlate frames with DDP sender logs
-      int sum32 = 0;
-      for (int i = 0; i < frameBytes.length; i++) {
-        sum32 = (sum32 + frameBytes[i]) & 0xFFFFFFFF;
-      }
-      final isBlackFrame = sum32 == 0;
-      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes, checksum(sum32)=$sum32, black=${isBlackFrame}");
 
       return frameBytes;
     } catch (e) {

@@ -113,55 +113,26 @@ class DDPSender {
       }
 
       final addr = InternetAddress(host);
-      _log('[DDP] Sending to $host:$port (${rgbData.length} bytes)');
       
       int sent = 0;
       int packets = 0;
-      int checksum = 0;
-      for (int i = 0; i < rgbData.length; i++) {
-        checksum = (checksum + rgbData[i]) & 0xFFFFFFFF;
-      }
-      if (_debugPackets) {
-        final p0 = rgbData.length >= 3 ? '${rgbData[0]},${rgbData[1]},${rgbData[2]}' : 'n/a';
-        _log('[DDP] Frame bytes=${rgbData.length} checksum(sum32)=$checksum firstRGB=[$p0]');
-      }
       while (sent < rgbData.length) {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
         
-        int bytesSent = 0;
-        int retries = 0;
-        while (bytesSent == 0 && retries < 3) {
-          bytesSent = _staticSocket!.send(packet, addr, port);
-          if (bytesSent == 0) {
-            _log('[DDP] Send returned 0, retrying... (attempt ${retries + 1})');
-            await Future.delayed(Duration(milliseconds: 10));
-            retries++;
-          }
-        }
+        // Fire-and-forget UDP, no retries (UDP is unreliable by design)
+        final bytesSent = _staticSocket!.send(packet, addr, port);
         
-        if (bytesSent == 0) {
-          _log('[DDP] ERROR: Failed to send packet after 3 retries. Socket may be blocked by firewall.');
+        if (bytesSent == 0 && packets == 0) {
+          // Only log on first packet failure
+          _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
           return false;
         }
         
-        if (bytesSent != packet.length) {
-          _log('[DDP] WARNING: Tried to send ${packet.length} bytes, only $bytesSent sent');
-        }
-        if (_debugPackets && _debugLevel >= 2) {
-          final r = rgbData[sent];
-          final g = rgbData[sent + 1];
-          final b = rgbData[sent + 2];
-          _log('[DDP] Chunk off=$sent len=$dataLen rgb0=[$r,$g,$b] last=$isLast bytesSent=$bytesSent');
-        }
         sent += dataLen;
         packets++;
-      }
-
-      if (_debugPackets) {
-        _log('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:$port');
       }
 
       return true;
@@ -207,13 +178,6 @@ class DDPSender {
 
     // Payload
     packet.add(Uint8List.sublistView(rgbData, startByte, startByte + dataLen));
-
-    if (_debugPackets && (_sequenceNumber % 30 == 0)) {
-      final r = rgbData[startByte];
-      final g = rgbData[startByte + 1];
-      final b = rgbData[startByte + 2];
-      _log('[DDP] Seq ${_sequenceNumber}: off=$startByte len=$dataLen p0 R$r G$g B$b eof=$endOfFrame');
-    }
 
     _sequenceNumber = (_sequenceNumber + 1) & 0xFF;
     return packet.toBytes();

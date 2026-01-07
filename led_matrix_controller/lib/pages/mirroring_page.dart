@@ -85,9 +85,9 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     });
 
     debugPrint(
-      "[MIRRORING] Starting desktop capture, target FPP: $fppIp:$fppPort",
+      "[MIRRORING] Starting capture: $fppIp:$fppPort",
     );
-    DDPSender.setDebugLevel(2); // Verbose per-chunk logging for diagnostics
+    DDPSender.setDebugLevel(0); // Disable verbose logging for speed
 
     // Capture at ~20 FPS (50ms per frame)
     while (isCapturing) {
@@ -97,57 +97,33 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
         final captureDuration = DateTime.now().difference(captureStart);
 
         if (screenshotData != null) {
-          if (screenshotData.length != 13500) {
-            debugPrint(
-              "[MIRRORING] WARNING: Frame size ${screenshotData.length} != 13500",
-            );
-          }
-
-          debugPrint(
-            "[MIRRORING] Sending frame $frameCount (${screenshotData.length} bytes) to $fppIp:$fppPort",
-          );
-
           // Send to FPP via DDP
-          final sendStart = DateTime.now();
           final sent = await DDPSender.sendFrameStatic(
             fppIp,
             screenshotData,
             port: fppPort,
           );
-          final sendDuration = DateTime.now().difference(sendStart);
+          final sendDuration = DateTime.now().difference(captureStart);
 
-          if (sent) {
-            debugPrint(
-              "[MIRRORING] ✓ Frame $frameCount sent in ${sendDuration.inMilliseconds}ms (capture: ${captureDuration.inMilliseconds}ms)",
-            );
-          } else {
-            debugPrint("[MIRRORING] ✗ Failed to send frame $frameCount");
+          if (!sent) {
+            debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
+            break;
           }
 
           setState(() {
             frameCount++;
-            if (frameCount % 5 == 0) {
-              final fps =
-                  (1000 /
-                          (captureDuration.inMilliseconds +
-                              sendDuration.inMilliseconds))
-                      .toStringAsFixed(1);
-              statusMessage = "Streaming... ($frameCount frames @ ~$fps FPS)";
+            if (frameCount % 20 == 0) {
+              final fps = (1000 / sendDuration.inMilliseconds).toStringAsFixed(1);
+              statusMessage = "Streaming @ $fps FPS ($frameCount frames)";
+              debugPrint("[MIRRORING] $frameCount frames @ $fps FPS (${sendDuration.inMilliseconds}ms/frame)");
             }
           });
         } else {
-          debugPrint("[MIRRORING] Screenshot capture returned null");
+          debugPrint("[MIRRORING] ERROR: Capture returned null");
           setState(() {
-            statusMessage = "Failed to capture screenshot - check logs";
+            statusMessage = "Capture failed - check FFmpeg";
           });
           break;
-        }
-
-        // Wait ~50ms for ~20 FPS (adjust based on capture + send time)
-        final totalTime = captureDuration.inMilliseconds;
-        final remainingWait = (50 - totalTime).clamp(0, 50);
-        if (remainingWait > 0) {
-          await Future.delayed(Duration(milliseconds: remainingWait));
         }
       } catch (e) {
         debugPrint("[MIRRORING] Error: $e");
