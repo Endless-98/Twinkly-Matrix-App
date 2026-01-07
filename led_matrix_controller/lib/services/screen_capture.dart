@@ -29,6 +29,9 @@ class ScreenCaptureService {
   static const int _targetHeight = 50;
   static const int _bytesPerPixel = 3; // RGB24
   static const int _targetFrameSize = _targetWidth * _targetHeight * _bytesPerPixel;
+  // Pre-target capture height to correct LED staggering aspect
+  static const int _preTargetHeight = 100;
+  static const int _preTargetFrameSize = _targetWidth * _preTargetHeight * _bytesPerPixel;
   
   // Capture mode settings
   static CaptureMode _captureMode = CaptureMode.desktop;
@@ -243,12 +246,11 @@ class ScreenCaptureService {
         }
         
         // Output scaling and format conversion
-        // Reorder filters: scale first, then format
-        // Explicitly set output size to satisfy rawvideo muxer
+        // Capture at 90x100 to match physical staggering, we'll fold to 90x50 in Dart
         ffmpegArgs.addAll([
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear,format=rgb24',
+          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
           '-pix_fmt', 'rgb24',
-          '-s', '${_targetWidth}x${_targetHeight}',
+          '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
           'pipe:1'
         ]);
@@ -276,8 +278,9 @@ class ScreenCaptureService {
           '-framerate', '60',
           '-vsync', '0',
           '-i', display,
-          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=lanczos',
+          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
           '-pix_fmt', 'rgb24',
+          '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
           'pipe:1'
         ];
@@ -415,7 +418,8 @@ class ScreenCaptureService {
         debugPrint("[STREAM] ERROR: Process is null");
         return null;
       }
-      final frameSize = _targetFrameSize;
+      // Read pre-target size (90x100) from FFmpeg
+      final frameSize = _preTargetFrameSize;
 
       // Ensure we have a continuous buffer to pull exact frame sizes
       final builder = BytesBuilder(copy: false);
@@ -463,7 +467,7 @@ class ScreenCaptureService {
       }
 
       final combined = builder.takeBytes();
-      final frameBytes = Uint8List.sublistView(combined, 0, frameSize);
+      final frameBytesPre = Uint8List.sublistView(combined, 0, frameSize);
       final remainingLength = combined.length - frameSize;
       _stdoutRemainder = remainingLength > 0
           ? Uint8List.sublistView(combined, frameSize)
@@ -472,8 +476,16 @@ class ScreenCaptureService {
       // Mark first frame received
       _receivedFirstFrame = true;
 
-      // Enhance colors: gamma boost + saturation to fix washed out appearance
-      return _enhanceColors(frameBytes);
+      // Fold 90x100 into 90x50 to match DDP matrix
+      final folded = _foldVertical(frameBytesPre, _targetWidth, _preTargetHeight);
+      if (folded == null) {
+        debugPrint('[STREAM] Fold failed');
+        _streamInitialized = false;
+        return null;
+      }
+
+      // Apply gamma 2.2 correction to avoid washed out appearance
+      return _applyGamma(folded, 2.2);
     } catch (e) {
       debugPrint("[STREAM] Error reading frame: $e");
       _streamInitialized = false;
@@ -481,34 +493,41 @@ class ScreenCaptureService {
     }
   }
 
-  /// Enhance colors with gamma correction and saturation boost
-  /// Fixes washed-out milky appearance on LED wall
-  static Uint8List _enhanceColors(Uint8List rgbData) {
-    const gamma = 0.75; // Gamma correction (< 1 = brighter)
-    const saturation = 1.4; // Saturation boost (> 1 = more vibrant)
-    
-    final enhanced = Uint8List(rgbData.length);
-    
+  /// Apply gamma correction with exponent (e.g., 2.2)
+  static Uint8List _applyGamma(Uint8List rgbData, double gamma) {
+    final out = Uint8List(rgbData.length);
     for (int i = 0; i < rgbData.length; i += 3) {
-      int r = rgbData[i];
-      int g = rgbData[i + 1];
-      int b = rgbData[i + 2];
-      
-      // Calculate luminance
-      final lum = (0.299 * r + 0.587 * g + 0.114 * b);
-      
-      // Apply saturation boost
-      r = ((r - lum) * saturation + lum).round().clamp(0, 255);
-      g = ((g - lum) * saturation + lum).round().clamp(0, 255);
-      b = ((b - lum) * saturation + lum).round().clamp(0, 255);
-      
-      // Apply gamma correction
-      enhanced[i] = (255 * Math.pow(r / 255, gamma)).round().clamp(0, 255);
-      enhanced[i + 1] = (255 * Math.pow(g / 255, gamma)).round().clamp(0, 255);
-      enhanced[i + 2] = (255 * Math.pow(b / 255, gamma)).round().clamp(0, 255);
+      final r = rgbData[i] / 255.0;
+      final g = rgbData[i + 1] / 255.0;
+      final b = rgbData[i + 2] / 255.0;
+      out[i] = (255.0 * Math.pow(r, gamma)).round().clamp(0, 255);
+      out[i + 1] = (255.0 * Math.pow(g, gamma)).round().clamp(0, 255);
+      out[i + 2] = (255.0 * Math.pow(b, gamma)).round().clamp(0, 255);
     }
-    
-    return enhanced;
+    return out;
+  }
+
+  /// Fold a 90x100 RGB buffer into 90x50 by averaging each pair of rows
+  static Uint8List? _foldVertical(Uint8List rgbData, int width, int height) {
+    if (height % 2 != 0) {
+      return null;
+    }
+    final outHeight = height ~/ 2;
+    final out = Uint8List(width * outHeight * 3);
+
+    int outIdx = 0;
+    for (int yOut = 0; yOut < outHeight; yOut++) {
+      final y1 = yOut * 2;
+      final y2 = y1 + 1;
+      for (int x = 0; x < width; x++) {
+        final idx1 = (y1 * width + x) * 3;
+        final idx2 = (y2 * width + x) * 3;
+        out[outIdx++] = ((rgbData[idx1] + rgbData[idx2]) >> 1);
+        out[outIdx++] = ((rgbData[idx1 + 1] + rgbData[idx2 + 1]) >> 1);
+        out[outIdx++] = ((rgbData[idx1 + 2] + rgbData[idx2 + 2]) >> 1);
+      }
+    }
+    return out;
   }
 
   /// Process raw RGB24 data: resize to 90x50, return as RGB
