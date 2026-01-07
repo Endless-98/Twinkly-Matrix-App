@@ -33,10 +33,8 @@ class Tetris:
         self.grid = [[random.randrange(0, len(self.block_images)) for element in range(self.blocks_width)] for row in range(self.blocks_height)]
 
     def tick(self): # Called in main
-        #self.screen.fill((35,35,35))
-
         if not self.headless:
-            self.screen.fill((35,35,35))
+            self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
             pygame.display.flip()
 
         x_offset = self.screen.get_width() // self.block_size

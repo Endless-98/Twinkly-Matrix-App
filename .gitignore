@@ -39,7 +39,7 @@ Thumbs.db
 
 # Project specific
 *.backup
-rendered_videos/
+source_videos/
 /dev/shm/
 
 # Keep documentation

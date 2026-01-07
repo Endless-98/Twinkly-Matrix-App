@@ -1,5 +1,6 @@
 import os
 import sys
+import argparse
 
 # Set pygame to use dummy driver if headless
 def is_raspberry_pi():
@@ -21,6 +22,7 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 # Import after setting environment variables
 from dotmatrix import DotMatrix
 from games.tetris import Tetris
+from video_player import VideoPlayer
 import pygame
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
@@ -28,50 +30,84 @@ print(f"Mode: {'Headless' if HEADLESS else 'Windowed'}")
 print(f"FPP Output: {ON_PI}\n")
 
 
-def main():
-    # Create matrix with platform-appropriate settings
-    matrix = DotMatrix(
+def run_tetris(matrix):
+    canvas_width = matrix.width * matrix.supersample
+    canvas_height = matrix.height * matrix.supersample
+    canvas = pygame.Surface((canvas_width, canvas_height))
+    tetris = Tetris(canvas, HEADLESS)
+
+    running = True
+    frame_count = 0
+    try:
+        while running:
+            if not HEADLESS:
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
+                        running = False
+            tetris.tick()
+            matrix.render_frame(canvas)
+            frame_count += 1
+            if frame_count == 1:
+                print("First frame rendered successfully")
+    except KeyboardInterrupt:
+        print("\nShutting down...")
+    finally:
+        matrix.shutdown()
+
+
+def run_video(matrix, render_path, loop, speed, start, end, brightness, playback_fps):
+    player = VideoPlayer(matrix)
+
+    # If playback_fps is specified, compute speed relative to the render fps
+    if playback_fps is not None:
+        clip_meta = player.load(render_path)
+        render_fps = clip_meta["fps"]
+        speed = float(playback_fps) / float(render_fps)
+        print(f"Playback fps override: render {render_fps:.2f} -> playback {playback_fps:.2f} (speed={speed:.3f})")
+
+    try:
+        frames = player.play(render_path, loop=loop, speed=speed, start_frame=start, end_frame=end, brightness=brightness)
+        print(f"Playback complete: {frames} frames")
+    except KeyboardInterrupt:
+        print("\nPlayback interrupted")
+    finally:
+        matrix.shutdown()
+
+
+def build_matrix():
+    return DotMatrix(
         headless=HEADLESS,
         fpp_output=ON_PI,
         show_source_preview=True,
         enable_performance_monitor=False,
         disable_blending=True,
         supersample=1,
-        # Apply gamma 2.2 to FPP to correct for human perception
+        # Keep FPP options configurable later; defaults here
         fpp_gamma=2.2,
-        fpp_color_order="RGB"
+        fpp_color_order="RGB",
     )
-    
-    # Create drawing surface directly
-    canvas_width = matrix.width * matrix.supersample
-    canvas_height = matrix.height * matrix.supersample
-    canvas = pygame.Surface((canvas_width, canvas_height))
-    
-    tetris = Tetris(canvas, HEADLESS)
 
-    # Frame loop
-    running = True
-    frame_count = 0
-    try:
-        while running:
-            # Handle events
-            if not HEADLESS:
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT:
-                        running = False
-            
-            tetris.tick()
-            
-            # Render to matrix
-            matrix.render_frame(canvas)
-            frame_count += 1
-            if frame_count == 1:
-                print(f"First frame rendered successfully")
-    
-    except KeyboardInterrupt:
-        print("\nShutting down...")
-    finally:
-        matrix.shutdown()
+
+def main():
+    parser = argparse.ArgumentParser(description="Run LED Wall apps")
+    parser.add_argument("--mode", choices=["tetris", "video"], default="video", help="App mode to run")
+    parser.add_argument("--render", type=str, default=None, help="Path or name of rendered .npz (for video mode)")
+    parser.add_argument("--loop", action="store_true", help="Loop playback (video mode)")
+    parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (video mode)")
+    parser.add_argument("--playback-fps", type=float, default=None, help="Override playback FPS; adjusts speed relative to render")
+    parser.add_argument("--start", type=int, default=0, help="Start frame (video mode)")
+    parser.add_argument("--end", type=int, default=None, help="End frame (exclusive, video mode)")
+    parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")
+    args = parser.parse_args()
+
+    matrix = build_matrix()
+
+    if args.mode == "tetris":
+        run_tetris(matrix)
+    else:
+        # Default to Star-Spangled render if none specified
+        render_path = args.render or "dotmatrix/rendered_videos/Star-Spangled Banner - HD Video Background Loop_90x50_40fps.npz"
+        run_video(matrix, render_path, args.loop, args.speed, args.start, args.end, args.brightness, args.playback_fps)
 
 
 if __name__ == "__main__":
