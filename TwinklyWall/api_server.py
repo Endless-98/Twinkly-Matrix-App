@@ -98,6 +98,19 @@ def stop_current_playback():
         playback_thread.join(timeout=2)
     playback_thread = None
 
+    # After stopping playback, explicitly clear the LEDs to black on FPP
+    try:
+        matrix = initialize_matrix()
+        if matrix:
+            # Set internal buffer to black
+            matrix.clear()
+            # Push the black frame to hardware immediately
+            if getattr(matrix, 'fpp', None):
+                matrix.fpp.write(matrix.dot_colors)
+    except Exception as e:
+        # Avoid crashing stop flow on clear failures; just log
+        print(f"Warning: failed to clear LEDs after stop: {e}")
+
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
     """Thread function to play video."""
