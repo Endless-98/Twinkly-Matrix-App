@@ -25,17 +25,21 @@ def parse_args():
     p.add_argument("--height", type=int, default=50, help="Matrix height")
     # Default model name comes from environment if available
     p.add_argument("--model", default=os.environ.get("FPP_MODEL_NAME", "Light_Wall"), help="Overlay model name (for mmap file)")
+    p.add_argument("--max-fps", type=float, default=float(os.environ.get("DDP_MAX_FPS", 30)), help="Maximum write FPS to FPP (0 disables pacing)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
 
 class DdpBridge:
-    def __init__(self, host, port, width, height, model_name, verbose=False):
+    def __init__(self, host, port, width, height, model_name, max_fps=30.0, verbose=False):
         self.addr = (host, port)
         self.width = width
         self.height = height
         self.frame_size = width * height * 3
         self.verbose = verbose
+        self.max_fps = float(max(0.0, max_fps or 0.0))
+        # Use perf_counter for scheduling precision
+        self._clock = time.perf_counter
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         # Bind exclusively to avoid multiple bridges competing
         # (Do not enable SO_REUSEADDR for this UDP port)
@@ -70,7 +74,8 @@ class DdpBridge:
             print(msg, flush=True)
 
     def run(self):
-        self._log(f"DDP bridge listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height}")
+        pacing = f"pacing at <= {self.max_fps:.1f} FPS" if self.max_fps > 0.0 else "no pacing"
+        self._log(f"DDP bridge listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})")
         current_sender = None
         while True:
             data, sender = self.sock.recvfrom(1500)
@@ -118,15 +123,18 @@ class DdpBridge:
             self.chunks_in_frame += 1
 
             if end_of_frame and self.bytes_written >= self.frame_size:
-                # Rate gate: do not write faster than 20 FPS
-                now = time.time()
-                since_last = (now - self.last_write_ts) * 1000.0
-                if since_last < 50.0:
-                    # Drop this frame to keep FPP pacing
-                    self.frames_dropped += 1
-                    self._sec_dropped += 1
-                    self.bytes_written = 0
-                    continue
+                # Optional pacing to avoid overrunning FPP; sleep instead of dropping frames
+                if self.max_fps > 0.0:
+                    min_interval_ms = 1000.0 / self.max_fps
+                    now_perf = self._clock()
+                    # Convert last_write_ts to perf clock domain when first used
+                    if self.last_write_ts == 0.0:
+                        self.last_write_ts = now_perf - (min_interval_ms / 1000.0)
+                    since_last_ms = (now_perf - self.last_write_ts) * 1000.0
+                    if since_last_ms < min_interval_ms:
+                        remaining_ms = min_interval_ms - since_last_ms
+                        # Sleep the remainder to hit target interval
+                        time.sleep(remaining_ms / 1000.0)
 
                 # Write to overlay using numpy fast path when available
                 try:
@@ -151,7 +159,8 @@ class DdpBridge:
                     self.write_ms_acc += write_elapsed
                     self.frames_written += 1
                     self._sec_frames_out += 1
-                    self.last_write_ts = now
+                    # Update last write using perf clock for accuracy
+                    self.last_write_ts = self._clock()
                 except Exception as e:
                     self._log(f"Write error: {e}")
                 finally:
@@ -176,7 +185,7 @@ class DdpBridge:
 def main():
     args = parse_args()
     try:
-        bridge = DdpBridge(args.host, args.port, args.width, args.height, args.model, verbose=args.verbose)
+        bridge = DdpBridge(args.host, args.port, args.width, args.height, args.model, max_fps=args.max_fps, verbose=args.verbose)
         bridge.run()
     except KeyboardInterrupt:
         print("Exiting.")
