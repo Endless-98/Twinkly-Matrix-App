@@ -6,10 +6,10 @@ After=network.target
 Type=simple
 User=fpp
 Group=fpp
-WorkingDirectory=/home/fpp/TwinklyWall
-Environment="PATH=/home/fpp/TwinklyWall/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+WorkingDirectory=/home/fpp/TwinklyWall_Project/TwinklyWall
+Environment="PATH=/home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
-ExecStart=/home/fpp/TwinklyWall/.venv/bin/python main.py --mode api
+ExecStart=/home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin/python main.py --mode api
 Restart=always
 RestartSec=10
 StandardOutput=journal
