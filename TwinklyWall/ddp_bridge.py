@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import argparse
+import os
 import socket
 import struct
 import sys
@@ -22,7 +23,8 @@ def parse_args():
     p.add_argument("--port", type=int, default=4049, help="Listen UDP port")
     p.add_argument("--width", type=int, default=90, help="Matrix width")
     p.add_argument("--height", type=int, default=50, help="Matrix height")
-    p.add_argument("--model", default="Light_Wall", help="Overlay model name (for mmap file)")
+    # Default model name comes from environment if available
+    p.add_argument("--model", default=os.environ.get("FPP_MODEL_NAME", "Light_Wall"), help="Overlay model name (for mmap file)")
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
