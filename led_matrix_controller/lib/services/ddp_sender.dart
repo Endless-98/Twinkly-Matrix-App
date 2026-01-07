@@ -120,14 +120,6 @@ class DDPSender {
         
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
         _staticSocket!.broadcastEnabled = true;
-        
-        // Set socket send buffer to 256KB to absorb bursts
-        try {
-          _staticSocket!.setRawOption(RawSocketOption(RawSocketOption.levelSocket, RawSocketOption.IPv4SendBufferSize, Uint8List(4)..buffer.asByteData().setInt32(0, 256 * 1024, Endian.host)));
-        } catch (e) {
-          // Ignore if platform doesn't support
-        }
-        
         // Set socket options to minimize buffering
         _staticSocket!.writeEventsEnabled = false; // We don't care about write events
         _staticSocket!.readEventsEnabled = false;  // No incoming data expected
