@@ -58,51 +58,27 @@ class ScreenCaptureService {
     }
 
     try {
-      // Use PowerShell to get window titles
+      // Use PowerShell to list only taskbar-visible windows (MainWindowHandle != 0)
+      // This filters out background/system/tool windows like Task Manager popups
       final result = await Process.run('powershell', [
+        '-NoProfile',
         '-Command',
         r'''
-        Add-Type @"
-          using System;
-          using System.Runtime.InteropServices;
-          using System.Text;
-          public class Win32 {
-            [DllImport("user32.dll")]
-            public static extern bool EnumWindows(EnumWindowsProc enumProc, IntPtr lParam);
-            [DllImport("user32.dll")]
-            public static extern int GetWindowText(IntPtr hWnd, StringBuilder lpString, int nMaxCount);
-            [DllImport("user32.dll")]
-            public static extern bool IsWindowVisible(IntPtr hWnd);
-            public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
-          }
-"@
-
-        $windows = New-Object System.Collections.ArrayList
-        $callback = {
-          param($hWnd, $lParam)
-          if ([Win32]::IsWindowVisible($hWnd)) {
-            $title = New-Object System.Text.StringBuilder 256
-            [Win32]::GetWindowText($hWnd, $title, 256)
-            $titleStr = $title.ToString()
-            if ($titleStr -ne "") {
-              [void]$windows.Add($titleStr)
-            }
-          }
-          return $true
-        }
-        
-        [Win32]::EnumWindows($callback, [IntPtr]::Zero)
-        $windows | ForEach-Object { $_ }
+        [System.Diagnostics.Process]::GetProcesses() |
+          Where-Object { $_.MainWindowHandle -ne 0 -and -not [string]::IsNullOrWhiteSpace($_.MainWindowTitle) } |
+          Select-Object -ExpandProperty MainWindowTitle
         '''
       ]).timeout(const Duration(seconds: 5));
 
       if (result.exitCode == 0) {
         final output = result.stdout.toString();
-        final windows = output.split('\n')
+        final windows = output
+            .split('\n')
             .map((s) => s.trim())
             .where((s) => s.isNotEmpty)
+            .toSet()
             .toList();
-        debugPrint("[WINDOWS] Found ${windows.length} windows");
+        debugPrint("[WINDOWS] Found ${windows.length} taskbar windows");
         return windows;
       } else {
         debugPrint("[WINDOWS] Failed to enumerate: ${result.stderr}");
@@ -219,19 +195,15 @@ class ScreenCaptureService {
         // Windows: Use gdigrab for screen capture
         debugPrint("[FFMPEG] Using Windows gdigrab input");
         
-        // Base args
+        // Base args - gdigrab needs minimal buffering flags to capture continuously
         ffmpegArgs = [
           '-hide_banner',
           '-loglevel', 'info',
           '-nostdin',
-          '-fflags', 'nobuffer',
-          '-flags', 'low_delay',
-          '-rtbufsize', '0',
-          '-probesize', '32',
-          '-analyzeduration', '0',
-          '-flush_packets', '1',
           '-f', 'gdigrab',
-          '-framerate', '60',
+          '-framerate', '20',  // 20fps target for LED wall
+          '-draw_mouse', '1',   // Include mouse cursor (helps verify updates)
+          '-show_region', '0',  // Don't show capture region outline
         ];
         
         // Mode-specific args
@@ -275,6 +247,7 @@ class ScreenCaptureService {
           '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=lanczos',
           '-pix_fmt', 'rgb24',
           '-f', 'rawvideo',
+          '-vsync', '0',  // Don't sync to input framerate, output as fast as possible
           'pipe:1'
         ]);
       } else {

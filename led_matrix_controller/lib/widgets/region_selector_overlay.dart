@@ -134,8 +134,20 @@ class _RegionSelectorOverlayState extends State<RegionSelectorOverlay> {
                   foregroundColor: Colors.white,
                 ),
                 onPressed: () {
-                  // Close the overlay window
-                  Navigator.of(context).pop();
+                  final region = {
+                    'x': _x.round(),
+                    'y': _y.round(),
+                    'width': _width.round(),
+                    'height': _height.round(),
+                  };
+                  widget.onRegionChanged(
+                    region['x']!,
+                    region['y']!,
+                    region['width']!,
+                    region['height']!,
+                  );
+                  // Close the overlay window and return the region
+                  Navigator.of(context).pop(region);
                 },
                 child: const Text('Confirm Region'),
               ),

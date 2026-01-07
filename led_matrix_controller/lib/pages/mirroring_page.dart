@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import '../services/screen_capture.dart';
 import '../services/ddp_sender.dart';
 import '../providers/app_state.dart';
+import '../widgets/region_selector_overlay.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 class MirroringPage extends ConsumerStatefulWidget {
@@ -263,80 +264,56 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       statusMessage = "Opening region selector...";
     });
 
-    // Note: Region overlay would need desktop_multi_window package
-    // For now, show a dialog with manual input
-    await _showRegionDialog();
-  }
-
-  Future<void> _showRegionDialog() async {
-    final captureRegion = ref.read(captureRegionProvider);
-    final xController = TextEditingController(
-      text: captureRegion['x'].toString(),
-    );
-    final yController = TextEditingController(
-      text: captureRegion['y'].toString(),
-    );
-    final widthController = TextEditingController(
-      text: captureRegion['width'].toString(),
-    );
-    final heightController = TextEditingController(
-      text: captureRegion['height'].toString(),
-    );
-
-    await showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Set Capture Region'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(
-              controller: xController,
-              decoration: const InputDecoration(labelText: 'X Position'),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: yController,
-              decoration: const InputDecoration(labelText: 'Y Position'),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: widthController,
-              decoration: const InputDecoration(labelText: 'Width'),
-              keyboardType: TextInputType.number,
-            ),
-            TextField(
-              controller: heightController,
-              decoration: const InputDecoration(labelText: 'Height'),
-              keyboardType: TextInputType.number,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final region = {
-                'x': int.tryParse(xController.text) ?? 0,
-                'y': int.tryParse(yController.text) ?? 0,
-                'width': int.tryParse(widthController.text) ?? 800,
-                'height': int.tryParse(heightController.text) ?? 600,
+    // Full-screen draggable overlay (no manual typing)
+    final result = await Navigator.of(context).push<Map<String, int>?>(
+      PageRouteBuilder(
+        opaque: false,
+        barrierColor: Colors.black.withOpacity(0.35),
+        pageBuilder: (_, __, ___) {
+          return RegionSelectorOverlay(
+            initialX: captureRegion['x'] ?? 0,
+            initialY: captureRegion['y'] ?? 0,
+            initialWidth: captureRegion['width'] ?? 800,
+            initialHeight: captureRegion['height'] ?? 600,
+            onRegionChanged: (x, y, width, height) {
+              // Live update while dragging/resizing
+              ref.read(captureRegionProvider.notifier).state = {
+                'x': x,
+                'y': y,
+                'width': width,
+                'height': height,
               };
-              ref.read(captureRegionProvider.notifier).state = region;
-              Navigator.pop(context);
+              ScreenCaptureService.setCaptureMode(
+                CaptureMode.region,
+                x: x,
+                y: y,
+                width: width,
+                height: height,
+              );
               setState(() {
-                statusMessage =
-                    "Region set: ${region['width']}x${region['height']} at (${region['x']},${region['y']})";
+                statusMessage = "Region: ${width}x${height} at ($x,$y)";
               });
             },
-            child: const Text('Set'),
-          ),
-        ],
+          );
+        },
       ),
     );
+
+    // Persist the final region after overlay closes
+    if (result != null) {
+      ref.read(captureRegionProvider.notifier).state = result;
+      ScreenCaptureService.setCaptureMode(
+        CaptureMode.region,
+        x: result['x'],
+        y: result['y'],
+        width: result['width'],
+        height: result['height'],
+      );
+      setState(() {
+        statusMessage =
+            "Region set: ${result['width']}x${result['height']} at (${result['x']},${result['y']})";
+      });
+    }
   }
 
   @override
