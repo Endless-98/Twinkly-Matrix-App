@@ -40,7 +40,7 @@ fi
 deactivate
 
 # Install/update systemd service
-cd ..
+cd ~/TwinklyWall_Project/TwinklyWall
 SERVICE_FILE="/etc/systemd/system/twinklywall.service"
 if [ ! -f "$SERVICE_FILE" ]; then
     echo '⚙️ Installing systemd service...'
