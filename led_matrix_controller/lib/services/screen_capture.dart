@@ -1,6 +1,8 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'dart:async';
 import 'dart:io';
+import 'package:async/async.dart';
 import 'package:image/image.dart' as img;
 
 /// Persistent FFmpeg stream for continuous screen capture
@@ -11,6 +13,8 @@ class ScreenCaptureService {
   static bool _isCapturingDesktop = false;
   static Process? _ffmpegProcess;
   static bool _streamInitialized = false;
+  static Uint8List _stdoutRemainder = Uint8List(0);
+  static StreamQueue<List<int>>? _stdoutQueue;
   
   // Frame dimensions - will auto-detect from display
   static int _screenWidth = 1920;
@@ -18,6 +22,7 @@ class ScreenCaptureService {
   static const int _targetWidth = 90;
   static const int _targetHeight = 100;
   static const int _bytesPerPixel = 3; // RGB24
+  static const int _targetFrameSize = _targetWidth * _targetHeight * _bytesPerPixel;
 
   /// Start capturing the screen
   static Future<bool> startCapture() async {
@@ -82,21 +87,33 @@ class ScreenCaptureService {
   static Future<bool> _startFFmpegStream() async {
     try {
       debugPrint("[FFMPEG] Starting persistent stream");
-      debugPrint("[FFMPEG] Display: :0.0, Resolution: ${_screenWidth}x${_screenHeight}");
+      debugPrint("[FFMPEG] Display: :0.0, Capture: ${_screenWidth}x${_screenHeight}, Output: ${_targetWidth}x${_targetHeight}");
       
       // Kill any existing process
       _ffmpegProcess?.kill();
+      await _stdoutQueue?.cancel();
+      _stdoutQueue = null;
       
-      // Start FFmpeg with x11grab, output raw RGB24 to stdout
-      // This process will run continuously and stream frames
+      // Start FFmpeg with x11grab, downscale and output raw RGB24 to stdout
+      // Low latency flags keep buffering minimal so reads stay aligned
       _ffmpegProcess = await Process.start(
         'ffmpeg',
         [
-          '-loglevel', 'quiet',           // Suppress FFmpeg output
+          '-hide_banner',
+          '-loglevel', 'error',           // Show only errors
+          '-nostdin',                    // Do not wait on stdin
+          '-fflags', 'nobuffer',         // Reduce buffering
+          '-flags', 'low_delay',
+          '-rtbufsize', '0',
+          '-probesize', '32',
+          '-analyzeduration', '0',
+          '-flush_packets', '1',
           '-f', 'x11grab',                // X11 screen capture input
           '-video_size', '${_screenWidth}x${_screenHeight}',
-          '-framerate', '30',             // Source framerate
+          '-framerate', '60',             // Higher source framerate to reduce frame wait time
+          '-vsync', '0',                  // Do not sync to timestamps
           '-i', ':0.0',                   // X11 display :0.0
+          '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear', // Downscale before output
           '-pix_fmt', 'rgb24',            // Output format: RGB24 (3 bytes per pixel)
           '-f', 'rawvideo',               // Raw video output format
           'pipe:1'                        // Write to stdout
@@ -107,6 +124,8 @@ class ScreenCaptureService {
         debugPrint("[FFMPEG] Failed to start process");
         return false;
       }
+
+      _stdoutQueue = StreamQueue(_ffmpegProcess!.stdout);
       
       debugPrint("[FFMPEG] Process started, PID: ${_ffmpegProcess!.pid}");
       return true;
@@ -125,6 +144,16 @@ class ScreenCaptureService {
       } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
         _isCapturingDesktop = false;
         _streamInitialized = false;
+        _stdoutRemainder = Uint8List(0);
+        final queue = _stdoutQueue;
+        _stdoutQueue = null;
+        if (queue != null) {
+          try {
+            await queue.cancel(immediate: true);
+          } catch (_) {
+            // Ignore cancellation errors
+          }
+        }
         
         // Kill FFmpeg process
         if (_ffmpegProcess != null) {
@@ -206,32 +235,53 @@ class ScreenCaptureService {
         debugPrint("[STREAM] Process is null");
         return null;
       }
-      
-      final frameSize = _screenWidth * _screenHeight * _bytesPerPixel;
-      debugPrint("[STREAM] Reading frame: $frameSize bytes (${_screenWidth}x${_screenHeight} @ 3bpp)");
-      
-      // Read exactly frameSize bytes from stdout
-      final frameBytes = <int>[];
-      final stdout = _ffmpegProcess!.stdout;
-      
-      // Read in chunks to avoid blocking
-      while (frameBytes.length < frameSize) {
-        final chunk = await stdout
-            .take(frameSize - frameBytes.length)
-            .expand((list) => list)
-            .toList();
-        if (chunk.isEmpty) {
-          debugPrint("[STREAM] EOF reached or process died");
+      final frameSize = _targetFrameSize;
+      debugPrint("[STREAM] Reading frame: $frameSize bytes (${_targetWidth}x${_targetHeight} @ 3bpp)");
+
+      // Ensure we have a continuous buffer to pull exact frame sizes
+      final builder = BytesBuilder(copy: false);
+      if (_stdoutRemainder.isNotEmpty) {
+        builder.add(_stdoutRemainder);
+      }
+
+      final queue = _stdoutQueue;
+      if (queue == null) {
+        debugPrint("[STREAM] Queue is null");
+        _streamInitialized = false;
+        return null;
+      }
+
+      while (builder.length < frameSize) {
+        try {
+          if (!await queue.hasNext) {
+            debugPrint("[STREAM] EOF reached or process died");
+            _streamInitialized = false;
+            return null;
+          }
+          final chunk = await queue.next;
+          if (chunk.isEmpty) {
+            debugPrint("[STREAM] Empty chunk encountered");
+            continue;
+          }
+          builder.add(chunk);
+        } on StateError catch (e) {
+          debugPrint("[STREAM] Queue canceled or closed: $e");
           _streamInitialized = false;
           return null;
         }
-        frameBytes.addAll(chunk);
       }
-      
+
+      final combined = builder.takeBytes();
+      final frameBytes = Uint8List.sublistView(combined, 0, frameSize);
+      final remainingLength = combined.length - frameSize;
+      _stdoutRemainder = remainingLength > 0
+          ? Uint8List.sublistView(combined, frameSize)
+          : Uint8List(0);
+
       final readDuration = DateTime.now().difference(readStartTime);
-      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms");
-      
-      return Uint8List.fromList(frameBytes);
+      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes");
+
+      return frameBytes;
     } catch (e) {
       debugPrint("[STREAM] Error reading frame: $e");
       _streamInitialized = false;
@@ -245,6 +295,19 @@ class ScreenCaptureService {
     debugPrint("[PROCESS] Input: ${rgbData.length} bytes (raw RGB24)");
     
     try {
+      // Fast path: FFmpeg already scaled to the target size
+      if (rgbData.length == _targetFrameSize) {
+        debugPrint("[PROCESS] Using pre-scaled frame (${_targetWidth}x${_targetHeight})");
+        return rgbData;
+      }
+
+      // Fallback: if FFmpeg output is full resolution, downscale in Dart
+      final expectedFullSize = _screenWidth * _screenHeight * _bytesPerPixel;
+      if (rgbData.length != expectedFullSize) {
+        debugPrint("[PROCESS] Unexpected frame size ${rgbData.length}, expected ${expectedFullSize} or ${_targetFrameSize}");
+        return null;
+      }
+
       // Decode raw RGB24 to Image object - create Image from raw RGB bytes
       final decodeStartTime = DateTime.now();
       final image = img.Image(
@@ -279,7 +342,7 @@ class ScreenCaptureService {
 
       // Convert to raw RGB data (27,000 bytes: 90 * 100 * 3)
       final convertStartTime = DateTime.now();
-      final outputSize = _targetWidth * _targetHeight * _bytesPerPixel;
+      final outputSize = _targetFrameSize;
       final rgbOutput = Uint8List(outputSize);
       var outputOffset = 0;
 

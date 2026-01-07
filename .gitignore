@@ -142,11 +142,6 @@ TwinklyWall/assets/source_videos/
 *.mkv
 *.webm
 
-# Rendered videos
-TwinklyWall/dotmatrix/rendered_videos/
-!TwinklyWall/dotmatrix/rendered_videos/.gitkeep
-*.rendered.mp4
-
 # Temporary files
 *.backup
 *.tmp
