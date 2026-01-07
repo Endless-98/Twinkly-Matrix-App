@@ -47,7 +47,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     });
 
     debugPrint("[MIRRORING] Starting desktop capture, target FPP: $fppIp:4048");
-    DDPSender.setDebug(true); // Enable DDP packet debugging
+    DDPSender.setDebugLevel(2); // Verbose per-chunk logging for diagnostics
 
     // Capture at ~20 FPS (50ms per frame)
     while (isCapturing) {

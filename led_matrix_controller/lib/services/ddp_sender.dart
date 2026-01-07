@@ -10,6 +10,7 @@ class DDPSender {
   static const int frameSize = 13500; // 90*50*3 RGB bytes
   static RawDatagramSocket? _staticSocket;
   static bool _debugPackets = false;
+  static int _debugLevel = 1; // 1: per-frame summary, 2: chunk details
   static int _sequenceNumber = 0;
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1200 bytes for safety
@@ -72,12 +73,26 @@ class DDPSender {
       final addr = InternetAddress(host);
       int sent = 0;
       int packets = 0;
+      int checksum = 0;
+      for (int i = 0; i < rgbData.length; i++) {
+        checksum = (checksum + rgbData[i]) & 0xFFFFFFFF;
+      }
+      if (_debugPackets) {
+        final p0 = rgbData.length >= 3 ? '${rgbData[0]},${rgbData[1]},${rgbData[2]}' : 'n/a';
+        debugPrint('[DDP] Frame bytes=${rgbData.length} checksum(sum32)=$checksum firstRGB=[$p0]');
+      }
       while (sent < rgbData.length) {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
         _staticSocket!.send(packet, addr, 4048);
+        if (_debugPackets && _debugLevel >= 2) {
+          final r = rgbData[sent];
+          final g = rgbData[sent + 1];
+          final b = rgbData[sent + 2];
+          debugPrint('[DDP] Chunk off=$sent len=$dataLen rgb0=[$r,$g,$b] last=$isLast');
+        }
         sent += dataLen;
         packets++;
       }
@@ -137,6 +152,11 @@ class DDPSender {
   /// Enable/disable packet debugging
   static void setDebug(bool enabled) {
     _debugPackets = enabled;
+  }
+
+  static void setDebugLevel(int level) {
+    _debugLevel = level.clamp(0, 2);
+    _debugPackets = _debugLevel > 0;
   }
 
   /// Clean up resources
