@@ -1,6 +1,11 @@
 #!/bin/bash
 set -e
 
+DEBUG_MODE=0
+if [ "$1" == "--debug" ]; then
+    DEBUG_MODE=1
+fi
+
 echo '🚀 Setting up/updating TwinklyWall on FPP...'
 
 # Sync repository
@@ -39,56 +44,73 @@ fi
 
 deactivate
 
-# Install/update systemd services
+# Install/update systemd services (skip in --debug mode)
 cd ~/TwinklyWall_Project/TwinklyWall
 
 # TwinklyWall main service
 SERVICE_FILE="/etc/systemd/system/twinklywall.service"
-if [ ! -f "$SERVICE_FILE" ]; then
+if [ $DEBUG_MODE -eq 0 ]; then
+    if [ ! -f "$SERVICE_FILE" ]; then
     echo '⚙️ Installing twinklywall service...'
     sudo cp twinklywall.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable twinklywall
-elif ! cmp -s twinklywall.service "$SERVICE_FILE"; then
+    elif ! cmp -s twinklywall.service "$SERVICE_FILE"; then
     echo '🔄 Updating twinklywall service...'
     sudo cp twinklywall.service /etc/systemd/system/
     sudo systemctl daemon-reload
-else
-    echo '✅ Twinklywall service is up to date'
+    else
+        echo '✅ Twinklywall service is up to date'
+    fi
 fi
 
 # DDP Bridge service
 DDP_SERVICE_FILE="/etc/systemd/system/ddp_bridge.service"
-if [ ! -f "$DDP_SERVICE_FILE" ]; then
+if [ $DEBUG_MODE -eq 0 ]; then
+    if [ ! -f "$DDP_SERVICE_FILE" ]; then
     echo '⚙️ Installing DDP bridge service...'
     sudo cp ddp_bridge.service /etc/systemd/system/
     sudo systemctl daemon-reload
     sudo systemctl enable ddp_bridge
-elif ! cmp -s ddp_bridge.service "$DDP_SERVICE_FILE"; then
+    elif ! cmp -s ddp_bridge.service "$DDP_SERVICE_FILE"; then
     echo '🔄 Updating DDP bridge service...'
     sudo cp ddp_bridge.service /etc/systemd/system/
     sudo systemctl daemon-reload
-else
-    echo '✅ DDP bridge service is up to date'
+    else
+        echo '✅ DDP bridge service is up to date'
+    fi
 fi
 
 # Ensure services are running
-if ! sudo systemctl is-active --quiet twinklywall; then
+if [ $DEBUG_MODE -eq 0 ]; then
+    if ! sudo systemctl is-active --quiet twinklywall; then
     echo '▶️ Starting twinklywall service...'
     sudo systemctl start twinklywall
-else
-    echo '✅ Twinklywall service is running'
+    else
+        echo '✅ Twinklywall service is running'
+    fi
 fi
 
-if ! sudo systemctl is-active --quiet ddp_bridge; then
+if [ $DEBUG_MODE -eq 0 ]; then
+    if ! sudo systemctl is-active --quiet ddp_bridge; then
     echo '▶️ Starting DDP bridge service...'
     sudo systemctl start ddp_bridge
-else
-    echo '✅ DDP bridge service is running'
+    else
+        echo '✅ DDP bridge service is running'
+    fi
+fi
+
+if [ $DEBUG_MODE -eq 1 ]; then
+    echo '🧪 Debug mode: stopping any running services to avoid conflicts.'
+    sudo systemctl stop twinklywall || true
+    sudo systemctl stop ddp_bridge || true
+    echo 'ℹ️ Run the bridge manually:'
+    echo '    source ~/TwinklyWall_Project/TwinklyWall/.venv/bin/activate'
+    echo '    python3 ~/TwinklyWall_Project/TwinklyWall/ddp_bridge.py --port 4049 --width 90 --height 50 --model "Light Wall" --verbose'
 fi
 
 echo '✅ Setup/update complete!'
 echo '📊 Service status:'
-sudo systemctl status twinklywall --no-pager
+sudo systemctl status twinklywall --no-pager || true
 echo ''
-sudo systemctl status ddp_bridge --no-pager
+sudo systemctl status ddp_bridge --no-pager || true
