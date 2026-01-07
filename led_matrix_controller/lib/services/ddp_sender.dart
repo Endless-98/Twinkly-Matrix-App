@@ -20,7 +20,8 @@ class DDPSender {
   // DDP header is 10 bytes, keep data <= 1400 bytes for Ethernet MTU 1500
   static const int _maxChunkData = 1400;
   // Optionally send whole frame in a single UDP datagram (fastest; relies on local LAN handling fragmentation)
-  static const bool _useSinglePacket = true;
+  // Safer default: use chunked packets to avoid MTU-related drops; can re-enable if LAN path supports it
+  static const bool _useSinglePacket = false;
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
