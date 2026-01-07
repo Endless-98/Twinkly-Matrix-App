@@ -244,6 +244,34 @@ def health():
     return jsonify({'status': 'ok'})
 
 
+@app.route('/api/test/solid', methods=['POST'])
+def test_solid():
+    try:
+        data = request.get_json(silent=True) or {}
+        r = int(data.get('r', data.get('red', 255)))
+        g = int(data.get('g', data.get('green', 0)))
+        b = int(data.get('b', data.get('blue', 0)))
+        matrix = initialize_matrix()
+        if getattr(matrix, 'fpp', None):
+            ms = matrix.fpp.write_solid(r, g, b)
+            return jsonify({'status': 'ok', 'ms': ms, 'rgb': [r, g, b]})
+        return jsonify({'error': 'FPP output not enabled'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/test/black', methods=['POST'])
+def test_black():
+    try:
+        matrix = initialize_matrix()
+        if getattr(matrix, 'fpp', None):
+            ms = matrix.fpp.write_solid(0, 0, 0)
+            return jsonify({'status': 'ok', 'ms': ms})
+        return jsonify({'error': 'FPP output not enabled'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 def cleanup():
     """Cleanup function to be called on shutdown."""
     global current_matrix

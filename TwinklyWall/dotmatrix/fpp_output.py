@@ -129,6 +129,20 @@ class FPPOutput:
             self._fast_dest = np.array(dest_indices, dtype=np.int32)
             self._fast_src = np.array(src_indices, dtype=np.int32)
             self._buffer_view = np.frombuffer(self.buffer, dtype=np.uint8).reshape(-1, 3)
+            try:
+                print(f"FPPOutput mapping entries: {len(self._fast_dest)}")
+            except Exception:
+                pass
+        elif HAS_NUMPY:
+            # Fallback to linear mapping when CSV mapping yields no entries
+            total = self.width * self.height
+            self._fast_dest = np.arange(total, dtype=np.int32)
+            self._fast_src = np.arange(total, dtype=np.int32)
+            self._buffer_view = np.frombuffer(self.buffer, dtype=np.uint8).reshape(-1, 3)
+            try:
+                print("FPPOutput mapping empty; using linear fallback mapping")
+            except Exception:
+                pass
 
     def write(self, dot_colors):
         """Write color data to FPP buffer and flush to memory map."""
@@ -160,6 +174,20 @@ class FPPOutput:
                     self.buffer[byte_idx + 1] = g
                     self.buffer[byte_idx + 2] = b
 
+        self.memory_map.seek(0)
+        self.memory_map.write(self.buffer)
+        return (time.perf_counter() - start) * 1000
+
+    def write_solid(self, r, g, b):
+        """Write a solid color directly to the FPP buffer (bypasses mapping)."""
+        if not self.memory_map:
+            return 0.0
+        start = time.perf_counter()
+        rr, gg, bb = self._apply_correction_tuple(int(r), int(g), int(b))
+        for i in range(0, self.buffer_size, 3):
+            self.buffer[i] = rr
+            self.buffer[i + 1] = gg
+            self.buffer[i + 2] = bb
         self.memory_map.seek(0)
         self.memory_map.write(self.buffer)
         return (time.perf_counter() - start) * 1000
