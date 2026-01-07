@@ -120,7 +120,7 @@ class _VideoSelectorPageState extends ConsumerState<VideoSelectorPage> {
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
                 child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
                     width: double.infinity,

@@ -22,7 +22,7 @@ class ControllerPage extends ConsumerWidget {
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
                 child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
+                  mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   const Text(
                     'D-Pad Control',
