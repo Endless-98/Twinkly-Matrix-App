@@ -111,6 +111,6 @@ fi
 
 echo '✅ Setup/update complete!'
 echo '📊 Service status:'
-sudo systemctl status twinklywall --no-pager || true
+sudo systemctl status twinklywall --no-pager -l || true
 echo ''
-sudo systemctl status ddp_bridge --no-pager || true
+sudo systemctl status ddp_bridge --no-pager -l || true
