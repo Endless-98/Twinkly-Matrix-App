@@ -5,8 +5,9 @@ import time
 class PerformanceMonitor:
     """Tracks and reports rendering performance metrics."""
 
-    def __init__(self, enabled=True):
+    def __init__(self, enabled=True, target_fps=None):
         self.enabled = enabled
+        self.target_fps = target_fps
         self.frame_count = 0
         self.last_log_time = time.time()
         self.stage_timings = {
@@ -56,8 +57,10 @@ class PerformanceMonitor:
 
         if self.stage_timings['total']:
             avg_total = sum(self.stage_timings['total']) / len(self.stage_timings['total'])
-            print(f"\nFrame budget: 25.00ms (40 FPS target)")
-            print(f"Headroom: {25.0 - avg_total:6.2f}ms")
+            if self.target_fps:
+                frame_budget = 1000.0 / float(self.target_fps)
+                print(f"\nFrame budget: {frame_budget:5.2f}ms ({self.target_fps:.0f} FPS target)")
+                print(f"Headroom: {frame_budget - avg_total:6.2f}ms")
         print(f"{'='*60}\n")
 
     def _reset(self):

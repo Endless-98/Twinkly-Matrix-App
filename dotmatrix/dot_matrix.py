@@ -91,7 +91,7 @@ class DotMatrix:
             self._color_tuples = {}  # Cache for (r,g,b) -> (r,g,b) to avoid recreation
         
         # Optional components
-        self.monitor = PerformanceMonitor(enabled=enable_performance_monitor)
+        self.monitor = PerformanceMonitor(enabled=enable_performance_monitor, target_fps=self.max_fps)
         # FPP output: pass through color correction and channel order
         self.fpp = FPPOutput(
             width, height, fpp_memory_buffer_file,

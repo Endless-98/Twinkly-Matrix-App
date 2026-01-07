@@ -66,7 +66,15 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
         print(f"Playback fps override: render {render_fps:.2f} -> playback {playback_fps:.2f} (speed={speed:.3f})")
 
     try:
-        frames = player.play(render_path, loop=loop, speed=speed, start_frame=start, end_frame=end, brightness=brightness)
+        frames = player.play(
+            render_path,
+            loop=loop,
+            speed=speed,
+            start_frame=start,
+            end_frame=end,
+            brightness=brightness,
+            playback_fps=playback_fps,
+        )
         print(f"Playback complete: {frames} frames")
     except KeyboardInterrupt:
         print("\nPlayback interrupted")
@@ -94,7 +102,7 @@ def main():
     parser.add_argument("--render", type=str, default=None, help="Path or name of rendered .npz (for video mode)")
     parser.add_argument("--no-loop", action="store_true", help="Disable looping (video mode)")
     parser.add_argument("--speed", type=float, default=1.0, help="Playback speed multiplier (video mode)")
-    parser.add_argument("--playback-fps", type=float, default=20.0, help="Override playback FPS; adjusts speed relative to render")
+    parser.add_argument("--playback-fps", type=float, default=20.0, help="Playback FPS target; adjusts speed relative to render")
     parser.add_argument("--start", type=int, default=0, help="Start frame (video mode)")
     parser.add_argument("--end", type=int, default=None, help="End frame (exclusive, video mode)")
     parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")

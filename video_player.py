@@ -78,6 +78,7 @@ class VideoPlayer:
         start_frame: int = 0,
         end_frame: Optional[int] = None,
         brightness: Optional[float] = None,
+        playback_fps: Optional[float] = None,
     ) -> int:
         """Play a rendered video on the matrix.
 
@@ -105,22 +106,23 @@ class VideoPlayer:
         if start_frame >= end_frame:
             return 0
 
-        # Logging: playback configuration
+        # Compute target playback fps
+        target_fps = playback_fps if playback_fps is not None else fps * max(1e-3, speed)
+        target_fps = max(1e-3, target_fps)
+        frame_dt = 1.0 / target_fps
+
+        # Logging: playback configuration (reflects actual target_fps)
         target_label = "FPP" if getattr(self.matrix, "fpp", None) else "Preview"
         print("\n[VideoPlayer] Starting playback")
         print(f"  Target: {target_label}, Headless: {getattr(self.matrix, 'headless', None)}")
         print(f"  Render file: {clip['path']}")
         print(f"  Render fps: {fps:.2f}")
-        effective_fps = fps * max(1e-3, speed)
-        print(f"  Playback fps: {effective_fps:.2f} (speed={speed:.3f})")
+        print(f"  Playback fps: {target_fps:.2f}")
+        print(f"  Speed multiplier: {speed:.3f}")
         print(f"  Frames: start={start_frame}, end={end_frame}, total={total}")
         print(f"  Loop: {loop}, Repeat: {repeat if repeat is not None else 1 if not loop else 'inf'}")
         if brightness is not None:
             print(f"  Brightness scale: {brightness}")
-
-        # Compute frame timing
-        target_fps = max(1e-3, fps * max(1e-3, speed))
-        frame_dt = 1.0 / target_fps
 
         # Optional brightness scaling (numpy, in-place on a view copy per frame)
         scale_0_255 = None
