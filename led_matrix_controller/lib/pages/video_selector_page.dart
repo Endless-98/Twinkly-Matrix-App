@@ -119,7 +119,7 @@ class _VideoSelectorPageState extends ConsumerState<VideoSelectorPage> {
               padding: const EdgeInsets.only(bottom: 16),
               child: ConstrainedBox(
                 constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Container(
