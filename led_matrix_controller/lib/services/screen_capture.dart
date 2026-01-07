@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:math' as Math;
 import 'package:async/async.dart';
 import 'package:image/image.dart' as img;
 import 'dart:ffi' as ffi;
@@ -418,19 +419,34 @@ class ScreenCaptureService {
 
       while (builder.length < frameSize) {
         try {
-          if (!await queue.hasNext) {
-            debugPrint("[STREAM] EOF reached or process died");
+          // Wait for next chunk with timeout to prevent hanging
+          final hasNext = await queue.hasNext.timeout(
+            const Duration(milliseconds: 100),
+            onTimeout: () {
+              debugPrint("[STREAM] Timeout waiting for data");
+              return false;
+            },
+          );
+          
+          if (!hasNext) {
+            if (builder.length > 0) {
+              debugPrint("[STREAM] Incomplete frame: ${builder.length}/$frameSize bytes");
+            }
             _streamInitialized = false;
             return null;
           }
+          
           final chunk = await queue.next;
           if (chunk.isEmpty) {
-            debugPrint("[STREAM] Empty chunk encountered");
             continue;
           }
           builder.add(chunk);
         } on StateError catch (e) {
-          debugPrint("[STREAM] Queue canceled or closed: $e");
+          debugPrint("[STREAM] Queue error: $e");
+          _streamInitialized = false;
+          return null;
+        } on TimeoutException {
+          debugPrint("[STREAM] Frame read timeout");
           _streamInitialized = false;
           return null;
         }
@@ -443,12 +459,43 @@ class ScreenCaptureService {
           ? Uint8List.sublistView(combined, frameSize)
           : Uint8List(0);
 
-      return frameBytes;
+      // Enhance colors: gamma boost + saturation to fix washed out appearance
+      return _enhanceColors(frameBytes);
     } catch (e) {
       debugPrint("[STREAM] Error reading frame: $e");
       _streamInitialized = false;
       return null;
     }
+  }
+
+  /// Enhance colors with gamma correction and saturation boost
+  /// Fixes washed-out milky appearance on LED wall
+  static Uint8List _enhanceColors(Uint8List rgbData) {
+    const gamma = 0.75; // Gamma correction (< 1 = brighter)
+    const saturation = 1.4; // Saturation boost (> 1 = more vibrant)
+    
+    final enhanced = Uint8List(rgbData.length);
+    
+    for (int i = 0; i < rgbData.length; i += 3) {
+      int r = rgbData[i];
+      int g = rgbData[i + 1];
+      int b = rgbData[i + 2];
+      
+      // Calculate luminance
+      final lum = (0.299 * r + 0.587 * g + 0.114 * b);
+      
+      // Apply saturation boost
+      r = ((r - lum) * saturation + lum).round().clamp(0, 255);
+      g = ((g - lum) * saturation + lum).round().clamp(0, 255);
+      b = ((b - lum) * saturation + lum).round().clamp(0, 255);
+      
+      // Apply gamma correction
+      enhanced[i] = (255 * Math.pow(r / 255, gamma)).round().clamp(0, 255);
+      enhanced[i + 1] = (255 * Math.pow(g / 255, gamma)).round().clamp(0, 255);
+      enhanced[i + 2] = (255 * Math.pow(b / 255, gamma)).round().clamp(0, 255);
+    }
+    
+    return enhanced;
   }
 
   /// Process raw RGB24 data: resize to 90x50, return as RGB

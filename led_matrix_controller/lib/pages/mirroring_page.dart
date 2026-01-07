@@ -118,6 +118,12 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
               debugPrint("[MIRRORING] $frameCount frames @ $fps FPS (${sendDuration.inMilliseconds}ms/frame)");
             }
           });
+          
+          // Smooth frame pacing: target 50ms/frame (20 FPS)
+          final elapsed = sendDuration.inMilliseconds;
+          if (elapsed < 50) {
+            await Future.delayed(Duration(milliseconds: 50 - elapsed));
+          }
         } else {
           debugPrint("[MIRRORING] ERROR: Capture returned null");
           setState(() {
