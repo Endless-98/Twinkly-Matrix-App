@@ -480,7 +480,7 @@ class ScreenCaptureService {
           writeOffset += copyLen;
           if (chunk.length > copyLen) {
             // Save remainder for next frame
-            _stdoutRemainder = Uint8List.sublistView(chunk, copyLen);
+            _stdoutRemainder = Uint8List.fromList(chunk.sublist(copyLen));
           }
         } on StateError catch (e) {
           debugPrint("[STREAM] Queue error: $e");
