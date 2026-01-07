@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 import 'package:async/async.dart';
 import 'package:image/image.dart' as img;
 
@@ -96,11 +97,13 @@ class ScreenCaptureService {
       
       // Start FFmpeg with x11grab, downscale and output raw RGB24 to stdout
       // Low latency flags keep buffering minimal so reads stay aligned
+      final display = Platform.environment['DISPLAY'] ?? ':0.0';
+      debugPrint("[FFMPEG] Using display: $display");
       _ffmpegProcess = await Process.start(
         'ffmpeg',
         [
           '-hide_banner',
-          '-loglevel', 'error',           // Show only errors
+          '-loglevel', 'info',           // Show info to debug
           '-nostdin',                    // Do not wait on stdin
           '-fflags', 'nobuffer',         // Reduce buffering
           '-flags', 'low_delay',
@@ -112,7 +115,7 @@ class ScreenCaptureService {
           '-video_size', '${_screenWidth}x${_screenHeight}',
           '-framerate', '60',             // Higher source framerate to reduce frame wait time
           '-vsync', '0',                  // Do not sync to timestamps
-          '-i', ':0.0',                   // X11 display :0.0
+          '-i', display,                  // X11 display from env
           '-vf', 'scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear', // Downscale before output
           '-pix_fmt', 'rgb24',            // Output format: RGB24 (3 bytes per pixel)
           '-f', 'rawvideo',               // Raw video output format
@@ -126,6 +129,16 @@ class ScreenCaptureService {
       }
 
       _stdoutQueue = StreamQueue(_ffmpegProcess!.stdout);
+      
+      // Log stderr for debugging
+      _ffmpegProcess!.stderr.transform(utf8.decoder).listen((data) {
+        debugPrint("[FFMPEG STDERR] $data");
+      });
+      
+      // Log when process exits
+      _ffmpegProcess!.exitCode.then((code) {
+        debugPrint("[FFMPEG] Process exited with code: $code");
+      });
       
       debugPrint("[FFMPEG] Process started, PID: ${_ffmpegProcess!.pid}");
       return true;
@@ -284,7 +297,8 @@ class ScreenCaptureService {
       for (int i = 0; i < frameBytes.length; i++) {
         sum32 = (sum32 + frameBytes[i]) & 0xFFFFFFFF;
       }
-      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes, checksum(sum32)=$sum32");
+      final isBlackFrame = sum32 == 0;
+      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes, checksum(sum32)=$sum32, black=${isBlackFrame}");
 
       return frameBytes;
     } catch (e) {
