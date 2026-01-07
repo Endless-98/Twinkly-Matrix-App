@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
+import 'dart:typed_data';
 import '../services/screen_capture.dart';
 import '../services/ddp_sender.dart';
 import '../providers/app_state.dart';
@@ -46,6 +47,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     });
 
     debugPrint("[MIRRORING] Starting desktop capture, target FPP: $fppIp:4048");
+    DDPSender.setDebug(true); // Enable DDP packet debugging
 
     // Capture at ~20 FPS (50ms per frame)
     while (isCapturing) {
@@ -150,6 +152,35 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     }
   }
 
+  /// Send a solid red test frame to verify DDP connectivity
+  Future<void> _sendTestFrame() async {
+    final fppIp = ref.read(fppIpProvider);
+    setState(() {
+      statusMessage = "Sending test frame (red)...";
+    });
+
+    // Create a pure red frame: all pixels R=255, G=0, B=0
+    final testFrame = Uint8List(27000);
+    for (int i = 0; i < 27000; i += 3) {
+      testFrame[i] = 255;     // R
+      testFrame[i + 1] = 0;   // G
+      testFrame[i + 2] = 0;   // B
+    }
+
+    DDPSender.setDebug(true);
+    final sent = await DDPSender.sendFrameStatic(fppIp, testFrame);
+    
+    setState(() {
+      if (sent) {
+        statusMessage = "✓ Test frame sent! Check FPP for red color";
+      } else {
+        statusMessage = "✗ Failed to send test frame";
+      }
+    });
+
+    debugPrint("[TEST] Red frame sent to $fppIp");
+  }
+
   @override
   Widget build(BuildContext context) {
     final fppIp = ref.watch(fppIpProvider);
@@ -239,6 +270,18 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
               child: Text(
                 isCapturing ? 'Stop Mirroring' : 'Start Mirroring',
                 style: const TextStyle(fontSize: 18, color: Colors.white),
+              ),
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: _sendTestFrame,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.orange,
+                padding: const EdgeInsets.symmetric(horizontal: 30, vertical: 12),
+              ),
+              child: const Text(
+                'Test: Send Red Frame',
+                style: TextStyle(fontSize: 14, color: Colors.white),
               ),
             ),
             const Spacer(),

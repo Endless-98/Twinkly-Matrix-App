@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'dart:developer' as developer;
+import 'package:flutter/foundation.dart';
 
 class DDPSender {
   late RawDatagramSocket _socket;
@@ -19,10 +20,10 @@ class DDPSender {
   Future<bool> initialize() async {
     try {
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      developer.log('DDPSender initialized for $_host:$_port');
+      debugPrint('[DDPSender] Initialized for $_host:$_port');
       return true;
     } catch (e) {
-      developer.log('Failed to initialize DDPSender: $e');
+      debugPrint('[DDPSender] Failed to initialize: $e');
       return false;
     }
   }
@@ -30,7 +31,7 @@ class DDPSender {
   /// Send a frame to the LED display
   void sendFrame(Uint8List rgbData) {
     if (rgbData.length != frameSize) {
-      developer.log('Invalid frame size: ${rgbData.length}, expected $frameSize');
+      debugPrint('[DDPSender] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return;
     }
 
@@ -38,14 +39,14 @@ class DDPSender {
       final packet = _buildDdpPacket(rgbData);
       _socket.send(packet, InternetAddress(_host), _port);
     } catch (e) {
-      developer.log('Failed to send frame: $e');
+      debugPrint('[DDPSender] Failed to send frame: $e');
     }
   }
 
   /// Static method to send a frame directly (for desktop screen mirroring)
   static Future<bool> sendFrameStatic(String host, Uint8List rgbData) async {
     if (rgbData.length != frameSize) {
-      developer.log('Invalid frame size: ${rgbData.length}, expected $frameSize');
+      debugPrint('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return false;
     }
 
@@ -53,13 +54,19 @@ class DDPSender {
       // Initialize socket if needed
       if (_staticSocket == null) {
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+        debugPrint('[DDP] Socket initialized on local port ${_staticSocket!.port}');
       }
 
       final packet = _buildDdpPacketStatic(rgbData);
       _staticSocket!.send(packet, InternetAddress(host), 4048);
+      
+      if (_debugPackets && (_sequenceNumber % 30 == 1)) {
+        debugPrint('[DDP] Sent ${packet.length} bytes to $host:4048 (seq ${_sequenceNumber - 1})');
+      }
+      
       return true;
     } catch (e) {
-      developer.log('Failed to send frame: $e');
+      debugPrint('[DDP] Failed to send frame: $e');
       return false;
     }
   }
@@ -93,7 +100,7 @@ class DDPSender {
     packet.add(rgbData);
 
     if (_debugPackets && (_sequenceNumber % 30 == 0)) {
-      developer.log('[DDP] Seq ${_sequenceNumber}: R${rgbData[0]} G${rgbData[1]} B${rgbData[2]} @ pixel 0');
+      debugPrint('[DDP] Seq ${_sequenceNumber}: R${rgbData[0]} G${rgbData[1]} B${rgbData[2]} @ pixel 0');
     }
     _sequenceNumber = (_sequenceNumber + 1) & 0xFFFF;
 
@@ -132,10 +139,10 @@ class DdpSender {
   Future<bool> initialize() async {
     try {
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      developer.log('DdpSender initialized for $_host:$_port');
+      debugPrint('DdpSender initialized for $_host:$_port');
       return true;
     } catch (e) {
-      developer.log('Failed to initialize DdpSender: $e');
+      debugPrint('Failed to initialize DdpSender: $e');
       return false;
     }
   }
@@ -143,7 +150,7 @@ class DdpSender {
   /// Send a frame to the LED display
   void sendFrame(Uint8List rgbData) {
     if (rgbData.length != frameSize) {
-      developer.log('Invalid frame size: ${rgbData.length}, expected $frameSize');
+      debugPrint('Invalid frame size: ${rgbData.length}, expected $frameSize');
       return;
     }
 
@@ -151,7 +158,7 @@ class DdpSender {
       final packet = DDPSender._buildDdpPacketStatic(rgbData);
       _socket.send(packet, InternetAddress(_host), _port);
     } catch (e) {
-      developer.log('Failed to send frame: $e');
+      debugPrint('Failed to send frame: $e');
     }
   }
 
