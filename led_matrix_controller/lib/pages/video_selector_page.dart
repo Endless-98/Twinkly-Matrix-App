@@ -111,167 +111,172 @@ class _VideoSelectorPageState extends ConsumerState<VideoSelectorPage> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          // Connection info
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey[800],
-            child: Text(
-              'Connected to: $fppIp:5000',
-              style: TextStyle(fontSize: 12, color: Colors.grey[400]),
-              textAlign: TextAlign.center,
-            ),
-          ),
-          
-          // Settings panel
-          Container(
-            padding: const EdgeInsets.all(16),
-            color: Colors.grey[850],
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'Playback Settings',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Checkbox(
-                      value: _isLooping,
-                      onChanged: (value) {
-                        setState(() {
-                          _isLooping = value ?? true;
-                        });
-                      },
-                    ),
-                    const Text('Loop playback'),
-                  ],
-                ),
-                Row(
-                  children: [
-                    const Text('Brightness: '),
-                    Expanded(
-                      child: Slider(
-                        value: _brightness,
-                        min: 0.1,
-                        max: 1.0,
-                        divisions: 9,
-                        label: '${(_brightness * 100).round()}%',
-                        onChanged: (value) {
-                          setState(() {
-                            _brightness = value;
-                          });
-                        },
-                      ),
-                    ),
-                    Text('${(_brightness * 100).round()}%'),
-                  ],
-                ),
-                Row(
-                  children: [
-                    const Text('FPS: '),
-                    Expanded(
-                      child: Slider(
-                        value: _playbackFps,
-                        min: 10.0,
-                        max: 60.0,
-                        divisions: 50,
-                        label: _playbackFps.toStringAsFixed(0),
-                        onChanged: (value) {
-                          setState(() {
-                            _playbackFps = value;
-                          });
-                        },
-                      ),
-                    ),
-                    Text(_playbackFps.toStringAsFixed(0)),
-                  ],
-                ),
-              ],
-            ),
-          ),
-
-          // Currently playing indicator
-          if (_currentlyPlaying != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12),
-              color: Colors.green[900],
-              child: Row(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const Icon(Icons.play_circle, color: Colors.green),
-                  const SizedBox(width: 8),
-                  Expanded(
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    color: Colors.grey[800],
                     child: Text(
-                      'Now Playing: $_currentlyPlaying',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
+                      'Connected to: $fppIp:5000',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                      textAlign: TextAlign.center,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.stop, color: Colors.red),
-                    onPressed: _stopPlayback,
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    color: Colors.grey[850],
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Playback Settings',
+                          style:
+                              TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(height: 12),
+                        Row(
+                          children: [
+                            Checkbox(
+                              value: _isLooping,
+                              onChanged: (value) {
+                                setState(() {
+                                  _isLooping = value ?? true;
+                                });
+                              },
+                            ),
+                            const Text('Loop playback'),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            const Text('Brightness: '),
+                            Expanded(
+                              child: Slider(
+                                value: _brightness,
+                                min: 0.1,
+                                max: 1.0,
+                                divisions: 9,
+                                label: '${(_brightness * 100).round()}%',
+                                onChanged: (value) {
+                                  setState(() {
+                                    _brightness = value;
+                                  });
+                                },
+                              ),
+                            ),
+                            Text('${(_brightness * 100).round()}%'),
+                          ],
+                        ),
+                        Row(
+                          children: [
+                            const Text('FPS: '),
+                            Expanded(
+                              child: Slider(
+                                value: _playbackFps,
+                                min: 10.0,
+                                max: 60.0,
+                                divisions: 50,
+                                label: _playbackFps.toStringAsFixed(0),
+                                onChanged: (value) {
+                                  setState(() {
+                                    _playbackFps = value;
+                                  });
+                                },
+                              ),
+                            ),
+                            Text(_playbackFps.toStringAsFixed(0)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (_currentlyPlaying != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      color: Colors.green[900],
+                      child: Row(
+                        children: [
+                          const Icon(Icons.play_circle, color: Colors.green),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'Now Playing: $_currentlyPlaying',
+                              style: const TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.stop, color: Colors.red),
+                            onPressed: _stopPlayback,
+                          ),
+                        ],
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
+                    child: _isLoading
+                        ? const Center(child: CircularProgressIndicator())
+                        : _error != null
+                            ? Column(
+                                children: [
+                                  const Icon(Icons.error, size: 48, color: Colors.red),
+                                  const SizedBox(height: 12),
+                                  Text('Error: $_error'),
+                                  const SizedBox(height: 12),
+                                  ElevatedButton(
+                                    onPressed: _loadVideos,
+                                    child: const Text('Retry'),
+                                  ),
+                                ],
+                              )
+                            : _videos.isEmpty
+                                ? const Center(child: Text('No videos found'))
+                                : ListView.builder(
+                                    shrinkWrap: true,
+                                    physics: const NeverScrollableScrollPhysics(),
+                                    itemCount: _videos.length,
+                                    itemBuilder: (context, index) {
+                                      final video = _videos[index];
+                                      final isPlaying = _currentlyPlaying == video;
+                                      return Card(
+                                        margin: const EdgeInsets.symmetric(
+                                          horizontal: 8,
+                                          vertical: 6,
+                                        ),
+                                        color: isPlaying ? Colors.green[900] : null,
+                                        child: ListTile(
+                                          leading: Icon(
+                                            isPlaying
+                                                ? Icons.play_circle
+                                                : Icons.video_library,
+                                            color: isPlaying ? Colors.green : Colors.blue,
+                                          ),
+                                          title: Text(video),
+                                          trailing: ElevatedButton(
+                                            onPressed: () => _playVideo(video),
+                                            style: ElevatedButton.styleFrom(
+                                              backgroundColor: Colors.blue,
+                                            ),
+                                            child: const Text('Play'),
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
                   ),
                 ],
               ),
             ),
-
-          // Video list
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _error != null
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.error, size: 48, color: Colors.red),
-                            const SizedBox(height: 16),
-                            Text('Error: $_error'),
-                            const SizedBox(height: 16),
-                            ElevatedButton(
-                              onPressed: _loadVideos,
-                              child: const Text('Retry'),
-                            ),
-                          ],
-                        ),
-                      )
-                    : _videos.isEmpty
-                        ? const Center(
-                            child: Text('No videos found'),
-                          )
-                        : ListView.builder(
-                            itemCount: _videos.length,
-                            itemBuilder: (context, index) {
-                              final video = _videos[index];
-                              final isPlaying = _currentlyPlaying == video;
-                              return Card(
-                                margin: const EdgeInsets.symmetric(
-                                  horizontal: 16,
-                                  vertical: 8,
-                                ),
-                                color: isPlaying ? Colors.green[900] : null,
-                                child: ListTile(
-                                  leading: Icon(
-                                    isPlaying ? Icons.play_circle : Icons.video_library,
-                                    color: isPlaying ? Colors.green : Colors.blue,
-                                  ),
-                                  title: Text(video),
-                                  trailing: ElevatedButton(
-                                    onPressed: () => _playVideo(video),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.blue,
-                                    ),
-                                    child: const Text('Play'),
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-          ),
-        ],
+          );
+        },
       ),
     );
   }

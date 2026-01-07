@@ -13,91 +13,103 @@ class ControllerPage extends ConsumerWidget {
         title: const Text('Game Controller'),
         centerTitle: true,
       ),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const SizedBox(height: 20),
-            const Text(
-              'D-Pad Control',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 30),
-            DirectionalPad(
-              onUp: () => _sendCommand(ref, 'MOVE_UP'),
-              onDown: () => _sendCommand(ref, 'MOVE_DOWN'),
-              onLeft: () => _sendCommand(ref, 'MOVE_LEFT'),
-              onRight: () => _sendCommand(ref, 'MOVE_RIGHT'),
-            ),
-            const SizedBox(height: 50),
-            const Text(
-              'Action Buttons',
-              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 30),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _ActionButton(
-                  label: 'A',
-                  color: Colors.green,
-                  onPressed: () => _sendCommand(ref, 'ACTION_A'),
-                ),
-                const SizedBox(width: 30),
-                _ActionButton(
-                  label: 'B',
-                  color: Colors.red,
-                  onPressed: () => _sendCommand(ref, 'ACTION_B'),
-                ),
-                const SizedBox(width: 30),
-                _ActionButton(
-                  label: 'X',
-                  color: Colors.blue,
-                  onPressed: () => _sendCommand(ref, 'ACTION_X'),
-                ),
-                const SizedBox(width: 30),
-                _ActionButton(
-                  label: 'Y',
-                  color: Colors.yellow,
-                  onPressed: () => _sendCommand(ref, 'ACTION_Y'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 50),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                _SmallButton(
-                  label: 'START',
-                  onPressed: () => _sendCommand(ref, 'START'),
-                ),
-                const SizedBox(width: 30),
-                _SmallButton(
-                  label: 'SELECT',
-                  onPressed: () => _sendCommand(ref, 'SELECT'),
-                ),
-              ],
-            ),
-            const Spacer(),
-            Consumer(
-              builder: (context, ref, child) {
-                final fppIp = ref.watch(fppIpProvider);
-                return Container(
-                  margin: const EdgeInsets.all(16),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[800],
-                    borderRadius: BorderRadius.circular(8),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text(
+                    'D-Pad Control',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
-                  child: Text(
-                    'Connected to: $fppIp:5000',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                  const SizedBox(height: 24),
+                  DirectionalPad(
+                    onUp: () => _sendCommand(ref, 'MOVE_UP'),
+                    onDown: () => _sendCommand(ref, 'MOVE_DOWN'),
+                    onLeft: () => _sendCommand(ref, 'MOVE_LEFT'),
+                    onRight: () => _sendCommand(ref, 'MOVE_RIGHT'),
                   ),
-                );
-              },
+                  const SizedBox(height: 36),
+                  const Text(
+                    'Action Buttons',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 24),
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        _ActionButton(
+                          label: 'A',
+                          color: Colors.green,
+                          onPressed: () => _sendCommand(ref, 'ACTION_A'),
+                        ),
+                        const SizedBox(width: 20),
+                        _ActionButton(
+                          label: 'B',
+                          color: Colors.red,
+                          onPressed: () => _sendCommand(ref, 'ACTION_B'),
+                        ),
+                        const SizedBox(width: 20),
+                        _ActionButton(
+                          label: 'X',
+                          color: Colors.blue,
+                          onPressed: () => _sendCommand(ref, 'ACTION_X'),
+                        ),
+                        const SizedBox(width: 20),
+                        _ActionButton(
+                          label: 'Y',
+                          color: Colors.yellow,
+                          onPressed: () => _sendCommand(ref, 'ACTION_Y'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 32),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _SmallButton(
+                        label: 'START',
+                        onPressed: () => _sendCommand(ref, 'START'),
+                      ),
+                      const SizedBox(width: 24),
+                      _SmallButton(
+                        label: 'SELECT',
+                        onPressed: () => _sendCommand(ref, 'SELECT'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  Consumer(
+                    builder: (context, ref, child) {
+                      final fppIp = ref.watch(fppIpProvider);
+                      return Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[800],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          'Connected to: $fppIp:5000',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
