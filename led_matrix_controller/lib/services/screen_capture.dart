@@ -279,7 +279,12 @@ class ScreenCaptureService {
           : Uint8List(0);
 
       final readDuration = DateTime.now().difference(readStartTime);
-      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes");
+      // Add a quick checksum to correlate frames with DDP sender logs
+      int sum32 = 0;
+      for (int i = 0; i < frameBytes.length; i++) {
+        sum32 = (sum32 + frameBytes[i]) & 0xFFFFFFFF;
+      }
+      debugPrint("[STREAM] Read complete in ${readDuration.inMilliseconds}ms, remainder: ${_stdoutRemainder.length} bytes, checksum(sum32)=$sum32");
 
       return frameBytes;
     } catch (e) {
