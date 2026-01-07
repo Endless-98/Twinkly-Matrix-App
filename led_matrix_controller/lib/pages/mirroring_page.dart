@@ -94,19 +94,16 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     int captureMsAcc = 0;
     int sendMsAcc = 0;
     int waitMsAcc = 0;
-    DateTime? lastSendAt;
+    
+    // Use monotonic scheduling to prevent drift
+    const targetIntervalMs = 50; // 20 FPS
+    final stopwatch = Stopwatch()..start();
+    int nextFrameTargetMs = targetIntervalMs;
+    
     while (isCapturing) {
       try {
-        final frameStart = DateTime.now();
-        // Enforce 20 FPS pacing before sending
-        if (lastSendAt != null) {
-          final sinceLast = frameStart.difference(lastSendAt!).inMilliseconds;
-          final preWait = sinceLast < 50 ? 50 - sinceLast : 0;
-          if (preWait > 0) {
-            await Future.delayed(Duration(milliseconds: preWait));
-            waitMsAcc += preWait;
-          }
-        }
+        final frameStart = stopwatch.elapsedMilliseconds;
+        
         final screenshotStart = DateTime.now();
         final screenshotData = await ScreenCaptureService.captureScreenshot();
         final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
@@ -124,22 +121,37 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
             break;
           }
-          lastSendAt = DateTime.now();
-
-          final totalMs = DateTime.now().difference(frameStart).inMilliseconds;
-          // totalMs includes pre-wait + capture + send
 
           frameCount++;
-          totalMsAcc += totalMs;
           captureMsAcc += captureMs;
           sendMsAcc += sendMs;
+
+          // Calculate how long to wait to hit the next frame target
+          final elapsed = stopwatch.elapsedMilliseconds - frameStart;
+          final waitMs = nextFrameTargetMs - stopwatch.elapsedMilliseconds;
+          
+          if (waitMs > 0) {
+            await Future.delayed(Duration(milliseconds: waitMs));
+            waitMsAcc += waitMs;
+          }
+          
+          // Move to next frame target
+          nextFrameTargetMs += targetIntervalMs;
+          
+          // If we've fallen behind, catch up (don't accumulate drift)
+          if (stopwatch.elapsedMilliseconds > nextFrameTargetMs) {
+            nextFrameTargetMs = stopwatch.elapsedMilliseconds + targetIntervalMs;
+          }
+          
+          final totalMs = stopwatch.elapsedMilliseconds - frameStart;
+          totalMsAcc += totalMs;
 
           if (frameCount % 20 == 0) {
             final avgFrameMs = (totalMsAcc / 20).toStringAsFixed(1);
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
             final avgWaitMs = (waitMsAcc / 20).toStringAsFixed(1);
-            final fps = (1000 / double.parse(avgFrameMs)).toStringAsFixed(1);
+            final fps = (20000 / totalMsAcc).toStringAsFixed(1); // More accurate FPS
             totalMsAcc = 0;
             captureMsAcc = 0;
             sendMsAcc = 0;
