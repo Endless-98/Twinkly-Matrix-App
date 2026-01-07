@@ -249,8 +249,7 @@ class ScreenCaptureService {
           '-vf', 'format=rgb24,scale=${_targetWidth}:${_targetHeight}:flags=fast_bilinear',
           '-pix_fmt', 'rgb24',
           '-f', 'rawvideo',
-          '-vsync', '0',  // Don't sync to input framerate, output as fast as possible
-          'pipe:1'
+          '-'  // Pipe to stdout (standard output)
         ]);
       } else {
         // Linux: Use x11grab (only desktop mode supported for now)
@@ -292,9 +291,22 @@ class ScreenCaptureService {
 
       _stdoutQueue = StreamQueue(_ffmpegProcess!.stdout);
       
-      // Log stderr for debugging
+      // Log stderr for debugging - FFmpeg errors will help diagnose issues
+      var stderrLines = StringBuffer();
       _ffmpegProcess!.stderr.transform(utf8.decoder).listen((data) {
-        debugPrint("[FFMPEG STDERR] $data");
+        stderrLines.write(data);
+        // Log stderr in chunks to see what FFmpeg is reporting
+        if (data.contains('\n')) {
+          final lines = stderrLines.toString().split('\n');
+          for (final line in lines) {
+            if (line.isNotEmpty) {
+              debugPrint("[FFMPEG STDERR] $line");
+            }
+          }
+          stderrLines.clear();
+        }
+      }, onError: (e) {
+        debugPrint("[FFMPEG STDERR ERROR] $e");
       });
       
       // Log when process exits
