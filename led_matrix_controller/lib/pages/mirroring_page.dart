@@ -57,8 +57,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
         final captureDuration = DateTime.now().difference(captureStart);
         
         if (screenshotData != null) {
-          if (screenshotData.length != 27000) {
-            debugPrint("[MIRRORING] WARNING: Frame size ${screenshotData.length} != 27000");
+          if (screenshotData.length != 13500) {
+            debugPrint("[MIRRORING] WARNING: Frame size ${screenshotData.length} != 13500");
           }
           
           debugPrint("[MIRRORING] Sending frame $frameCount (${screenshotData.length} bytes) to $fppIp");
@@ -160,8 +160,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     });
 
     // Create a pure red frame: all pixels R=255, G=0, B=0
-    final testFrame = Uint8List(27000);
-    for (int i = 0; i < 27000; i += 3) {
+    final testFrame = Uint8List(13500);
+    for (int i = 0; i < 13500; i += 3) {
       testFrame[i] = 255;     // R
       testFrame[i + 1] = 0;   // G
       testFrame[i + 2] = 0;   // B
@@ -288,7 +288,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Text(
-                'Captures screen at 90x100 resolution (20 FPS) and sends to FPP via DDP',
+                'Captures screen at 90x50 resolution (20 FPS) and sends to FPP via DDP',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12, color: Colors.grey[500]),
               ),

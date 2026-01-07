@@ -7,7 +7,7 @@ class DDPSender {
   late RawDatagramSocket _socket;
   final String _host;
   final int _port;
-  static const int frameSize = 27000; // 90*100*3 RGB bytes
+  static const int frameSize = 13500; // 90*50*3 RGB bytes
   static RawDatagramSocket? _staticSocket;
   static bool _debugPackets = false;
   static int _sequenceNumber = 0;
@@ -156,7 +156,7 @@ class DdpSender {
   late RawDatagramSocket _socket;
   final String _host;
   final int _port;
-  static const int frameSize = 27000; // 90*100*3 RGB bytes
+  static const int frameSize = 13500; // 90*50*3 RGB bytes
 
   DdpSender({required String host, int port = 4048})
       : _host = host,
