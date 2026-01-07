@@ -11,6 +11,9 @@ class DDPSender {
   static RawDatagramSocket? _staticSocket;
   static bool _debugPackets = false;
   static int _sequenceNumber = 0;
+  // Keep UDP payloads below typical MTU to avoid fragmentation
+  // DDP header is 10 bytes, keep data <= 1200 bytes for safety
+  static const int _maxChunkData = 1200;
 
   DDPSender({required String host, int port = 4048})
       : _host = host,
@@ -29,17 +32,26 @@ class DDPSender {
   }
 
   /// Send a frame to the LED display
+  /// Send a frame to the LED display (chunked DDP datagrams)
   void sendFrame(Uint8List rgbData) {
     if (rgbData.length != frameSize) {
-      debugPrint('[DDPSender] Invalid frame size: ${rgbData.length}, expected $frameSize');
+      debugPrint('Invalid frame size: ${rgbData.length}, expected $frameSize');
       return;
     }
 
     try {
-      final packet = _buildDdpPacket(rgbData);
-      _socket.send(packet, InternetAddress(_host), _port);
+      final addr = InternetAddress(_host);
+      int sent = 0;
+      while (sent < rgbData.length) {
+        final remaining = rgbData.length - sent;
+        final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
+        final isLast = sent + dataLen >= rgbData.length;
+        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        _socket.send(packet, addr, _port);
+        sent += dataLen;
+      }
     } catch (e) {
-      debugPrint('[DDPSender] Failed to send frame: $e');
+      debugPrint('Failed to send frame: $e');
     }
   }
 
@@ -57,13 +69,23 @@ class DDPSender {
         debugPrint('[DDP] Socket initialized on local port ${_staticSocket!.port}');
       }
 
-      final packet = _buildDdpPacketStatic(rgbData);
-      _staticSocket!.send(packet, InternetAddress(host), 4048);
-      
-      if (_debugPackets && (_sequenceNumber % 30 == 1)) {
-        debugPrint('[DDP] Sent ${packet.length} bytes to $host:4048 (seq ${_sequenceNumber - 1})');
+      final addr = InternetAddress(host);
+      int sent = 0;
+      int packets = 0;
+      while (sent < rgbData.length) {
+        final remaining = rgbData.length - sent;
+        final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
+        final isLast = sent + dataLen >= rgbData.length;
+        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        _staticSocket!.send(packet, addr, 4048);
+        sent += dataLen;
+        packets++;
       }
-      
+
+      if (_debugPackets) {
+        debugPrint('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:4048');
+      }
+
       return true;
     } catch (e) {
       debugPrint('[DDP] Failed to send frame: $e');
@@ -71,39 +93,44 @@ class DDPSender {
     }
   }
 
-  /// Build a DDP protocol packet
-  /// Format: 10-byte header + RGB data
-  Uint8List _buildDdpPacket(Uint8List rgbData) {
-    return _buildDdpPacketStatic(rgbData);
-  }
+  // Deprecated: single-packet builder removed in favor of chunked sender
 
   /// Static packet builder
-  static Uint8List _buildDdpPacketStatic(Uint8List rgbData) {
+  /// Build a single DDP packet for a chunk
+  /// DDP 10-byte header:
+  /// 0: 0x41 ('A'), 1: flags, 2-3: seq, 4-7: data offset (start channel, BE), 8-9: data length (BE)
+  static Uint8List _buildDdpPacketStaticChunk(Uint8List rgbData, int startByte, int dataLen, bool endOfFrame) {
     final packet = BytesBuilder();
 
-    // DDP Header (10 bytes) - CORRECTED for FPP compatibility
-    packet.addByte(0x41); // Protocol identifier (0x41 for DDP)
-    packet.addByte(0x01); // Flags (0x01 for end-of-frame)
-    packet.addByte((_sequenceNumber >> 8) & 0xFF); // Sequence number high
-    packet.addByte(_sequenceNumber & 0xFF); // Sequence number low
-    packet.addByte(0x00); // Data type (0x00 for RGB pixel data)
-    packet.addByte(0x00); // Reserved
-    packet.addByte(0x00); // Reserved
+    // Header
+    packet.addByte(0x41); // 'A'
+    final flags = endOfFrame ? 0x01 : 0x00;
+    packet.addByte(flags);
+    packet.addByte((_sequenceNumber >> 8) & 0xFF);
+    packet.addByte(_sequenceNumber & 0xFF);
 
-    // Data length (big-endian, 3 bytes for < 16MB)
-    final dataLength = rgbData.length;
-    packet.addByte((dataLength >> 16) & 0xFF);
-    packet.addByte((dataLength >> 8) & 0xFF);
-    packet.addByte(dataLength & 0xFF);
+    // Data offset is in channels (3 bytes per pixel). Our buffer is RGB bytes, so offset == startByte
+    final offset = startByte; // channel offset in bytes
+    packet.addByte((offset >> 24) & 0xFF);
+    packet.addByte((offset >> 16) & 0xFF);
+    packet.addByte((offset >> 8) & 0xFF);
+    packet.addByte(offset & 0xFF);
 
-    // RGB data
-    packet.add(rgbData);
+    // Length (2 bytes)
+    packet.addByte((dataLen >> 8) & 0xFF);
+    packet.addByte(dataLen & 0xFF);
+
+    // Payload
+    packet.add(Uint8List.sublistView(rgbData, startByte, startByte + dataLen));
 
     if (_debugPackets && (_sequenceNumber % 30 == 0)) {
-      debugPrint('[DDP] Seq ${_sequenceNumber}: R${rgbData[0]} G${rgbData[1]} B${rgbData[2]} @ pixel 0');
+      final r = rgbData[startByte];
+      final g = rgbData[startByte + 1];
+      final b = rgbData[startByte + 2];
+      debugPrint('[DDP] Seq ${_sequenceNumber}: off=$startByte len=$dataLen p0 R$r G$g B$b eof=$endOfFrame');
     }
-    _sequenceNumber = (_sequenceNumber + 1) & 0xFFFF;
 
+    _sequenceNumber = (_sequenceNumber + 1) & 0xFFFF;
     return packet.toBytes();
   }
 
@@ -155,8 +182,16 @@ class DdpSender {
     }
 
     try {
-      final packet = DDPSender._buildDdpPacketStatic(rgbData);
-      _socket.send(packet, InternetAddress(_host), _port);
+      final addr = InternetAddress(_host);
+      int sent = 0;
+      while (sent < rgbData.length) {
+        final remaining = rgbData.length - sent;
+        final dataLen = remaining > DDPSender._maxChunkData ? DDPSender._maxChunkData : remaining;
+        final isLast = sent + dataLen >= rgbData.length;
+        final packet = DDPSender._buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        _socket.send(packet, addr, _port);
+        sent += dataLen;
+      }
     } catch (e) {
       debugPrint('Failed to send frame: $e');
     }
