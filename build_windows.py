@@ -79,7 +79,8 @@ def run_cmd(cmd: list, cwd: Optional[str] = None, check: bool = True) -> Tuple[i
 
 def check_flutter() -> bool:
     """Check if Flutter is installed."""
-    code, out, err = run_cmd(['flutter', '--version'], check=False)
+    flutter_cmd = 'flutter.bat' if platform.system() == 'Windows' else 'flutter'
+    code, out, err = run_cmd([flutter_cmd, '--version'], check=False)
     if code == 0:
         log("✓ Flutter SDK found", Color.OKGREEN)
         print(out)
@@ -112,6 +113,7 @@ def check_git() -> bool:
         return False
 
 
+<<<<<<< Updated upstream
 def check_chocolate() -> bool:
     """Check if Chocolatey package manager is installed."""
     code, out, err = run_cmd(['choco', '--version'], check=False)
@@ -183,10 +185,36 @@ def install_github_cli() -> bool:
         return False
 
 
+def check_visual_studio_windows() -> bool:
+    """Check if Visual Studio is installed (Windows only)."""
+    if platform.system() != 'Windows':
+        return False
+    
+    # Check for MSBuild in known locations
+    msbuild_paths = [
+        r"C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\MSBuild.exe",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        r"C:\Program Files\Microsoft Visual Studio\2022\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\MSBuild\Current\Bin\MSBuild.exe",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Professional\MSBuild\Current\Bin\MSBuild.exe",
+        r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Enterprise\MSBuild\Current\Bin\MSBuild.exe",
+    ]
+    
+    for path in msbuild_paths:
+        if Path(path).exists():
+            log("✓ Visual Studio (MSBuild) found", Color.OKGREEN)
+            return True
+    
+    log("✗ Visual Studio not found", Color.FAIL)
+    log("Install Visual Studio 2022 with 'Desktop development with C++'", Color.WARNING)
+    return False
+
+
 def enable_flutter_windows() -> bool:
     """Enable Flutter Windows desktop support."""
     log("\nEnabling Flutter Windows desktop support...", Color.OKCYAN)
-    code, out, err = run_cmd(['flutter', 'config', '--enable-windows-desktop'], check=False)
+    flutter_cmd = 'flutter.bat' if platform.system() == 'Windows' else 'flutter'
+    code, out, err = run_cmd([flutter_cmd, 'config', '--enable-windows-desktop'], check=False)
     if code == 0:
         log("✓ Windows desktop enabled", Color.OKGREEN)
         return True
@@ -205,9 +233,11 @@ def build_flutter_local(app_dir: str = 'led_matrix_controller') -> bool:
     
     log(f"\n{Color.HEADER}Building Flutter app locally: {app_dir}{Color.ENDC}", Color.HEADER)
     
+    flutter_cmd = 'flutter.bat' if platform.system() == 'Windows' else 'flutter'
+    
     # Step 1: Get dependencies
     log("\n1. Fetching dependencies...", Color.OKCYAN)
-    code, out, err = run_cmd(['flutter', 'pub', 'get'], cwd=str(app_path), check=False)
+    code, out, err = run_cmd([flutter_cmd, 'pub', 'get'], cwd=str(app_path), check=False)
     if code != 0:
         log("✗ Failed to fetch dependencies", Color.FAIL)
         log(err, Color.WARNING)
@@ -217,7 +247,7 @@ def build_flutter_local(app_dir: str = 'led_matrix_controller') -> bool:
     # Step 2: Build release
     log("\n2. Building Windows release...", Color.OKCYAN)
     code, out, err = run_cmd(
-        ['flutter', 'build', 'windows', '--release'],
+        [flutter_cmd, 'build', 'windows', '--release'],
         cwd=str(app_path),
         check=False
     )
