@@ -252,6 +252,31 @@ def build_python_local(app_name: str = 'TwinklyWall') -> bool:
     return True
 
 
+def get_repo_info():
+    """Get GitHub repo owner and name from git remote."""
+    code, out, err = run_cmd(['git', 'remote', 'get-url', 'origin'], check=False)
+    if code != 0:
+        log("✗ Could not get git remote URL", Color.FAIL)
+        return None, None
+    
+    url = out.strip()
+    # Handle SSH and HTTPS URLs
+    if url.startswith('git@github.com:'):
+        repo_path = url.split('git@github.com:')[1].rstrip('.git')
+    elif url.startswith('https://github.com/'):
+        repo_path = url.split('https://github.com/')[1].rstrip('.git')
+    else:
+        log(f"✗ Unsupported git remote URL format: {url}", Color.FAIL)
+        return None, None
+    
+    if '/' not in repo_path:
+        log(f"✗ Invalid repo path: {repo_path}", Color.FAIL)
+        return None, None
+    
+    owner, repo = repo_path.split('/', 1)
+    return owner, repo
+
+
 def trigger_github_ci(target: str = 'all') -> bool:
     """Trigger GitHub Actions workflows."""
     log(f"\n{Color.HEADER}Triggering GitHub Actions CI{Color.ENDC}", Color.HEADER)
@@ -266,15 +291,36 @@ def trigger_github_ci(target: str = 'all') -> bool:
         log(f"✗ Invalid target: {target}", Color.FAIL)
         return False
     
+    # Get repo info
+    owner, repo = get_repo_info()
+    if not owner or not repo:
+        return False
+    
+    actions_url = f"https://github.com/{owner}/{repo}/actions"
+    
     # Check if gh CLI is available
     code, _, _ = run_cmd(['gh', '--version'], check=False)
     if code != 0:
         log("✗ GitHub CLI (gh) not found", Color.FAIL)
         log("Install from https://cli.github.com/ or trigger workflows manually in GitHub UI", Color.WARNING)
-        log("\nTo trigger manually:", Color.OKCYAN)
-        log("1. Go to https://github.com/your-org/TwinklyWall_Project/actions", Color.OKBLUE)
+        log("\nTo install on Ubuntu/Debian:", Color.OKCYAN)
+        log("curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg", Color.OKBLUE)
+        log("sudo chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg", Color.OKBLUE)
+        log("echo \"deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main\" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null", Color.OKBLUE)
+        log("sudo apt update && sudo apt install gh", Color.OKBLUE)
+        log("\nThen authenticate: gh auth login", Color.OKBLUE)
+        log(f"\nTo trigger manually:", Color.OKCYAN)
+        log(f"1. Go to {actions_url}", Color.OKBLUE)
         log("2. Select 'Build Windows Flutter App' or 'Package TwinklyWall (Windows)'", Color.OKBLUE)
         log("3. Click 'Run workflow'", Color.OKBLUE)
+        return False
+    
+    # Check if gh is authenticated
+    code, out, err = run_cmd(['gh', 'auth', 'status'], check=False)
+    if code != 0:
+        log("✗ GitHub CLI not authenticated", Color.FAIL)
+        log("Run: gh auth login", Color.WARNING)
+        log("Then re-run this script", Color.WARNING)
         return False
     
     to_trigger = ['flutter-windows.yml', 'python-windows.yml'] if target == 'all' else [workflows[target]]
@@ -292,7 +338,7 @@ def trigger_github_ci(target: str = 'all') -> bool:
             return False
     
     log("\n✓ Workflows triggered! Monitor progress at:", Color.OKGREEN)
-    log("https://github.com/your-org/TwinklyWall_Project/actions", Color.OKBLUE)
+    log(actions_url, Color.OKBLUE)
     
     return True
 
