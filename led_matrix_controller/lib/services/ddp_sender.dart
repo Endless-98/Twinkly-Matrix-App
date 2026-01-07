@@ -16,6 +16,16 @@ class DDPSender {
   // DDP header is 10 bytes, keep data <= 1200 bytes for safety
   static const int _maxChunkData = 1200;
 
+  /// Log helper that works in both debug and release modes
+  static void _log(String message) {
+    // Use print() which always outputs to console on Windows
+    print(message);
+    // Also use debugPrint for debug builds
+    if (kDebugMode) {
+      debugPrint(message);
+    }
+  }
+
   DDPSender({required String host, int port = 4048})
       : _host = host,
         _port = port;
@@ -24,10 +34,10 @@ class DDPSender {
   Future<bool> initialize() async {
     try {
       _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      debugPrint('[DDPSender] Initialized for $_host:$_port');
+      _log('[DDPSender] Initialized for $_host:$_port');
       return true;
     } catch (e) {
-      debugPrint('[DDPSender] Failed to initialize: $e');
+      _log('[DDPSender] Failed to initialize: $e');
       return false;
     }
   }
@@ -36,7 +46,7 @@ class DDPSender {
   /// Send a frame to the LED display (chunked DDP datagrams)
   void sendFrame(Uint8List rgbData) {
     if (rgbData.length != frameSize) {
-      debugPrint('Invalid frame size: ${rgbData.length}, expected $frameSize');
+      _log('Invalid frame size: ${rgbData.length}, expected $frameSize');
       return;
     }
 
@@ -52,14 +62,14 @@ class DDPSender {
         sent += dataLen;
       }
     } catch (e) {
-      debugPrint('Failed to send frame: $e');
+      _log('Failed to send frame: $e');
     }
   }
 
   /// Static method to send a frame directly (for desktop screen mirroring)
   static Future<bool> sendFrameStatic(String host, Uint8List rgbData, {int port = 4048}) async {
     if (rgbData.length != frameSize) {
-      debugPrint('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
+      _log('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return false;
     }
 
@@ -67,10 +77,13 @@ class DDPSender {
       // Initialize socket if needed
       if (_staticSocket == null) {
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-        debugPrint('[DDP] Socket initialized on local port ${_staticSocket!.port}');
+        _staticSocket!.broadcastEnabled = true; // Enable broadcast just in case
+        _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
       }
 
       final addr = InternetAddress(host);
+      _log('[DDP] Sending to $host:$port (${rgbData.length} bytes)');
+      
       int sent = 0;
       int packets = 0;
       int checksum = 0;
@@ -79,31 +92,34 @@ class DDPSender {
       }
       if (_debugPackets) {
         final p0 = rgbData.length >= 3 ? '${rgbData[0]},${rgbData[1]},${rgbData[2]}' : 'n/a';
-        debugPrint('[DDP] Frame bytes=${rgbData.length} checksum(sum32)=$checksum firstRGB=[$p0]');
+        _log('[DDP] Frame bytes=${rgbData.length} checksum(sum32)=$checksum firstRGB=[$p0]');
       }
       while (sent < rgbData.length) {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
-        _staticSocket!.send(packet, addr, port);
+        final bytesSent = _staticSocket!.send(packet, addr, port);
+        if (bytesSent != packet.length) {
+          _log('[DDP] WARNING: Tried to send ${packet.length} bytes, only $bytesSent sent');
+        }
         if (_debugPackets && _debugLevel >= 2) {
           final r = rgbData[sent];
           final g = rgbData[sent + 1];
           final b = rgbData[sent + 2];
-          debugPrint('[DDP] Chunk off=$sent len=$dataLen rgb0=[$r,$g,$b] last=$isLast');
+          _log('[DDP] Chunk off=$sent len=$dataLen rgb0=[$r,$g,$b] last=$isLast bytesSent=$bytesSent');
         }
         sent += dataLen;
         packets++;
       }
 
       if (_debugPackets) {
-        debugPrint('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:$port');
+        _log('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:$port');
       }
 
       return true;
     } catch (e) {
-      debugPrint('[DDP] Failed to send frame: $e');
+      _log('[DDP] Failed to send frame: $e');
       return false;
     }
   }
@@ -149,7 +165,7 @@ class DDPSender {
       final r = rgbData[startByte];
       final g = rgbData[startByte + 1];
       final b = rgbData[startByte + 2];
-      debugPrint('[DDP] Seq ${_sequenceNumber}: off=$startByte len=$dataLen p0 R$r G$g B$b eof=$endOfFrame');
+      _log('[DDP] Seq ${_sequenceNumber}: off=$startByte len=$dataLen p0 R$r G$g B$b eof=$endOfFrame');
     }
 
     _sequenceNumber = (_sequenceNumber + 1) & 0xFF;
