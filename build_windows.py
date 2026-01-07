@@ -112,19 +112,74 @@ def check_git() -> bool:
         return False
 
 
-def check_visual_studio_windows() -> bool:
-    """Check if Visual Studio is installed (Windows only)."""
-    if platform.system() != 'Windows':
-        return False
-    
-    # Try to find MSBuild
-    code, _, _ = run_cmd(['where', 'MSBuild.exe'], check=False)
+def check_chocolate() -> bool:
+    """Check if Chocolatey package manager is installed."""
+    code, out, err = run_cmd(['choco', '--version'], check=False)
     if code == 0:
-        log("✓ Visual Studio (MSBuild) found", Color.OKGREEN)
+        log("✓ Chocolatey found", Color.OKGREEN)
         return True
     else:
-        log("✗ Visual Studio not found", Color.FAIL)
-        log("Install Visual Studio 2022 with 'Desktop development with C++'", Color.WARNING)
+        log("✗ Chocolatey not found", Color.FAIL)
+        return False
+
+
+def install_chocolatey() -> bool:
+    """Install Chocolatey package manager."""
+    if check_chocolate():
+        return True
+    
+    log("\nInstalling Chocolatey...", Color.OKCYAN)
+    log("This requires administrator privileges", Color.WARNING)
+    
+    cmd = '''powershell -NoProfile -ExecutionPolicy Bypass -Command "[System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))"'''
+    code, out, err = run_cmd(cmd.split(), check=False)
+    
+    if code == 0:
+        log("✓ Chocolatey installed successfully", Color.OKGREEN)
+        return True
+    else:
+        log("✗ Failed to install Chocolatey", Color.FAIL)
+        log("Install manually from https://chocolatey.org/install or run PowerShell as Administrator", Color.WARNING)
+        return False
+
+
+def install_ffmpeg() -> bool:
+    """Install FFmpeg for screen capture."""
+    code, _, _ = run_cmd(['ffmpeg', '-version'], check=False)
+    if code == 0:
+        log("✓ FFmpeg already installed", Color.OKGREEN)
+        return True
+    
+    log("\nInstalling FFmpeg via Chocolatey...", Color.OKCYAN)
+    code, out, err = run_cmd(['choco', 'install', 'ffmpeg', '-y'], check=False)
+    
+    if code == 0:
+        log("✓ FFmpeg installed successfully", Color.OKGREEN)
+        # Refresh PATH
+        run_cmd(['refreshenv'], check=False)
+        return True
+    else:
+        log("✗ Failed to install FFmpeg via Chocolatey", Color.FAIL)
+        log("Install manually: https://ffmpeg.org/download.html", Color.WARNING)
+        return False
+
+
+def install_github_cli() -> bool:
+    """Install GitHub CLI for CI triggering."""
+    code, _, _ = run_cmd(['gh', '--version'], check=False)
+    if code == 0:
+        log("✓ GitHub CLI already installed", Color.OKGREEN)
+        return True
+    
+    log("\nInstalling GitHub CLI via Chocolatey...", Color.OKCYAN)
+    code, out, err = run_cmd(['choco', 'install', 'gh', '-y'], check=False)
+    
+    if code == 0:
+        log("✓ GitHub CLI installed successfully", Color.OKGREEN)
+        return True
+    else:
+        log("✗ Failed to install GitHub CLI", Color.FAIL)
+        log("Install manually: https://cli.github.com/", Color.WARNING)
         return False
 
 
@@ -354,16 +409,59 @@ def check_prerequisites_windows() -> bool:
     ]
     
     if platform.system() == 'Windows':
-        checks.append(('Visual Studio', check_visual_studio_windows))
+        checks.append(('FFmpeg', lambda: run_cmd(['ffmpeg', '-version'], check=False)[0] == 0))
     
-    results = [name for name, check_fn in checks if check_fn()]
+    results = {}
+    for name, check_fn in checks:
+        if check_fn():
+            results[name] = True
+        else:
+            results[name] = False
     
-    if len(results) != len(checks):
-        missing = [name for name, _ in checks if name not in results]
-        log(f"\n✗ Missing prerequisites: {', '.join(missing)}", Color.FAIL)
+    return all(results.values())
+
+
+def install_prerequisites_windows() -> bool:
+    """Install missing prerequisites for Windows builds."""
+    if not platform.system() == 'Windows':
+        log("\n✗ This function is for Windows only", Color.FAIL)
         return False
     
-    log(f"\n✓ All prerequisites found", Color.OKGREEN)
+    log(f"\n{Color.HEADER}Installing missing prerequisites...{Color.ENDC}", Color.HEADER)
+    
+    # Check Chocolatey first
+    if not check_chocolate():
+        if not install_chocolatey():
+            log("\n⚠ Chocolatey not available. Some installations may fail.", Color.WARNING)
+            log("You can still try manual installations.", Color.WARNING)
+    
+    # Install FFmpeg
+    if run_cmd(['ffmpeg', '-version'], check=False)[0] != 0:
+        if not install_ffmpeg():
+            log("⚠ FFmpeg installation failed. Screen capture will not work.", Color.WARNING)
+    
+    # GitHub CLI is optional
+    if run_cmd(['gh', '--version'], check=False)[0] != 0:
+        log("\nGitHub CLI is optional (for CI triggering). Install it?", Color.OKCYAN)
+        log("Run 'choco install gh' manually if you want it later", Color.OKBLUE)
+    
+    # Visual Studio requires manual installation
+    code, _, _ = run_cmd(['where', 'MSBuild.exe'], check=False)
+    if code != 0:
+        log("\n⚠ Visual Studio not found", Color.WARNING)
+        log("Install Visual Studio 2022 with 'Desktop development with C++' component", Color.WARNING)
+        log("Download from: https://visualstudio.microsoft.com/vs/", Color.OKBLUE)
+        log("After installation, restart your terminal for changes to take effect", Color.WARNING)
+        return False
+    
+    # Flutter requires manual installation
+    if not check_flutter():
+        log("\n⚠ Flutter SDK not found", Color.WARNING)
+        log("Install from: https://flutter.dev/docs/get-started/install", Color.OKBLUE)
+        log("After installation, add Flutter to PATH and restart your terminal", Color.WARNING)
+        return False
+    
+    log("\n✓ Prerequisite checks complete", Color.OKGREEN)
     return True
 
 
@@ -375,8 +473,9 @@ def main():
 Examples:
   python build_windows.py --ci              # Trigger GitHub Actions (default for WSL)
   python build_windows.py --local --all     # Build both locally on Windows
+  python build_windows.py --local --install-deps --all  # Install deps + build
   python build_windows.py --flutter         # Build Flutter only (CI)
-  python build_windows.py --local --python  # Build Python exe only (local)
+  python build_windows.py --local --install-deps  # Just install prerequisites
         '''
     )
     
@@ -410,6 +509,11 @@ Examples:
         action='store_true',
         help='Disable colored output'
     )
+    parser.add_argument(
+        '--install-deps',
+        action='store_true',
+        help='Install missing prerequisites (Windows only)'
+    )
     
     args = parser.parse_args()
     
@@ -438,7 +542,12 @@ Examples:
             log("Use --ci to trigger GitHub Actions from WSL", Color.WARNING)
             sys.exit(1)
         
-        if not check_prerequisites_windows():
+        # Install missing dependencies if requested
+        if args.install_deps:
+            if not install_prerequisites_windows():
+                log("\n⚠ Some prerequisites are missing. Attempting build anyway...", Color.WARNING)
+        elif not check_prerequisites_windows():
+            log("\n💡 Tip: Use --install-deps to automatically install missing prerequisites", Color.OKCYAN)
             sys.exit(1)
         
         if not enable_flutter_windows():
