@@ -210,6 +210,9 @@ class ScreenCaptureService {
           '-nostdin',
           '-f', 'gdigrab',
           '-framerate', '20',  // 20fps target for LED wall
+          '-probesize', '32',  // Minimize probe size
+          '-fflags', 'nobuffer+flush_packets',  // Disable internal buffering
+          '-flags', 'low_delay',  // Low latency mode
         ];
         
         // Mode-specific args
