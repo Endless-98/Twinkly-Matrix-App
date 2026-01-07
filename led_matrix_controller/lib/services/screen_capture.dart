@@ -20,6 +20,7 @@ class ScreenCaptureService {
   static bool _streamInitialized = false;
   static Uint8List _stdoutRemainder = Uint8List(0);
   static StreamQueue<List<int>>? _stdoutQueue;
+  static bool _receivedFirstFrame = false;
   
   // Frame dimensions - will auto-detect from display
   static int _screenWidth = 1920;
@@ -196,15 +197,13 @@ class ScreenCaptureService {
         // Windows: Use gdigrab for screen capture
         debugPrint("[FFMPEG] Using Windows gdigrab input");
         
-        // Base args - gdigrab needs minimal buffering flags to capture continuously
+        // Base args - gdigrab minimal options for continuous capture
         ffmpegArgs = [
           '-hide_banner',
-          '-loglevel', 'fatal',  // Only show critical errors, not info spam
+          '-loglevel', 'error',  // Show errors to stderr for diagnostics
           '-nostdin',
           '-f', 'gdigrab',
           '-framerate', '20',  // 20fps target for LED wall
-          '-draw_mouse', '0',   // Disable mouse to reduce pixel format changes
-          '-show_region', '0',  // Don't show capture region outline
         ];
         
         // Mode-specific args
@@ -431,15 +430,12 @@ class ScreenCaptureService {
 
       while (builder.length < frameSize) {
         try {
-          // Wait for next chunk with timeout to prevent hanging
-          final hasNext = await queue.hasNext.timeout(
-            const Duration(milliseconds: 100),
-            onTimeout: () {
-              debugPrint("[STREAM] Timeout waiting for data");
-              return false;
-            },
-          );
-          
+          // Use longer timeout for first frame to allow FFmpeg warmup
+          final timeout = _receivedFirstFrame
+              ? const Duration(milliseconds: 150)
+              : const Duration(seconds: 3);
+          final hasNext = await queue.hasNext.timeout(timeout);
+
           if (!hasNext) {
             if (builder.length > 0) {
               debugPrint("[STREAM] Incomplete frame: ${builder.length}/$frameSize bytes");
@@ -447,7 +443,7 @@ class ScreenCaptureService {
             _streamInitialized = false;
             return null;
           }
-          
+
           final chunk = await queue.next;
           if (chunk.isEmpty) {
             continue;
@@ -458,9 +454,9 @@ class ScreenCaptureService {
           _streamInitialized = false;
           return null;
         } on TimeoutException {
-          debugPrint("[STREAM] Frame read timeout");
-          _streamInitialized = false;
-          return null;
+          // Don't fail the stream on timeout; just keep waiting
+          debugPrint("[STREAM] Waiting for FFmpeg data...");
+          continue;
         }
       }
 
@@ -470,6 +466,9 @@ class ScreenCaptureService {
       _stdoutRemainder = remainingLength > 0
           ? Uint8List.sublistView(combined, frameSize)
           : Uint8List(0);
+
+      // Mark first frame received
+      _receivedFirstFrame = true;
 
       // Enhance colors: gamma boost + saturation to fix washed out appearance
       return _enhanceColors(frameBytes);
