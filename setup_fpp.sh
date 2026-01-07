@@ -59,6 +59,8 @@ if [ $DEBUG_MODE -eq 0 ]; then
     echo '🔄 Updating twinklywall service...'
     sudo cp twinklywall.service /etc/systemd/system/
     sudo systemctl daemon-reload
+    echo '♻️ Restarting twinklywall to apply unit changes...'
+    sudo systemctl restart twinklywall || true
     else
         echo '✅ Twinklywall service is up to date'
     fi
@@ -76,6 +78,8 @@ if [ $DEBUG_MODE -eq 0 ]; then
     echo '🔄 Updating DDP bridge service...'
     sudo cp ddp_bridge.service /etc/systemd/system/
     sudo systemctl daemon-reload
+    echo '♻️ Restarting ddp_bridge to apply unit changes...'
+    sudo systemctl restart ddp_bridge || true
     else
         echo '✅ DDP bridge service is up to date'
     fi
