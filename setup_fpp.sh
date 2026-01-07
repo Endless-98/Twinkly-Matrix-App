@@ -2,9 +2,34 @@
 set -e
 
 DEBUG_MODE=0
-if [ "$1" == "--debug" ]; then
-    DEBUG_MODE=1
-fi
+WIDTH=90
+HEIGHT=50
+MODEL="Light Wall"
+
+# Parse CLI args: --debug, --width N, --height N, --model NAME
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --debug)
+            DEBUG_MODE=1
+            shift
+            ;;
+        --width)
+            WIDTH="$2"
+            shift 2
+            ;;
+        --height)
+            HEIGHT="$2"
+            shift 2
+            ;;
+        --model)
+            MODEL="$2"
+            shift 2
+            ;;
+        *)
+            echo "Unknown option: $1"; exit 1
+            ;;
+    esac
+done
 
 echo '🚀 Setting up/updating TwinklyWall on FPP...'
 
@@ -87,6 +112,8 @@ fi
 
 # Ensure services are running
 if [ $DEBUG_MODE -eq 0 ]; then
+    # Always reload units in case they changed outside this script
+    sudo systemctl daemon-reload || true
     if ! sudo systemctl is-active --quiet twinklywall; then
     echo '▶️ Starting twinklywall service...'
     sudo systemctl start twinklywall
@@ -96,6 +123,8 @@ if [ $DEBUG_MODE -eq 0 ]; then
 fi
 
 if [ $DEBUG_MODE -eq 0 ]; then
+    # Reload again before starting bridge to clear any change warnings
+    sudo systemctl daemon-reload || true
     if ! sudo systemctl is-active --quiet ddp_bridge; then
     echo '▶️ Starting DDP bridge service...'
     sudo systemctl start ddp_bridge
@@ -110,7 +139,7 @@ if [ $DEBUG_MODE -eq 1 ]; then
     sudo systemctl stop ddp_bridge || true
     echo 'ℹ️ Run the bridge manually:'
     echo '    source ~/TwinklyWall_Project/TwinklyWall/.venv/bin/activate'
-    echo '    python3 ~/TwinklyWall_Project/TwinklyWall/ddp_bridge.py --port 4049 --width 90 --height 50 --model "Light Wall" --verbose'
+    echo "    python3 ~/TwinklyWall_Project/TwinklyWall/ddp_bridge.py --port 4049 --width $WIDTH --height $HEIGHT --model \"$MODEL\" --verbose"
 fi
 
 echo '✅ Setup/update complete!'
