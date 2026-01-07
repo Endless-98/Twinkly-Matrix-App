@@ -57,7 +57,7 @@ class DDPSender {
   }
 
   /// Static method to send a frame directly (for desktop screen mirroring)
-  static Future<bool> sendFrameStatic(String host, Uint8List rgbData) async {
+  static Future<bool> sendFrameStatic(String host, Uint8List rgbData, {int port = 4048}) async {
     if (rgbData.length != frameSize) {
       debugPrint('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return false;
@@ -86,7 +86,7 @@ class DDPSender {
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
-        _staticSocket!.send(packet, addr, 4048);
+        _staticSocket!.send(packet, addr, port);
         if (_debugPackets && _debugLevel >= 2) {
           final r = rgbData[sent];
           final g = rgbData[sent + 1];
@@ -98,7 +98,7 @@ class DDPSender {
       }
 
       if (_debugPackets) {
-        debugPrint('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:4048');
+        debugPrint('[DDP] Sent ${rgbData.length} bytes in $packets packets to $host:$port');
       }
 
       return true;
@@ -111,22 +111,25 @@ class DDPSender {
   // Deprecated: single-packet builder removed in favor of chunked sender
 
   /// Static packet builder
-  /// Build a single DDP packet for a chunk
-  /// DDP 10-byte header:
-  /// 0: 0x41 ('A'), 1: flags, 2-3: seq, 4-7: data offset (start channel, BE), 8-9: data length (BE)
+  /// Build a single DDP v1 packet for a chunk
+  /// DDP v1 10-byte header layout (big-endian):
+  /// 0: 0x41 ('A')
+  /// 1: flags (bit6 set for v1 => 0x40). Set bit0 (0x01) on last chunk to 'push' frame
+  /// 2: sequence (0-255, rolls over)
+  /// 3-5: data offset (24-bit) in channels (bytes)
+  /// 6-7: data length (16-bit)
+  /// 8-9: data ID (0x0000 for default)
   static Uint8List _buildDdpPacketStaticChunk(Uint8List rgbData, int startByte, int dataLen, bool endOfFrame) {
     final packet = BytesBuilder();
 
     // Header
     packet.addByte(0x41); // 'A'
-    final flags = endOfFrame ? 0x01 : 0x00;
+    final flags = 0x40 | (endOfFrame ? 0x01 : 0x00); // v1 + push on last chunk
     packet.addByte(flags);
-    packet.addByte((_sequenceNumber >> 8) & 0xFF);
-    packet.addByte(_sequenceNumber & 0xFF);
+    packet.addByte(_sequenceNumber & 0xFF); // 1-byte sequence
 
-    // Data offset is in channels (3 bytes per pixel). Our buffer is RGB bytes, so offset == startByte
-    final offset = startByte; // channel offset in bytes
-    packet.addByte((offset >> 24) & 0xFF);
+    // Data offset is in channels (bytes). Use 24-bit offset as per spec
+    final offset = startByte & 0xFFFFFF;
     packet.addByte((offset >> 16) & 0xFF);
     packet.addByte((offset >> 8) & 0xFF);
     packet.addByte(offset & 0xFF);
@@ -134,6 +137,10 @@ class DDPSender {
     // Length (2 bytes)
     packet.addByte((dataLen >> 8) & 0xFF);
     packet.addByte(dataLen & 0xFF);
+
+    // Data ID (2 bytes) - default channel space
+    packet.addByte(0x00);
+    packet.addByte(0x00);
 
     // Payload
     packet.add(Uint8List.sublistView(rgbData, startByte, startByte + dataLen));
@@ -145,7 +152,7 @@ class DDPSender {
       debugPrint('[DDP] Seq ${_sequenceNumber}: off=$startByte len=$dataLen p0 R$r G$g B$b eof=$endOfFrame');
     }
 
-    _sequenceNumber = (_sequenceNumber + 1) & 0xFFFF;
+    _sequenceNumber = (_sequenceNumber + 1) & 0xFF;
     return packet.toBytes();
   }
 

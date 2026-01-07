@@ -9,6 +9,11 @@ final fppIpProvider = StateProvider<String>((ref) {
   return '192.168.1.68';
 });
 
+// FPP DDP Port Provider (default to ddp_bridge on 4049)
+final fppDdpPortProvider = StateProvider<int>((ref) {
+  return 4049;
+});
+
 // Active Mode Provider
 final activeModeProvider = StateProvider<ActiveMode>((ref) {
   return ActiveMode.controller;
@@ -17,7 +22,8 @@ final activeModeProvider = StateProvider<ActiveMode>((ref) {
 // DDP Sender Provider
 final ddpSenderProvider = FutureProvider<DdpSender>((ref) async {
   final fppIp = ref.watch(fppIpProvider);
-  final ddpSender = DdpSender(host: fppIp, port: 4048);
+  final fppPort = ref.watch(fppDdpPortProvider);
+  final ddpSender = DdpSender(host: fppIp, port: fppPort);
   await ddpSender.initialize();
   return ddpSender;
 });
