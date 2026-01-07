@@ -17,11 +17,11 @@ class DDPSender {
   static int _framesThisSecond = 0;
   static DateTime _secondStart = DateTime.now();
   // Keep UDP payloads below typical MTU to avoid fragmentation
-  // DDP header is 10 bytes, keep data <= 1200 bytes for safety
-  static const int _maxChunkData = 1200;
+  // DDP header is 10 bytes, keep data <= 1400 bytes for Ethernet MTU 1500
+  static const int _maxChunkData = 1400;
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
-  static const int _socketRecreateInterval = 500; // Recreate socket every 500 frames to prevent buffer buildup
+  static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
 
   /// Initialize log file
   static Future<void> _initLogFile() async {
@@ -110,14 +110,6 @@ class DDPSender {
     }
 
     try {
-      // Enforce <= 20 FPS internal gate
-      final now = DateTime.now();
-      if (_lastSendAt != null) {
-        final since = now.difference(_lastSendAt!).inMilliseconds;
-        if (since < 50) {
-          await Future.delayed(Duration(milliseconds: 50 - since));
-        }
-      }
       // Initialize socket if needed or recreate periodically to prevent buffer buildup
       if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
         // Close old socket if recreating
@@ -128,6 +120,13 @@ class DDPSender {
         
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
         _staticSocket!.broadcastEnabled = true;
+        
+        // Set socket send buffer to 256KB to absorb bursts
+        try {
+          _staticSocket!.setRawOption(RawSocketOption(RawSocketOption.levelSocket, RawSocketOption.IPv4SendBufferSize, Uint8List(4)..buffer.asByteData().setInt32(0, 256 * 1024, Endian.host)));
+        } catch (e) {
+          // Ignore if platform doesn't support
+        }
         
         // Set socket options to minimize buffering
         _staticSocket!.writeEventsEnabled = false; // We don't care about write events
