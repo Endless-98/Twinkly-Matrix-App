@@ -172,3 +172,6 @@ logs/
 !TwinklyWall/assets/tetris_blocks/
 !led_matrix_controller/assets/
 !led_matrix_controller/web/
+
+# Local scripts
+update.bat
