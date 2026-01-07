@@ -35,7 +35,8 @@ class DdpBridge:
         self.frame_size = width * height * 3
         self.verbose = verbose
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        # Bind exclusively to avoid multiple bridges competing
+        # (Do not enable SO_REUSEADDR for this UDP port)
         # Increase receive buffer to reduce packet drops
         try:
             self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)  # 1MB
@@ -68,8 +69,9 @@ class DdpBridge:
 
     def run(self):
         self._log(f"DDP bridge listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height}")
+        current_sender = None
         while True:
-            data, _ = self.sock.recvfrom(1500)
+            data, sender = self.sock.recvfrom(1500)
             if not data or data[0] != 0x41:
                 continue
 
@@ -93,6 +95,14 @@ class DdpBridge:
                     self.bytes_written = 0
                 self.chunks_in_frame = 0
                 self.frame_start_ts = time.time()
+                # Lock to sender for this frame
+                current_sender = sender
+
+            # Ignore packets from other senders mid-frame
+            if current_sender is not None and sender != current_sender:
+                if self.verbose:
+                    print(f"Ignoring packet from {sender} (current {current_sender})", flush=True)
+                continue
 
             end_of_frame = (flags & 0x01) != 0
 
@@ -144,6 +154,7 @@ class DdpBridge:
                     self._log(f"Write error: {e}")
                 finally:
                     self.bytes_written = 0
+                    current_sender = None
 
                 # Per-second logging
                 self._sec_frames_in += 1
