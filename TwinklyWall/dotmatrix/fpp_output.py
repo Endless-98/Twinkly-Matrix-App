@@ -104,8 +104,14 @@ class FPPOutput:
         """Pre-compute routing from visual grid to FPP buffer positions.
         
         Maps visual canvas (50×90) to physical LED wall (99×90 with staggering).
-        Physical row is determined by: visual_row * 2 + (0 or 1 depending on column stagger).
-        Odd columns (1, 3, 5...) are staggered by 0.5 units, offsetting their physical rows.
+        
+        Stagger pattern (hexagonal):
+        - Even columns (0,2,4...): physical_row = visual_row * 2
+        - Odd columns (1,3,5...): physical_row = visual_row * 2 + 1
+        
+        This creates the staggered visual layout where odd columns are offset by 0.5 units.
+        With 50 visual rows, this produces rows 0-98 (99 total) in the physical layout.
+        The last visual row (49) for odd columns (row 99) wraps to row 97 to fit within bounds.
         """
         if not self.mapping:
             return
@@ -114,33 +120,26 @@ class FPPOutput:
         src_indices = []
         for visual_row in range(self.height):
             for visual_col in range(self.width):
-                # Even columns (0, 2, 4...): use rows [row*2, row*2+1]
-                # Odd columns (1, 3, 5...): use rows [row*2+1, row*2+2] (staggered down by 1)
-                is_odd_col = visual_col % 2
-                
-                if is_odd_col:
-                    # Staggered odd column: offset down by 1 physical row
-                    physical_rows = [visual_row * 2 + 1, visual_row * 2 + 2]
+                # Determine physical row based on column stagger
+                if visual_col % 2 == 0:
+                    # Even column (0, 2, 4...): maps to even physical rows
+                    physical_row = visual_row * 2
                 else:
-                    # Even column: standard double-height mapping
-                    physical_rows = [visual_row * 2, visual_row * 2 + 1]
+                    # Odd column (1, 3, 5...): maps to odd physical rows (staggered)
+                    physical_row = visual_row * 2 + 1
                 
-                byte_indices = []
-                for physical_row in physical_rows:
-                    # Clamp physical_row to valid range (0-98 for 99-row LED wall)
-                    if physical_row >= 99:
-                        continue
-                    physical_col = visual_col
-                    
-                    if (physical_row, physical_col) in self.mapping:
-                        pixel_idx = self.mapping[(physical_row, physical_col)]
-                        if 0 <= pixel_idx < 4500:
-                            byte_indices.append(pixel_idx * 3)
-                            dest_indices.append(pixel_idx)
-                            src_indices.append(visual_row * self.width + visual_col)
-
-                if byte_indices:
-                    self.routing_table[(visual_row, visual_col)] = byte_indices
+                # Clamp to valid range: last visual row for odd cols (row 99) → row 97
+                if physical_row > 98:
+                    physical_row = 97  # Last odd row
+                
+                physical_col = visual_col
+                
+                if (physical_row, physical_col) in self.mapping:
+                    pixel_idx = self.mapping[(physical_row, physical_col)]
+                    if 0 <= pixel_idx < 4500:
+                        dest_indices.append(pixel_idx)
+                        src_indices.append(visual_row * self.width + visual_col)
+                        self.routing_table[(visual_row, visual_col)] = [pixel_idx * 3]
 
         if HAS_NUMPY and dest_indices:
             self._fast_dest = np.array(dest_indices, dtype=np.int32)
