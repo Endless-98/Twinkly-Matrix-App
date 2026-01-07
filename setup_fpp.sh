@@ -11,7 +11,7 @@ if [ ! -d "TwinklyWall_Project" ]; then
 else
     echo '🔄 Updating repository...'
     cd TwinklyWall_Project
-    git pull origin main
+    git pull
     cd ~
 fi
 
