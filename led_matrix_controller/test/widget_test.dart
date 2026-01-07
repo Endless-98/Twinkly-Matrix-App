@@ -7,24 +7,28 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'package:led_matrix_controller/main.dart';
 
 void main() {
   testWidgets('Counter increments smoke test', (WidgetTester tester) async {
+    // Give the test plenty of vertical space to avoid Column overflow in HomePage
+    tester.binding.window.physicalSizeTestValue = const Size(1080, 1920);
+    tester.binding.window.devicePixelRatioTestValue = 1.0;
+    addTearDown(() {
+      tester.binding.window.clearPhysicalSizeTestValue();
+      tester.binding.window.clearDevicePixelRatioTestValue();
+    });
+
     // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+    await tester.pumpWidget(const ProviderScope(child: MyApp()));
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // Verify home UI renders expected labels
+    expect(find.text('LED Wall Control'), findsOneWidget);
+    expect(find.text('Select Mode'), findsOneWidget);
+    expect(find.text('Controller'), findsOneWidget);
+    expect(find.text('Video'), findsOneWidget);
+    expect(find.text('Mirroring'), findsOneWidget);
   });
 }
