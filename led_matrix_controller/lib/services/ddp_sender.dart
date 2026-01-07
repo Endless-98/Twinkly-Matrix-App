@@ -8,6 +8,8 @@ class DDPSender {
   final int _port;
   static const int frameSize = 27000; // 90*100*3 RGB bytes
   static RawDatagramSocket? _staticSocket;
+  static bool _debugPackets = false;
+  static int _sequenceNumber = 0;
 
   DDPSender({required String host, int port = 4048})
       : _host = host,
@@ -75,8 +77,8 @@ class DDPSender {
     // DDP Header (10 bytes) - CORRECTED for FPP compatibility
     packet.addByte(0x41); // Protocol identifier (0x41 for DDP)
     packet.addByte(0x01); // Flags (0x01 for end-of-frame)
-    packet.addByte(0x00); // Sequence number high
-    packet.addByte(0x00); // Sequence number low
+    packet.addByte((_sequenceNumber >> 8) & 0xFF); // Sequence number high
+    packet.addByte(_sequenceNumber & 0xFF); // Sequence number low
     packet.addByte(0x00); // Data type (0x00 for RGB pixel data)
     packet.addByte(0x00); // Reserved
     packet.addByte(0x00); // Reserved
@@ -90,7 +92,17 @@ class DDPSender {
     // RGB data
     packet.add(rgbData);
 
+    if (_debugPackets && (_sequenceNumber % 30 == 0)) {
+      developer.log('[DDP] Seq ${_sequenceNumber}: R${rgbData[0]} G${rgbData[1]} B${rgbData[2]} @ pixel 0');
+    }
+    _sequenceNumber = (_sequenceNumber + 1) & 0xFFFF;
+
     return packet.toBytes();
+  }
+
+  /// Enable/disable packet debugging
+  static void setDebug(bool enabled) {
+    _debugPackets = enabled;
   }
 
   /// Clean up resources
