@@ -529,8 +529,7 @@ class ScreenCaptureService {
       final yTop = y;
       final yBottom = y + half;
       for (int x = 0; x < width; x++) {
-        // Alternate rows (y), not columns: even rows use top, odd rows use bottom
-        final srcY = (y % 2 == 0) ? yTop : yBottom;
+        final srcY = (x % 2 == 0) ? yTop : yBottom;
         final srcIdx = (srcY * width + x) * 3;
         out[outIdx++] = lut[pre[srcIdx]];
         out[outIdx++] = lut[pre[srcIdx + 1]];
