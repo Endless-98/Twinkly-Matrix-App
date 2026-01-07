@@ -89,40 +89,55 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     );
     DDPSender.setDebugLevel(0); // Disable verbose logging for speed
 
-    // Capture at ~20 FPS (50ms per frame)
+    // Capture at 20 FPS (50ms per frame) with comprehensive timing logs
+    int totalMsAcc = 0;
+    int captureMsAcc = 0;
+    int sendMsAcc = 0;
     while (isCapturing) {
       try {
-        final captureStart = DateTime.now();
+        final frameStart = DateTime.now();
+        final screenshotStart = frameStart;
         final screenshotData = await ScreenCaptureService.captureScreenshot();
-        final captureDuration = DateTime.now().difference(captureStart);
+        final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
 
         if (screenshotData != null) {
-          // Send to FPP via DDP
+          final sendStart = DateTime.now();
           final sent = await DDPSender.sendFrameStatic(
             fppIp,
             screenshotData,
             port: fppPort,
           );
-          final sendDuration = DateTime.now().difference(captureStart);
+          final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
 
           if (!sent) {
             debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
             break;
           }
 
-          setState(() {
-            frameCount++;
-            if (frameCount % 20 == 0) {
-              final fps = (1000 / sendDuration.inMilliseconds).toStringAsFixed(1);
-              statusMessage = "Streaming @ $fps FPS ($frameCount frames)";
-              debugPrint("[MIRRORING] $frameCount frames @ $fps FPS (${sendDuration.inMilliseconds}ms/frame)");
-            }
-          });
-          
-          // Smooth frame pacing: target 50ms/frame (20 FPS)
-          final elapsed = sendDuration.inMilliseconds;
-          if (elapsed < 50) {
-            await Future.delayed(Duration(milliseconds: 50 - elapsed));
+          final totalMs = DateTime.now().difference(frameStart).inMilliseconds;
+          final sleepMs = totalMs < 50 ? 50 - totalMs : 0;
+          if (sleepMs > 0) {
+            await Future.delayed(Duration(milliseconds: sleepMs));
+          }
+
+          frameCount++;
+          totalMsAcc += totalMs;
+          captureMsAcc += captureMs;
+          sendMsAcc += sendMs;
+
+          if (frameCount % 20 == 0) {
+            final avgFrameMs = (totalMsAcc / 20).toStringAsFixed(1);
+            final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
+            final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
+            final fps = (1000 / double.parse(avgFrameMs)).toStringAsFixed(1);
+            totalMsAcc = 0;
+            captureMsAcc = 0;
+            sendMsAcc = 0;
+
+            setState(() {
+              statusMessage = "Streaming @ $fps FPS | frame ${avgFrameMs}ms (capture ${avgCaptureMs}ms, send ${avgSendMs}ms) | total $frameCount";
+            });
+            debugPrint("[MIRRORING] $frameCount frames | ${fps} FPS | frame ${avgFrameMs}ms (capture ${avgCaptureMs}ms, send ${avgSendMs}ms)");
           }
         } else {
           debugPrint("[MIRRORING] ERROR: Capture returned null");

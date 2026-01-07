@@ -507,24 +507,25 @@ class ScreenCaptureService {
     return out;
   }
 
-  /// Fold a 90x100 RGB buffer into 90x50 by averaging each pair of rows
+  /// Fold a 90x100 RGB buffer into 90x50 by averaging top+bottom halves
+  /// Combines row i with row i+50 to preserve full-screen content
   static Uint8List? _foldVertical(Uint8List rgbData, int width, int height) {
     if (height % 2 != 0) {
       return null;
     }
-    final outHeight = height ~/ 2;
-    final out = Uint8List(width * outHeight * 3);
+    final half = height ~/ 2; // 50
+    final out = Uint8List(width * half * 3);
 
     int outIdx = 0;
-    for (int yOut = 0; yOut < outHeight; yOut++) {
-      final y1 = yOut * 2;
-      final y2 = y1 + 1;
+    for (int y = 0; y < half; y++) {
+      final yTop = y;
+      final yBottom = y + half;
       for (int x = 0; x < width; x++) {
-        final idx1 = (y1 * width + x) * 3;
-        final idx2 = (y2 * width + x) * 3;
-        out[outIdx++] = ((rgbData[idx1] + rgbData[idx2]) >> 1);
-        out[outIdx++] = ((rgbData[idx1 + 1] + rgbData[idx2 + 1]) >> 1);
-        out[outIdx++] = ((rgbData[idx1 + 2] + rgbData[idx2 + 2]) >> 1);
+        final idxTop = (yTop * width + x) * 3;
+        final idxBottom = (yBottom * width + x) * 3;
+        out[outIdx++] = ((rgbData[idxTop] + rgbData[idxBottom]) >> 1);
+        out[outIdx++] = ((rgbData[idxTop + 1] + rgbData[idxBottom + 1]) >> 1);
+        out[outIdx++] = ((rgbData[idxTop + 2] + rgbData[idxBottom + 2]) >> 1);
       }
     }
     return out;
