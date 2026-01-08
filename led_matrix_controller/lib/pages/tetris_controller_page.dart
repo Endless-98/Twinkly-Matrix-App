@@ -1,9 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:uuid/uuid.dart';
 import '../providers/app_state.dart';
-import '../services/command_sender.dart';
 
 class TetrisControllerPage extends ConsumerStatefulWidget {
   const TetrisControllerPage({super.key});
@@ -13,28 +16,103 @@ class TetrisControllerPage extends ConsumerStatefulWidget {
 }
 
 class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
+  String? _playerId;
+  Timer? _heartbeatTimer;
+
   @override
   void initState() {
     super.initState();
-    _launchTetris();
+    _initializePlayer();
   }
 
-  Future<void> _launchTetris() async {
+  Future<void> _initializePlayer() async {
+    // Get or create player ID
+    final prefs = await SharedPreferences.getInstance();
+    _playerId = prefs.getString('player_id');
+    if (_playerId == null) {
+      _playerId = const Uuid().v4();
+      await prefs.setString('player_id', _playerId!);
+    }
+
+    // Join game
+    await _joinGame();
+
+    // Start heartbeat timer (send every 10 seconds to prevent timeout)
+    _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      _sendHeartbeat();
+    });
+  }
+
+  Future<void> _joinGame() async {
     try {
-      final sender = await ref.read(commandSenderProvider.future);
-      sender.sendCommand('LAUNCH_TETRIS');
+      final fppIp = ref.read(fppIpProvider);
+      final response = await http.post(
+        Uri.parse('http://$fppIp:5000/api/game/join'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'player_id': _playerId,
+          'phone_id': 'Phone',
+          'game': 'tetris',
+        }),
+      );
+      
+      if (response.statusCode == 200) {
+        debugPrint('Joined Tetris game: ${response.body}');
+      } else {
+        debugPrint('Failed to join game: ${response.statusCode} ${response.body}');
+      }
     } catch (e) {
-      debugPrint('Failed to launch Tetris: $e');
+      debugPrint('Join game error: $e');
+    }
+  }
+
+  Future<void> _sendHeartbeat() async {
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      await http.post(
+        Uri.parse('http://$fppIp:5000/api/game/heartbeat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'player_id': _playerId}),
+      );
+    } catch (e) {
+      debugPrint('Heartbeat error: $e');
+    }
+  }
+
+  Future<void> _leaveGame() async {
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      await http.post(
+        Uri.parse('http://$fppIp:5000/api/game/leave'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({'player_id': _playerId}),
+      );
+    } catch (e) {
+      debugPrint('Leave game error: $e');
     }
   }
 
   Future<void> _sendCommand(String command) async {
     try {
-      final sender = await ref.read(commandSenderProvider.future);
-      sender.sendCommand(command);
+      final fppIp = ref.read(fppIpProvider);
+      await http.post(
+        Uri.parse('http://$fppIp:5000/api/game/heartbeat'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'player_id': _playerId,
+          'cmd': command,
+        }),
+      );
     } catch (e) {
       debugPrint('Command send failed: $e');
     }
+  }
+
+  @override
+  void dispose() {
+    _heartbeatTimer?.cancel();
+    _leaveGame();
+    super.dispose();
   }
 
   @override
