@@ -252,18 +252,19 @@ class ScreenCaptureService {
         }
         
         // Output scaling and format conversion
-        // Use aspect-ratio preserving scaling with supersampling and center CROP to fill:
-        // 1. Supersample: 2x target size (quality antialiasing)
-        // 2. Scale with AR increase (fill), then center-crop to exact 180x200
-        // 3. Final downscale to 90x100
-        // This avoids letterboxing (black bars) so the LED grid shows full-height content.
+        // Use vertical-preserving supersampling (no vertical crop):
+        // 1) Scale height to 200 with aspect preserved (width may exceed 180)
+        // 2) Pad if narrow, crop center if wide to 180x200
+        // 3) Downscale to 90x100 with Lanczos
+        // This keeps full vertical content while only trimming/padding horizontally.
         final superSampleWidth = _targetWidth * 2;  // 180
         final superSampleHeight = _preTargetHeight * 2;  // 200
         
         ffmpegArgs.addAll([
           '-vf',
-          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=increase:flags=lanczos,'  // Scale to fill (may exceed one dimension)
-          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Center-crop to exact size
+          'scale=w=-1:h=${superSampleHeight}:flags=lanczos,'  // Set height=200, preserve aspect; width may be > or < 180
+          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // If width<180 pad to center
+          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // If width>180 crop center to 180x200
           'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
           'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
@@ -299,8 +300,9 @@ class ScreenCaptureService {
           '-vsync', '0',
           '-i', display,
           '-vf',
-          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=increase:flags=lanczos,'  // Scale to fill (may exceed one dimension)
-          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Center-crop to exact size
+          'scale=w=-1:h=${superSampleHeight}:flags=lanczos,'  // Set height=200, preserve aspect; width may be > or < 180
+          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // Pad narrow inputs to center
+          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Crop wide inputs to center
           'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
           'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
