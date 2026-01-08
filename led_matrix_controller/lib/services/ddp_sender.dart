@@ -12,7 +12,8 @@ class DDPSender {
   static RawDatagramSocket? _staticSocket;
   static bool _debugPackets = false;
   static int _debugLevel = 1; // 1: per-frame summary, 2: chunk details
-  static int _sequenceNumber = 0;
+  // Frame sequence number (applied per frame across all chunks to allow reassembly)
+  static int _frameSequence = 0;
   static Stopwatch _secondStopwatch = Stopwatch()..start();
   static int _framesThisSecond = 0;
   // Keep UDP payloads below typical MTU to avoid fragmentation
@@ -101,15 +102,17 @@ class DDPSender {
 
     try {
       final addr = InternetAddress(_host);
+      final frameSeq = DDPSender._frameSequence;
       int sent = 0;
       while (sent < rgbData.length) {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
-        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         _socket.send(packet, addr, _port);
         sent += dataLen;
       }
+      DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame
     } catch (e) {
       _log('Failed to send frame: $e');
     }
@@ -128,9 +131,10 @@ class DDPSender {
     }
 
     try {
+      final frameSeq = DDPSender._frameSequence;
+
       // Fast-path: single UDP packet for the entire frame (13500B + 10B header)
       if (_useSinglePacket && rgbData.length <= 60000) {
-        // Initialize socket if needed or recreate periodically to prevent buffer buildup
         if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
           if (_staticSocket != null) {
             _staticSocket!.close();
@@ -146,13 +150,14 @@ class DDPSender {
 
         _framesSinceSocketRecreate++;
         final addr = InternetAddress(host);
-        final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true);
+        final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true, frameSeq);
         final bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0) {
           _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
           return false;
         }
 
+        _frameSequence = (_frameSequence + 1) & 0xFF; // advance once per frame
         _updateFpsMetrics();
         _lastSendMetrics();
         return true;
@@ -160,7 +165,6 @@ class DDPSender {
 
       // Initialize socket if needed or recreate periodically to prevent buffer buildup
       if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
-        // Close old socket if recreating
         if (_staticSocket != null) {
           _staticSocket!.close();
           _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
@@ -168,9 +172,8 @@ class DDPSender {
         
         _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
         _staticSocket!.broadcastEnabled = true;
-        // Set socket options to minimize buffering
-        _staticSocket!.writeEventsEnabled = false; // We don't care about write events
-        _staticSocket!.readEventsEnabled = false;  // No incoming data expected
+        _staticSocket!.writeEventsEnabled = false;
+        _staticSocket!.readEventsEnabled = false;  
         
         _framesSinceSocketRecreate = 0;
         _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
@@ -186,13 +189,11 @@ class DDPSender {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > _maxChunkData ? _maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
-        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        // Fire-and-forget UDP, no retries (UDP is unreliable by design)
         final bytesSent = _staticSocket!.send(packet, addr, port);
         
         if (bytesSent == 0 && packets == 0) {
-          // Only log on first packet failure
           _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
           return false;
         }
@@ -201,7 +202,7 @@ class DDPSender {
         packets++;
       }
 
-      // Rate logging per second using Stopwatch (monotonic, no DateTime overhead)
+      DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame
       _updateFpsMetrics();
       _lastSendMetrics();
       return true;
@@ -222,11 +223,10 @@ class DDPSender {
     }
   }
 
-  // Helper: log last send (minimize DateTime usage)
+  // Helper: log last send (placeholder for symmetry)
   static void _lastSendMetrics() {
-    // Implicit via _secondStopwatch; no DateTime needed
+    // No-op; retained for compatibility
   }
-
   // Deprecated: single-packet builder removed in favor of chunked sender
 
   /// Static packet builder
@@ -238,14 +238,14 @@ class DDPSender {
   /// 3-5: data offset (24-bit) in channels (bytes)
   /// 6-7: data length (16-bit)
   /// 8-9: data ID (0x0000 for default)
-  static Uint8List _buildDdpPacketStaticChunk(Uint8List rgbData, int startByte, int dataLen, bool endOfFrame) {
+  static Uint8List _buildDdpPacketStaticChunk(Uint8List rgbData, int startByte, int dataLen, bool endOfFrame, int frameSeq) {
     final packet = BytesBuilder();
 
     // Header
     packet.addByte(0x41); // 'A'
     final flags = 0x40 | (endOfFrame ? 0x01 : 0x00); // v1 + push on last chunk
     packet.addByte(flags);
-    packet.addByte(_sequenceNumber & 0xFF); // 1-byte sequence
+    packet.addByte(frameSeq & 0xFF); // 1-byte sequence (constant per frame)
 
     // Data offset is in channels (bytes). Use 24-bit offset as per spec
     final offset = startByte & 0xFFFFFF;
@@ -264,7 +264,6 @@ class DDPSender {
     // Payload
     packet.add(Uint8List.sublistView(rgbData, startByte, startByte + dataLen));
 
-    _sequenceNumber = (_sequenceNumber + 1) & 0xFF;
     return packet.toBytes();
   }
 
@@ -323,15 +322,17 @@ class DdpSender {
 
     try {
       final addr = InternetAddress(_host);
+      final frameSeq = DDPSender._frameSequence;
       int sent = 0;
       while (sent < rgbData.length) {
         final remaining = rgbData.length - sent;
         final dataLen = remaining > DDPSender._maxChunkData ? DDPSender._maxChunkData : remaining;
         final isLast = sent + dataLen >= rgbData.length;
-        final packet = DDPSender._buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast);
+        final packet = DDPSender._buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         _socket.send(packet, addr, _port);
         sent += dataLen;
       }
+      DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame
     } catch (e) {
       debugPrint('Failed to send frame: $e');
     }
