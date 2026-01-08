@@ -176,6 +176,7 @@ class _ControllerPageState extends ConsumerState<ControllerPage> {
   Future<void> _sendDebugColor(WidgetRef ref, Color color) async {
     final fppIp = ref.read(fppIpProvider);
     final fppPort = ref.read(fppDdpPortProvider);
+    final fallbackPort = fppPort == 4048 ? null : 4048;
 
     // Build a solid color frame (90x50 RGB => 13,500 bytes)
     final frame = Uint8List(DDPSender.frameSize);
@@ -186,6 +187,11 @@ class _ControllerPageState extends ConsumerState<ControllerPage> {
     }
 
     await DDPSender.sendFrameStatic(fppIp, frame, port: fppPort);
+
+    // Also send to native FPP port to ensure visibility when the bridge isn't running
+    if (fallbackPort != null) {
+      await DDPSender.sendFrameStatic(fppIp, frame, port: fallbackPort);
+    }
   }
 }
 

@@ -76,6 +76,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
     final fppIp = ref.read(fppIpProvider);
     final fppPort = ref.read(fppDdpPortProvider);
+    // Always mirror to the configured port and also FPP native 4048 for visibility
+    final fallbackPort = fppPort == 4048 ? null : 4048;
 
     setState(() {
       isCapturing = true;
@@ -109,14 +111,21 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
         if (screenshotData != null) {
           final sendStart = DateTime.now();
-          final sent = await DDPSender.sendFrameStatic(
+          final sentPrimary = await DDPSender.sendFrameStatic(
             fppIp,
             screenshotData,
             port: fppPort,
           );
+          if (fallbackPort != null) {
+            await DDPSender.sendFrameStatic(
+              fppIp,
+              screenshotData,
+              port: fallbackPort,
+            );
+          }
           final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
 
-          if (!sent) {
+          if (!sentPrimary) {
             debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
             break;
           }

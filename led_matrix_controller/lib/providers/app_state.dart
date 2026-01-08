@@ -10,9 +10,9 @@ final fppIpProvider = StateProvider<String>((ref) {
   return '192.168.1.68';
 });
 
-// FPP DDP Port Provider (default to native FPP DDP port 4048)
+// FPP DDP Port Provider (default to debug bridge port 4049; app also falls back to 4048 where needed)
 final fppDdpPortProvider = StateProvider<int>((ref) {
-  return 4048;
+  return 4049;
 });
 
 // Active Mode Provider

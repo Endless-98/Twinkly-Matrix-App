@@ -26,7 +26,8 @@ def parse_args():
     p.add_argument("--max-fps", type=float, default=float(os.environ.get("DDP_MAX_FPS", 20)), help="Maximum write FPS to FPP (0 disables pacing)")
     p.add_argument("--frame-timeout-ms", type=float, default=float(os.environ.get("DDP_FRAME_TIMEOUT_MS", 100.0)), help="Timeout for assembling a frame before discarding (ms)")
     p.add_argument("--batch-limit", type=int, default=int(os.environ.get("DDP_BATCH_LIMIT", 200)), help="Max packets to process per loop iteration")
-    p.add_argument("--duration-sec", type=float, default=float(os.environ.get("DDP_DURATION_SEC", 10)), help="Run duration in seconds (auto-exit and print summary)")
+    # Default duration disabled (0) so interactive debug sessions don't auto-exit unless requested
+    p.add_argument("--duration-sec", type=float, default=float(os.environ.get("DDP_DURATION_SEC", 0)), help="Run duration in seconds (auto-exit and print summary; 0 disables)")
     p.add_argument("--compact", action="store_true", help="Compact logs: print only per-second stats and final summary")
     p.add_argument("--verbose", action="store_true", help="Enable verbose logging")
     return p.parse_args()
