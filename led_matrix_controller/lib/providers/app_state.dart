@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/ddp_sender.dart';
 import '../services/command_sender.dart';
 
-enum ActiveMode { controller, mirroring, scenes }
+enum ActiveMode { games, mirroring, scenes }
 enum CaptureMode { desktop, appWindow, region }
 
 // FPP IP Address Provider
@@ -17,7 +17,7 @@ final fppDdpPortProvider = StateProvider<int>((ref) {
 
 // Active Mode Provider
 final activeModeProvider = StateProvider<ActiveMode>((ref) {
-  return ActiveMode.controller;
+  return ActiveMode.games;
 });
 
 // Capture Mode Provider (for screen mirroring)
