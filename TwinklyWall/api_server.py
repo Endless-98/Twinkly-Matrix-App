@@ -275,7 +275,7 @@ def game_join():
 
         # Return active players for this game
         players = get_active_players_for_game(game)
-        log(f"Player {phone_id} joined {game}! Total players: {len(players)}", module="API")
+        log(f"🎮 {game.upper()} JOINED - Player: {phone_id} | Total players: {len(players)} | Player index: {len(players) - 1}", module="API")
         return jsonify({
             'status': 'ok',
             'player_id': player_id,
@@ -330,6 +330,10 @@ def game_heartbeat():
 
         # If there's a command, route it to the player registry
         if 'cmd' in data:
+            from game_players import get_game_for_player as get_player_game
+            player_game = get_player_game(player_id)
+            cmd = data.get('cmd', 'UNKNOWN')
+            log(f"🕹️  BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", module="API")
             handle_input(player_id, data)
 
         game = get_game_for_player(player_id)

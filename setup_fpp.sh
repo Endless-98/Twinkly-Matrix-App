@@ -119,20 +119,19 @@ fi
 if [ $DEBUG_MODE -eq 0 ]; then
     # Always reload units in case they changed outside this script
     sudo systemctl daemon-reload || true
+    
+    # Start API server service (twinklywall)
     if ! sudo systemctl is-active --quiet twinklywall; then
-    echo '▶️ Starting twinklywall service...'
-    sudo systemctl start twinklywall
+        echo '▶️ Starting TwinklyWall API server service...'
+        sudo systemctl start twinklywall
     else
-        echo '✅ Twinklywall service is running'
+        echo '✅ TwinklyWall API server service is running'
     fi
-fi
-
-if [ $DEBUG_MODE -eq 0 ]; then
-    # Reload again before starting bridge to clear any change warnings
-    sudo systemctl daemon-reload || true
+    
+    # Start DDP bridge service
     if ! sudo systemctl is-active --quiet ddp_bridge; then
-    echo '▶️ Starting DDP bridge service...'
-    sudo systemctl start ddp_bridge
+        echo '▶️ Starting DDP bridge service...'
+        sudo systemctl start ddp_bridge
     else
         echo '✅ DDP bridge service is running'
     fi
@@ -149,7 +148,16 @@ if [ $DEBUG_MODE -eq 1 ]; then
 fi
 
 echo '✅ Setup/update complete!'
-echo '📊 Service status:'
+echo ''
+echo '📊 Service Status:'
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+echo '📡 TwinklyWall API Server (listens on port 5000):'
 sudo systemctl status twinklywall --no-pager -l || true
 echo ''
+echo '📡 DDP Bridge (listens on port 4049):'
 sudo systemctl status ddp_bridge --no-pager -l || true
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+echo ''
+echo '💡 To view logs:'
+echo '   API Server:  sudo journalctl -u twinklywall -f'
+echo '   DDP Bridge:  sudo journalctl -u ddp_bridge -f'
