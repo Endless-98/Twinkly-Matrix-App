@@ -159,3 +159,8 @@ def is_game_full(game: str) -> bool:
 def cleanup_idle_players() -> None:
     """Remove players that haven't sent a heartbeat (call periodically, e.g., every 5 sec)."""
     _game_manager.cleanup_idle()
+
+
+def player_count_for_game(game: str) -> int:
+    """Get current player count for a game."""
+    return _game_manager.player_count_for_game(game)
