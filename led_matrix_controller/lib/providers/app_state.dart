@@ -2,7 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/ddp_sender.dart';
 import '../services/command_sender.dart';
 
-enum ActiveMode { controller, mirroring, video }
+enum ActiveMode { controller, mirroring, scenes }
 enum CaptureMode { desktop, appWindow, region }
 
 // FPP IP Address Provider
