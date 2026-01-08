@@ -458,6 +458,13 @@ class DotMatrix:
         if not self.screen:
             return
         
+        # Process events to keep window responsive
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                # Signal app to quit by raising KeyboardInterrupt
+                import sys
+                sys.exit(0)
+        
         self.screen.fill(self.bg_color)
         stagger = (self.dot_size / 2 + self.spacing / 2) if self.should_stagger else 0
         

@@ -26,8 +26,15 @@ class SourcePreview:
         self._min_preview_array = np.array(self.min_preview_color, dtype=np.uint8) if HAS_NUMPY else None
 
         if self.enabled:
-            self.window = SDLWindow("Source Canvas", size=(width, height), position=(50, 50))
-            self.renderer = SDLRenderer(self.window)
+            try:
+                self.window = SDLWindow("Source Canvas", size=(width, height), position=(50, 50))
+                self.renderer = SDLRenderer(self.window)
+                print(f"✅ Source preview window created: {width}x{height}")
+            except Exception as e:
+                print(f"⚠️  Failed to create source preview window: {e}")
+                self.enabled = False
+                self.window = None
+                self.renderer = None
 
     def _apply_min_brightness(self, surface):
         """Lift only near-black pixels up to the preview minimum, leave others unchanged."""
