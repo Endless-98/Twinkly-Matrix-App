@@ -141,10 +141,51 @@ def main():
     signal.signal(signal.SIGINT, _graceful_exit)
 
     if args.mode == "api":
-        # Run the API server
+        # Run the API server with Tetris monitor thread
         print("Starting API server mode...")
-        from api_server import app
-        # Ensure no reloader threads and clean exit on signals
+        from api_server import app, start_cleanup_thread
+        from game_players import get_active_players_for_game
+        import threading
+        import time
+        
+        start_cleanup_thread()
+        
+        # Thread to monitor Tetris and auto-start when player joins
+        def _monitor_tetris():
+            tetris_instance = None
+            tetris_thread = None
+            last_player_count = 0
+            
+            while True:
+                try:
+                    players = get_active_players_for_game("tetris")
+                    current_count = len(players)
+                    
+                    # Start Tetris if players just joined
+                    if current_count > 0 and last_player_count == 0:
+                        print(f"[Tetris Monitor] {current_count} player(s) joined Tetris, starting game...")
+                        matrix = build_matrix()
+                        tetris_thread = threading.Thread(
+                            target=run_tetris,
+                            args=(matrix,),
+                            daemon=True
+                        )
+                        tetris_thread.start()
+                    
+                    # Stop Tetris if all players left
+                    elif current_count == 0 and last_player_count > 0:
+                        print(f"[Tetris Monitor] All players left Tetris, stopping game...")
+                    
+                    last_player_count = current_count
+                    time.sleep(1)
+                except Exception as e:
+                    print(f"[Tetris Monitor] Error: {e}")
+                    time.sleep(1)
+        
+        monitor_thread = threading.Thread(target=_monitor_tetris, daemon=True)
+        monitor_thread.start()
+        
+        # Run Flask server (blocks)
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     else:
         matrix = build_matrix()
