@@ -38,6 +38,7 @@ def _resolve_fpp_memory_file():
     model_name = os.environ.get('FPP_MODEL_NAME', 'Light Wall')
     return f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
 
+from logger import log
 
 def run_tetris(matrix):
     canvas_width = matrix.width * matrix.supersample
@@ -48,9 +49,12 @@ def run_tetris(matrix):
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
 
+
+
     running = True
     frame_count = 0
     try:
+        log("Run tetris!")
         while running:
             if not HEADLESS:
                 for event in pygame.event.get():
