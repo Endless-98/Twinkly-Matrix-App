@@ -99,13 +99,13 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
         matrix.shutdown()
 
 
-def build_matrix():
+def build_matrix(show_preview=True):
     fpp_memory_file = _resolve_fpp_memory_file()
     if ON_PI:
         print(f"FPP memory file: {fpp_memory_file}")
     
-    # When running locally (not on Pi), show both the dot matrix and source preview windows
-    show_windows = not ON_PI
+    # Show preview windows only when not on Pi and show_preview is True
+    show_windows = not ON_PI and show_preview
     
     return DotMatrix(
         headless=HEADLESS,
@@ -173,7 +173,7 @@ def main():
                     # Start Tetris if players just joined
                     if current_count > 0 and last_player_count == 0:
                         log(f"{current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
-                        matrix = build_matrix()
+                        matrix = build_matrix(show_preview=False)  # API mode doesn't show windows
                         tetris_thread = threading.Thread(
                             target=run_tetris,
                             args=(matrix,),
