@@ -50,12 +50,11 @@ def run_tetris(matrix, stop_event=None):
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
 
-    running = True
     frame_count = 0
     try:
         log("▶️ Tetris game loop started", module="Tetris")
-        while running:
-            # Check stop signal first (highest priority)
+        while True:
+            # Check stop signal FIRST, before any blocking operations
             if stop_event is not None and stop_event.is_set():
                 log("⏹️  Stop signal received, exiting Tetris loop", module="Tetris")
                 break
@@ -63,20 +62,43 @@ def run_tetris(matrix, stop_event=None):
             if not HEADLESS:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
-                        running = False
+                        log("Quit event received", module="Tetris")
+                        break
             
-            tetris.tick()
-            matrix.render_frame(canvas)
+            # Check again before rendering (in case stop was set during tick)
+            if stop_event is not None and stop_event.is_set():
+                break
+                
+            try:
+                tetris.tick()
+            except Exception as e:
+                log(f"Error in tetris.tick(): {e}", level='ERROR', module="Tetris")
+                break
+            
+            # Check again before rendering
+            if stop_event is not None and stop_event.is_set():
+                break
+                
+            try:
+                matrix.render_frame(canvas)
+            except Exception as e:
+                log(f"Error in matrix.render_frame(): {e}", level='ERROR', module="Tetris")
+                break
+            
             frame_count += 1
             if frame_count == 1:
                 print("First frame rendered successfully")
+                
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
-        log(f"Error in Tetris loop: {e}", level='ERROR', module="Tetris")
+        log(f"Unexpected error in Tetris loop: {e}", level='ERROR', module="Tetris")
     finally:
         log("🛑 Tetris game shutting down, cleaning up matrix...", module="Tetris")
-        matrix.shutdown()
+        try:
+            matrix.shutdown()
+        except Exception as e:
+            log(f"Error during matrix shutdown: {e}", level='ERROR', module="Tetris")
         log("✅ Tetris game fully stopped", module="Tetris")
 
 
@@ -198,21 +220,27 @@ def main():
                             try:
                                 if stop_event:
                                     stop_event.set()
-                                # Wait for thread to exit
-                                tetris_thread.join(timeout=2)
+                                    log("Set stop_event signal", module="TetrisMonitor")
+                                # Wait for thread to exit (shorter timeout)
+                                tetris_thread.join(timeout=1)
                                 if tetris_thread.is_alive():
-                                    log("⚠️  Tetris thread did not exit after 2s, forcing cleanup...", level='WARNING', module="TetrisMonitor")
+                                    log("⚠️  Tetris thread still alive after 1s, waiting again...", level='WARNING', module="TetrisMonitor")
+                                    tetris_thread.join(timeout=1)
+                                    if tetris_thread.is_alive():
+                                        log("❌ Tetris thread STILL running! Forcefully abandoning it (daemon thread will be killed when process exits)", level='ERROR', module="TetrisMonitor")
                             except Exception as e:
                                 log(f"Error while stopping Tetris thread: {e}", level='ERROR', module="TetrisMonitor")
                             finally:
                                 try:
                                     if matrix:
+                                        log("Calling matrix.shutdown()...", module="TetrisMonitor")
                                         matrix.shutdown()
                                 except Exception as e:
                                     log(f"Error shutting down matrix: {e}", level='ERROR', module="TetrisMonitor")
                                 tetris_thread = None
                                 stop_event = None
                                 matrix = None
+                                log("✅ Tetris cleanup complete", module="TetrisMonitor")
                         else:
                             # No thread to stop, just reset state
                             tetris_thread = None
