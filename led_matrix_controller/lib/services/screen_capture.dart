@@ -220,9 +220,6 @@ class ScreenCaptureService {
           case CaptureMode.desktop:
             // Capture entire desktop
             ffmpegArgs.addAll([
-              '-offset_x', '0',
-              '-offset_y', '0',
-              '-video_size', '${_screenWidth}x${_screenHeight}',
               '-i', 'desktop',
             ]);
             break;
