@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_state.dart';
@@ -137,24 +139,40 @@ class _TetrisButton extends StatefulWidget {
 
 class _TetrisButtonState extends State<_TetrisButton> {
   bool _isPressed = false;
+  Timer? _feedbackTimer;
 
   void _handlePressStart() {
+    // Cancel any pending feedback reset
+    _feedbackTimer?.cancel();
+    
+    // Show visual feedback immediately
     setState(() => _isPressed = true);
+    
+    // Send command immediately
     widget.onPressed();
+    
+    // Keep button visually pressed for at least 150ms even if touch is 1ms
+    _feedbackTimer = Timer(const Duration(milliseconds: 150), () {
+      if (mounted) {
+        setState(() => _isPressed = false);
+      }
+    });
   }
 
   void _handlePressEnd() {
-    setState(() => _isPressed = false);
+    // Don't interrupt the feedback timer; let it complete
+  }
+
+  @override
+  void dispose() {
+    _feedbackTimer?.cancel();
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onTap: () {
-        _handlePressStart();
-        Future.delayed(const Duration(milliseconds: 50), _handlePressEnd);
-      },
       onTapDown: (_) => _handlePressStart(),
       onTapUp: (_) => _handlePressEnd(),
       onTapCancel: _handlePressEnd,
