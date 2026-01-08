@@ -7,6 +7,7 @@ import numpy
 import random
 from game_players import get_active_players_for_game, get_game_for_player
 from players import set_input_handler
+from pathlib import Path
 
 class Tetris:
     def __init__(self, canvas, HEADLESS):
@@ -21,13 +22,15 @@ class Tetris:
         print(canvas)
         self.players = get_active_players_for_game
 
-        self.block_images = [pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Empty.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Blue.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Green.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Orange.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Purple.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Red.png"),
-            pygame.image.load("TwinklyWall/assets/tetris_blocks/TetrisSquare_Yellow.png")
+        project_dir = Path(__file__).resolve().parent
+        assets_file_path = (str)(project_dir / "assets")
+        self.block_images = [pygame.image.load(assets_file_path + "/TetrisSquare_Empty.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Blue.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Green.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Orange.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Purple.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Red.png"),
+            pygame.image.load(assets_file_path + "/TetrisSquare_Yellow.png")
             ]
         for index in range(len(self.block_images)):
             self.block_images[index] = pygame.transform.scale(self.block_images[index], (self.block_size, self.block_size))
