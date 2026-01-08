@@ -51,6 +51,9 @@ def run_tetris(matrix, stop_event=None):
     tetris = Tetris(canvas, HEADLESS)
 
     frame_count = 0
+    fps_check_interval = 100  # Log FPS every N frames
+    last_fps_time = time.time()
+    
     try:
         log("▶️ Tetris game loop started", module="Tetris")
         while True:
@@ -88,13 +91,21 @@ def run_tetris(matrix, stop_event=None):
             frame_count += 1
             if frame_count == 1:
                 print("First frame rendered successfully")
+            
+            # Log actual FPS periodically
+            if frame_count % fps_check_interval == 0:
+                now = time.time()
+                elapsed = now - last_fps_time
+                actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
+                log(f"📊 Tetris FPS: {actual_fps:.1f} (frame {frame_count})", module="Tetris")
+                last_fps_time = now
                 
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
         log(f"Unexpected error in Tetris loop: {e}", level='ERROR', module="Tetris")
     finally:
-        log("🛑 Tetris game shutting down, cleaning up matrix...", module="Tetris")
+        log("🛑 Tetris game shutting down, cleaned {frame_count} frames, avg FPS should be ~20", module="Tetris")
         try:
             matrix.shutdown()
         except Exception as e:
@@ -129,13 +140,15 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
         matrix.shutdown()
 
 
-def build_matrix(show_preview=True):
+def build_matrix(show_preview=True, fps=20):
     fpp_memory_file = _resolve_fpp_memory_file()
     if ON_PI:
         print(f"FPP memory file: {fpp_memory_file}")
     
     # Show preview windows only when not on Pi and show_preview is True
     show_windows = not ON_PI and show_preview
+    
+    log(f"🎬 Building DotMatrix with {fps} FPS cap, headless={HEADLESS}, fpp_output={ON_PI}", module="Matrix")
     
     return DotMatrix(
         headless=HEADLESS,
@@ -144,6 +157,7 @@ def build_matrix(show_preview=True):
         enable_performance_monitor=True,
         disable_blending=True,
         supersample=1,
+        max_fps=fps,  # Explicitly set FPS cap
         # Keep FPP options configurable later; defaults here
         fpp_gamma=2.2,
         fpp_color_order="RGB",
