@@ -9,6 +9,7 @@ Group=fpp
 WorkingDirectory=/home/fpp/TwinklyWall_Project/TwinklyWall
 Environment="PATH=/home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
+Environment="TWINKLYWALL_DEBUG=1"
 Environment="FPP_MODEL_NAME=Light Wall"
 ExecStart=/home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin/python main.py --mode api
 KillSignal=SIGINT
