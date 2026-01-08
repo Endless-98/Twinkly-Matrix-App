@@ -40,8 +40,9 @@ class Tetris:
             def on_input()
 
     def tick(self): # Called in main
+        self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
+        
         if not self.headless:
-            self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
             pygame.display.flip()
 
         x_offset = self.screen.get_width() // self.block_size
