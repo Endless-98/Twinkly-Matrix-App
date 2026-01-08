@@ -544,10 +544,14 @@ class ScreenCaptureService {
 
     int outIdx = 0;
     for (int y = 0; y < half; y++) {
-      final yTop = y;
-      final yBottom = y + half;
+      // Match renderer's staggered sampling:
+      // - Even columns sample from even source rows: srcY = y*2
+      // - Odd columns sample from odd  source rows: srcY = y*2 + 1
+      // This preserves the vertical stagger exactly as in the Python renderer.
+      final evenRow = y * 2;
+      final oddRow = evenRow + 1;
       for (int x = 0; x < width; x++) {
-        final srcY = (x % 2 == 0) ? yTop : yBottom;
+        final srcY = (x % 2 == 0) ? evenRow : oddRow;
         final srcIdx = (srcY * width + x) * 3;
         out[outIdx++] = lut[pre[srcIdx]];
         out[outIdx++] = lut[pre[srcIdx + 1]];
