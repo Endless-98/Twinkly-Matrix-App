@@ -115,26 +115,26 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
-# Ensure services are running
+# Ensure services are running (and no duplicate manual processes)
 if [ $DEBUG_MODE -eq 0 ]; then
     # Always reload units in case they changed outside this script
     sudo systemctl daemon-reload || true
-    
-    # Start API server service (twinklywall)
-    if ! sudo systemctl is-active --quiet twinklywall; then
-        echo '▶️ Starting TwinklyWall API server service...'
-        sudo systemctl start twinklywall
-    else
-        echo '✅ TwinklyWall API server service is running'
-    fi
-    
-    # Start DDP bridge service
-    if ! sudo systemctl is-active --quiet ddp_bridge; then
-        echo '▶️ Starting DDP bridge service...'
-        sudo systemctl start ddp_bridge
-    else
-        echo '✅ DDP bridge service is running'
-    fi
+
+    echo '🧹 Ensuring a single clean instance is running...'
+    echo '   - Stopping services if active'
+    sudo systemctl stop twinklywall ddp_bridge || true
+
+    echo '   - Killing any stray manual Python processes'
+    # Kill any manually launched processes for safety (do not fail the script if none)
+    pkill -u fpp -f '/home/fpp/TwinklyWall_Project/TwinklyWall/main.py' 2>/dev/null || true
+    pkill -u fpp -f '/home/fpp/TwinklyWall_Project/TwinklyWall/api_server.py' 2>/dev/null || true
+    pkill -u fpp -f '/home/fpp/TwinklyWall_Project/TwinklyWall/ddp_bridge.py' 2>/dev/null || true
+
+    sleep 0.5
+
+    echo '▶️ Restarting services with latest code...'
+    sudo systemctl restart twinklywall || sudo systemctl start twinklywall
+    sudo systemctl restart ddp_bridge || sudo systemctl start ddp_bridge
 fi
 
 if [ $DEBUG_MODE -eq 1 ]; then
