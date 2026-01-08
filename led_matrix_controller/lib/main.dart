@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'pages/controller_page.dart';
+import 'pages/games_page.dart';
 import 'pages/mirroring_page.dart';
 import 'pages/scenes_selector_page.dart';
 import 'providers/app_state.dart';
@@ -102,12 +102,12 @@ class HomePage extends ConsumerWidget {
                   Column(
                     children: [
                       _ModeButton(
-                        label: 'Controller',
+                        label: 'Games',
                         icon: Icons.videogame_asset,
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) => const ControllerPage(),
+                              builder: (context) => const GamesPage(),
                             ),
                           );
                         },
