@@ -11,6 +11,7 @@ from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
+from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -23,6 +24,10 @@ playback_active = False
 current_video_name = None
 rendered_videos_dir = Path("dotmatrix/rendered_videos")
 source_videos_dir = Path("assets/source_videos")
+
+# Cleanup thread for idle players
+cleanup_thread = None
+cleanup_active = False
 
 
 def _resolve_fpp_memory_file():
@@ -244,6 +249,121 @@ def health():
     return jsonify({'status': 'ok'})
 
 
+@app.route('/api/game/join', methods=['POST'])
+def game_join():
+    """
+    Register a player for a game.
+    Request body: {"player_id": "uuid-123", "phone_id": "AlicePhone", "game": "tetris"}
+    Response: {"status": "ok", "player_id": "...", "count": 1} or error if game is full.
+    """
+    try:
+        data = request.json
+        player_id = data.get('player_id')
+        phone_id = data.get('phone_id', player_id)
+        game = data.get('game', 'tetris')
+
+        if not player_id:
+            return jsonify({'error': 'Missing player_id'}), 400
+
+        # Attempt to join
+        success = join_game(player_id, phone_id=phone_id, game=game)
+        if not success:
+            return jsonify({'error': f'Game "{game}" is full'}), 403
+
+        # Return active players for this game
+        players = get_active_players_for_game(game)
+        return jsonify({
+            'status': 'ok',
+            'player_id': player_id,
+            'game': game,
+            'player_count': len(players),
+            'player_index': len(players) - 1,  # 0-indexed position
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/game/leave', methods=['POST'])
+def game_leave():
+    """
+    Remove a player from their game.
+    Request body: {"player_id": "uuid-123"}
+    """
+    try:
+        data = request.json
+        player_id = data.get('player_id')
+
+        if not player_id:
+            return jsonify({'error': 'Missing player_id'}), 400
+
+        leave_game(player_id)
+        return jsonify({'status': 'ok', 'player_id': player_id}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/game/heartbeat', methods=['POST'])
+def game_heartbeat():
+    """
+    Keep-alive ping from a player. Call this periodically to prevent timeout.
+    Also routes any input command to the player registry.
+    Request body: {"player_id": "uuid-123", "cmd": "MOVE_LEFT", ...}
+    """
+    try:
+        from game_players import get_game_for_player
+        from players import handle_input
+
+        data = request.json
+        player_id = data.get('player_id')
+
+        if not player_id:
+            return jsonify({'error': 'Missing player_id'}), 400
+
+        # Update heartbeat
+        heartbeat(player_id)
+
+        # If there's a command, route it to the player registry
+        if 'cmd' in data:
+            handle_input(player_id, data)
+
+        game = get_game_for_player(player_id)
+        return jsonify({'status': 'ok', 'player_id': player_id, 'game': game}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/game/status', methods=['GET'])
+def game_status():
+    """
+    Get current game status (active players, availability).
+    Query params: ?game=tetris
+    """
+    try:
+        from game_players import player_count_for_game
+
+        game = request.args.get('game', 'tetris')
+        count = player_count_for_game(game)
+        players = get_active_players_for_game(game)
+        full = is_game_full(game)
+
+        return jsonify({
+            'game': game,
+            'player_count': count,
+            'is_full': full,
+            'players': [
+                {'player_id': p.player_id, 'phone_id': p.phone_id, 'index': i}
+                for i, p in enumerate(players)
+            ],
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+
 @app.route('/api/test/solid', methods=['POST'])
 def test_solid():
     try:
@@ -274,16 +394,43 @@ def test_black():
 
 def cleanup():
     """Cleanup function to be called on shutdown."""
-    global current_matrix
+    global current_matrix, cleanup_active
+    cleanup_active = False
     stop_current_playback()
     if current_matrix:
         current_matrix.shutdown()
+
+
+def cleanup_idle_loop():
+    """Background thread that periodically removes idle players."""
+    from game_players import cleanup_idle_players
+    
+    while cleanup_active:
+        try:
+            cleanup_idle_players()
+            time.sleep(5)  # Check every 5 seconds
+        except Exception as e:
+            print(f"Error in cleanup loop: {e}")
+
+
+def start_cleanup_thread():
+    """Start the background cleanup thread."""
+    global cleanup_thread, cleanup_active
+    if cleanup_thread and cleanup_thread.is_alive():
+        return
+    cleanup_active = True
+    cleanup_thread = threading.Thread(target=cleanup_idle_loop, daemon=True)
+    cleanup_thread.start()
 
 
 if __name__ == '__main__':
     import atexit
     atexit.register(cleanup)
     
+    # Start background cleanup thread for idle players
+    start_cleanup_thread()
+    
     # Run the Flask server
     print("Starting Flask API server on port 5000...")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+

@@ -1,0 +1,155 @@
+"""Game-specific player management with limits, timeouts, and lifecycle tracking."""
+
+from __future__ import annotations
+
+import time
+from typing import Dict, List, Optional
+
+from players import Player, register_player, set_input_handler, get_registry, InputPayload
+
+
+# Per-game configuration
+GAME_LIMITS = {
+    "tetris": 2,  # Max 2 players for Tetris
+}
+
+PLAYER_TIMEOUT_SEC = 30  # Mark player as idle if no heartbeat for 30s
+
+
+class GamePlayerManager:
+    """Tracks active players per game, enforces limits, and detects disconnects."""
+
+    def __init__(self):
+        self._active_by_game: Dict[str, List[str]] = {}  # game -> [player_id, ...]
+        self._last_heartbeat: Dict[str, float] = {}  # player_id -> timestamp
+        self._player_metadata: Dict[str, dict] = {}  # player_id -> {game, joined_at, ...}
+
+    def can_join(self, game: str) -> bool:
+        """Check if a new player can join this game (respects limits)."""
+        limit = GAME_LIMITS.get(game)
+        if limit is None:
+            return True  # No limit
+        current_count = len(self._active_by_game.get(game, []))
+        return current_count < limit
+
+    def join(self, player_id: str, phone_id: Optional[str] = None, game: str = "tetris") -> bool:
+        """
+        Register a new player for a game if the limit allows.
+        Returns True if successful, False if game is full.
+        """
+        if not self.can_join(game):
+            return False
+
+        # Register with the shared registry
+        register_player(player_id, phone_id=phone_id, game=game)
+
+        # Track in our game-specific manager
+        if game not in self._active_by_game:
+            self._active_by_game[game] = []
+        if player_id not in self._active_by_game[game]:
+            self._active_by_game[game].append(player_id)
+
+        self._last_heartbeat[player_id] = time.time()
+        self._player_metadata[player_id] = {
+            "game": game,
+            "joined_at": time.time(),
+            "phone_id": phone_id,
+        }
+
+        return True
+
+    def leave(self, player_id: str) -> None:
+        """Remove a player from all games (called on disconnect/timeout/backout)."""
+        registry = get_registry()
+        registry.unregister(player_id)
+
+        # Remove from all games
+        for game_list in self._active_by_game.values():
+            if player_id in game_list:
+                game_list.remove(player_id)
+
+        self._last_heartbeat.pop(player_id, None)
+        self._player_metadata.pop(player_id, None)
+
+    def heartbeat(self, player_id: str) -> None:
+        """Update the last-seen timestamp for a player (called on any input/ping)."""
+        self._last_heartbeat[player_id] = time.time()
+
+    def get_idle_players(self, timeout_sec: float = PLAYER_TIMEOUT_SEC) -> List[str]:
+        """Return player IDs that have not sent a heartbeat in timeout_sec."""
+        now = time.time()
+        idle = []
+        for player_id, last_ts in self._last_heartbeat.items():
+            if (now - last_ts) > timeout_sec:
+                idle.append(player_id)
+        return idle
+
+    def cleanup_idle(self, timeout_sec: float = PLAYER_TIMEOUT_SEC) -> None:
+        """Remove all idle players."""
+        for player_id in self.get_idle_players(timeout_sec):
+            print(f"[GamePlayers] Removing idle player: {player_id}")
+            self.leave(player_id)
+
+    def get_active_players_for_game(self, game: str) -> List[Player]:
+        """Return list of Player objects currently in this game."""
+        player_ids = self._active_by_game.get(game, [])
+        registry = get_registry()
+        return [registry._players[pid] for pid in player_ids if pid in registry._players]
+
+    def get_game_for_player(self, player_id: str) -> Optional[str]:
+        """Return the game a player is currently in, or None."""
+        return self._player_metadata.get(player_id, {}).get("game")
+
+    def is_game_full(self, game: str) -> bool:
+        """Check if a game has reached its player limit."""
+        return not self.can_join(game)
+
+    def player_count_for_game(self, game: str) -> int:
+        """Get current player count for a game."""
+        return len(self._active_by_game.get(game, []))
+
+
+# Module-level singleton
+_game_manager = GamePlayerManager()
+
+
+def get_game_manager() -> GamePlayerManager:
+    """Return the shared GamePlayerManager."""
+    return _game_manager
+
+
+def join_game(
+    player_id: str, phone_id: Optional[str] = None, game: str = "tetris"
+) -> bool:
+    """Attempt to join a player into a game. Returns True if successful."""
+    return _game_manager.join(player_id, phone_id=phone_id, game=game)
+
+
+def leave_game(player_id: str) -> None:
+    """Remove a player from their game (on disconnect/timeout/backout)."""
+    _game_manager.leave(player_id)
+
+
+def heartbeat(player_id: str) -> None:
+    """Update last-seen timestamp for a player (call on any input from them)."""
+    _game_manager.heartbeat(player_id)
+
+
+def get_active_players_for_game(game: str) -> List[Player]:
+    """Get list of Player objects currently in a game (use by index: [0], [1], etc.)."""
+    return _game_manager.get_active_players_for_game(game)
+
+
+def get_game_for_player(player_id: str) -> Optional[str]:
+    """Get the game a player is in, or None if not in any game."""
+    return _game_manager.get_game_for_player(player_id)
+
+
+def is_game_full(game: str) -> bool:
+    """Check if a game is at max capacity."""
+    return _game_manager.is_game_full(game)
+
+
+def cleanup_idle_players() -> None:
+    """Remove players that haven't sent a heartbeat (call periodically, e.g., every 5 sec)."""
+    _game_manager.cleanup_idle()
