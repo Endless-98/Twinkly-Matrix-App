@@ -41,7 +41,7 @@ def _resolve_fpp_memory_file():
 
 from logger import log
 
-def run_tetris(matrix):
+def run_tetris(matrix, stop_event=None):
     canvas_width = matrix.width * matrix.supersample
     # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row
     # This ensures each dot gets unique pixel data when staggered columns are sampled.
@@ -57,6 +57,8 @@ def run_tetris(matrix):
     try:
         log("Run tetris!")
         while running:
+            if stop_event is not None and stop_event.is_set():
+                break
             if not HEADLESS:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
@@ -159,32 +161,50 @@ def main():
         
         start_cleanup_thread()
         
-        # Thread to monitor Tetris and auto-start when player joins
+        # Thread to monitor Tetris and control game lifecycle
         def _monitor_tetris():
-            tetris_instance = None
             tetris_thread = None
+            stop_event = None
+            matrix = None
             last_player_count = 0
-            
+
             while True:
                 try:
                     players = get_active_players_for_game("tetris")
                     current_count = len(players)
-                    
-                    # Start Tetris if players just joined
-                    if current_count > 0 and last_player_count == 0:
+
+                    # Start Tetris if players just joined and no game is running
+                    if current_count > 0 and last_player_count == 0 and (not tetris_thread or not tetris_thread.is_alive()):
                         log(f"{current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
                         matrix = build_matrix(show_preview=False)  # API mode doesn't show windows
+                        stop_event = threading.Event()
                         tetris_thread = threading.Thread(
                             target=run_tetris,
-                            args=(matrix,),
+                            args=(matrix, stop_event),
                             daemon=True
                         )
                         tetris_thread.start()
-                    
-                    # Stop Tetris if all players left
-                    elif current_count == 0 and last_player_count > 0:
-                        log(f"All players left Tetris, stopping game...", module="TetrisMonitor")
-                    
+
+                    # Stop Tetris if all players left and a game is running
+                    elif current_count == 0 and last_player_count > 0 and tetris_thread and tetris_thread.is_alive():
+                        log("All players left Tetris, stopping game...", module="TetrisMonitor")
+                        try:
+                            if stop_event:
+                                stop_event.set()
+                            # Give the thread a moment to exit cleanly
+                            tetris_thread.join(timeout=5)
+                        except Exception as e:
+                            log(f"Error while stopping Tetris thread: {e}", level='ERROR', module="TetrisMonitor")
+                        finally:
+                            try:
+                                if matrix:
+                                    matrix.shutdown()
+                            except Exception:
+                                pass
+                            tetris_thread = None
+                            stop_event = None
+                            matrix = None
+
                     last_player_count = current_count
                     time.sleep(1)
                 except Exception as e:
