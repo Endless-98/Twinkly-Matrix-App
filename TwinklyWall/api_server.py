@@ -6,12 +6,13 @@ Provides REST endpoints for the Flutter app to communicate with.
 import os
 import threading
 import time
+import traceback
 from pathlib import Path
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
-from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full
+from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full, get_game_for_player, player_count_for_game
 from logger import log
 
 app = Flask(__name__)
@@ -295,7 +296,6 @@ def game_leave():
     Request body: {"player_id": "uuid-123"}
     """
     try:
-        from game_players import get_game_for_player, player_count_for_game
         data = request.json
         player_id = data.get('player_id')
 
@@ -311,7 +311,7 @@ def game_leave():
         return jsonify({'status': 'ok', 'player_id': player_id}), 200
 
     except Exception as e:
-        log(f"Error in game_leave: {e}", level='ERROR', module="API")
+        log(f"❌ Error in game_leave: {e}\n{traceback.format_exc()}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 
