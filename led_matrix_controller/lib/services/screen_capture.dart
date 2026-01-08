@@ -252,9 +252,20 @@ class ScreenCaptureService {
         }
         
         // Output scaling and format conversion
-        // Capture at 90x100 to match physical staggering, we'll fold to 90x50 in Dart
+        // Use aspect-ratio preserving scaling with supersampling:
+        // 1. Calculate aspect ratio: screen_width / screen_height
+        // 2. Supersample: scale to 2x target size to preserve quality (antialiasing)
+        // 3. Center crop/pad to exact aspect match, then scale to 90x100
+        // Example: 1920x1080 (16:9) -> supersample to 180x200 -> center crop -> scale to 90x100
+        final superSampleWidth = _targetWidth * 2;  // 180
+        final superSampleHeight = _preTargetHeight * 2;  // 200
+        
         ffmpegArgs.addAll([
-          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
+          '-vf',
+          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=decrease:flags=lanczos,'  // Supersample with good filtering
+          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // Center pad to exact size
+          'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
+          'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
           '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
@@ -268,6 +279,9 @@ class ScreenCaptureService {
         if (_captureMode != CaptureMode.desktop) {
           debugPrint("[FFMPEG] WARNING: Only desktop capture supported on Linux currently");
         }
+        
+        final superSampleWidth = _targetWidth * 2;  // 180
+        final superSampleHeight = _preTargetHeight * 2;  // 200
         
         ffmpegArgs = [
           '-hide_banner',
@@ -284,7 +298,11 @@ class ScreenCaptureService {
           '-framerate', '60',
           '-vsync', '0',
           '-i', display,
-          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
+          '-vf',
+          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=decrease:flags=lanczos,'  // Supersample with good filtering
+          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // Center pad to exact size
+          'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
+          'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
           '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
