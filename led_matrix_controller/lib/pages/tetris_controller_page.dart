@@ -62,6 +62,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.orange,
                   size: 120,
                   onPressed: () => _sendCommand('MOVE_DOWN'),
+                  onHeld: () => _sendCommand('HARD_DROP'),
                 ),
               ),
               
@@ -74,6 +75,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.blue,
                   size: 140,
                   onPressed: () => _sendCommand('MOVE_LEFT'),
+                  onHeld: () => _sendCommand('MOVE_LEFT_HELD'),
                 ),
               ),
               
@@ -98,6 +100,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.green,
                   size: 140,
                   onPressed: () => _sendCommand('MOVE_RIGHT'),
+                  onHeld: () => _sendCommand('MOVE_RIGHT_HELD'),
                 ),
               ),
               
@@ -125,12 +128,14 @@ class _TetrisButton extends StatefulWidget {
   final Color color;
   final double size;
   final VoidCallback onPressed;
+  final VoidCallback? onHeld;
 
   const _TetrisButton({
     required this.icon,
     required this.color,
     required this.size,
     required this.onPressed,
+    this.onHeld,
   });
 
   @override
@@ -139,33 +144,61 @@ class _TetrisButton extends StatefulWidget {
 
 class _TetrisButtonState extends State<_TetrisButton> {
   bool _isPressed = false;
+  bool _isHeld = false;
   Timer? _feedbackTimer;
+  Timer? _holdTimer;
 
   void _handlePressStart() {
-    // Cancel any pending feedback reset
+    // Cancel any pending timers
     _feedbackTimer?.cancel();
+    _holdTimer?.cancel();
+    
+    // Reset held state
+    _isHeld = false;
     
     // Show visual feedback immediately
     setState(() => _isPressed = true);
     
-    // Send command immediately
+    // Send tap command immediately
     widget.onPressed();
+    
+    // Start hold timer if onHeld callback exists
+    if (widget.onHeld != null) {
+      _holdTimer = Timer(const Duration(milliseconds: 300), () {
+        if (mounted && _isPressed) {
+          _isHeld = true;
+          widget.onHeld!();
+        }
+      });
+    }
     
     // Keep button visually pressed for at least 150ms even if touch is 1ms
     _feedbackTimer = Timer(const Duration(milliseconds: 150), () {
-      if (mounted) {
+      if (mounted && !_isPressed) {
         setState(() => _isPressed = false);
       }
     });
   }
 
   void _handlePressEnd() {
-    // Don't interrupt the feedback timer; let it complete
+    // Cancel hold timer on release
+    _holdTimer?.cancel();
+    
+    // Mark as not pressed
+    final wasPressed = _isPressed;
+    _isPressed = false;
+    
+    // If feedback timer hasn't fired yet, let it handle the visual reset
+    // Otherwise reset immediately
+    if (!(_feedbackTimer?.isActive ?? false) && wasPressed) {
+      setState(() => _isPressed = false);
+    }
   }
 
   @override
   void dispose() {
     _feedbackTimer?.cancel();
+    _holdTimer?.cancel();
     super.dispose();
   }
 
