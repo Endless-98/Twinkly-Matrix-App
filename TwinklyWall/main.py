@@ -2,6 +2,7 @@ import os
 import sys
 import argparse
 import signal
+import time
 
 # Set pygame to use dummy driver if headless
 def is_raspberry_pi():
