@@ -144,7 +144,7 @@ class _TetrisButton extends StatefulWidget {
 
 class _TetrisButtonState extends State<_TetrisButton> {
   bool _isPressed = false;
-  bool _isHeld = false;
+  bool _isActuallyPressed = false; // Track actual press state separately
   Timer? _feedbackTimer;
   Timer? _holdTimer;
 
@@ -153,8 +153,8 @@ class _TetrisButtonState extends State<_TetrisButton> {
     _feedbackTimer?.cancel();
     _holdTimer?.cancel();
     
-    // Reset held state
-    _isHeld = false;
+    // Mark as actually pressed
+    _isActuallyPressed = true;
     
     // Show visual feedback immediately
     setState(() => _isPressed = true);
@@ -165,8 +165,7 @@ class _TetrisButtonState extends State<_TetrisButton> {
     // Start hold timer if onHeld callback exists
     if (widget.onHeld != null) {
       _holdTimer = Timer(const Duration(milliseconds: 300), () {
-        if (mounted && _isPressed) {
-          _isHeld = true;
+        if (mounted && _isActuallyPressed) {
           widget.onHeld!();
         }
       });
@@ -174,7 +173,7 @@ class _TetrisButtonState extends State<_TetrisButton> {
     
     // Keep button visually pressed for at least 150ms even if touch is 1ms
     _feedbackTimer = Timer(const Duration(milliseconds: 150), () {
-      if (mounted && !_isPressed) {
+      if (mounted && !_isActuallyPressed) {
         setState(() => _isPressed = false);
       }
     });
@@ -184,13 +183,13 @@ class _TetrisButtonState extends State<_TetrisButton> {
     // Cancel hold timer on release
     _holdTimer?.cancel();
     
-    // Mark as not pressed
-    final wasPressed = _isPressed;
-    _isPressed = false;
+    // Mark as not actually pressed
+    _isActuallyPressed = false;
     
-    // If feedback timer hasn't fired yet, let it handle the visual reset
-    // Otherwise reset immediately
-    if (!(_feedbackTimer?.isActive ?? false) && wasPressed) {
+    // If feedback timer hasn't fired yet, keep visual feedback until it does
+    // The timer will handle resetting the visual state after 150ms
+    // If timer already fired, we need to reset immediately
+    if (!(_feedbackTimer?.isActive ?? false)) {
       setState(() => _isPressed = false);
     }
   }
