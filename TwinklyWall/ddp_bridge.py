@@ -429,6 +429,8 @@ class DdpBridge:
         print(f"avg_in_fps={avg_in_fps:.1f} avg_out_fps={avg_out_fps:.1f} drop={self._tot_dropped} incomplete={self._tot_incomplete} packets={self._tot_packets}", flush=True)
         print(f"timing recv={avg_recv_ms:.3f}ms parse={avg_parse_ms:.3f}ms assembly={avg_assembly_ms:.3f}ms | pacing={avg_pacing_ms:.2f}ms numpy={avg_numpy_ms:.2f}ms mmap={avg_mmap_ms:.2f}ms | write_avg={avg_write_ms:.2f}ms", flush=True)
         print(f"network bandwidth={bandwidth_mbps:.2f} Mbps bytes={self._tot_bytes_received} duration={total_secs:.2f}s", flush=True)
+        if self._tot_packets == 0:
+            print("hint: No DDP traffic detected on the socket. Verify sender IP/port, or try local loopback (send_ddp_test.py).", flush=True)
         print("=====================================================", flush=True)
 
 
