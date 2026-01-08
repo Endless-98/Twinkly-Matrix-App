@@ -6,7 +6,6 @@ import '../services/screen_capture.dart';
 import '../services/ddp_sender.dart';
 import '../providers/app_state.dart';
 import '../widgets/region_selector_overlay.dart';
-import 'package:desktop_multi_window/desktop_multi_window.dart';
 
 class MirroringPage extends ConsumerStatefulWidget {
   const MirroringPage({super.key});
@@ -41,7 +40,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     });
   }
 
-  Future<void> _startDesktopCapture() async {
+  Future<void> _startMirroringLoop() async {
     // Apply capture mode configuration before starting
     final captureMode = ref.read(captureModeProvider);
     final selectedWindow = ref.read(selectedWindowProvider);
@@ -196,29 +195,23 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           });
         }
       } else {
-        if (Platform.isAndroid) {
-          // Android native capture
-          final success = await ScreenCaptureService.startCapture();
-          if (success) {
-            setState(() {
-              isCapturing = true;
-              statusMessage = "Screen capture started (20 FPS)";
-            });
-          } else {
-            setState(() {
-              statusMessage = "Failed to start capture - check permissions";
-            });
-          }
-        } else if (Platform.isLinux || Platform.isWindows) {
-          // Desktop capture
-          final success = await ScreenCaptureService.startCapture();
-          if (success) {
-            _startDesktopCapture();
-          } else {
-            setState(() {
-              statusMessage = "Failed to initialize capture";
-            });
-          }
+        final success = await ScreenCaptureService.startCapture();
+
+        if (success) {
+          setState(() {
+            isCapturing = true;
+            statusMessage = "Screen capture started (20 FPS)";
+          });
+
+          // Use the same mirroring loop on every platform; the Android native
+          // channel returns scaled RGB frames just like the desktop path.
+          _startMirroringLoop();
+        } else {
+          setState(() {
+            statusMessage = Platform.isAndroid
+                ? "Failed to start capture - check permissions"
+                : "Failed to initialize capture";
+          });
         }
       }
     } catch (e) {
