@@ -296,23 +296,27 @@ def game_leave():
     Request body: {"player_id": "uuid-123"}
     """
     try:
-        data = request.json
+        data = request.json or {}
         player_id = data.get('player_id')
 
         if not player_id:
             return jsonify({'error': 'Missing player_id'}), 400
 
         game = get_game_for_player(player_id)
-        count_before = player_count_for_game(game) if game else 0
+        if game is None:
+            log(f"⚠️  LEAVE - Player {player_id} not found in registry, already left?", module="API")
+            return jsonify({'status': 'ok', 'player_id': player_id, 'message': 'Player not in any game'}), 200
+        
+        count_before = player_count_for_game(game)
         log(f"👋 PLAYER LEFT - Player: {player_id} | Game: {game} | Players before: {count_before}", module="API")
         leave_game(player_id)
-        count_after = player_count_for_game(game) if game else 0
+        count_after = player_count_for_game(game)
         log(f"   Removed! Players after: {count_after}", module="API")
         return jsonify({'status': 'ok', 'player_id': player_id}), 200
 
     except Exception as e:
         log(f"❌ Error in game_leave: {e}\n{traceback.format_exc()}", level='ERROR', module="API")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'traceback': traceback.format_exc()}), 500
 
 
 @app.route('/api/game/heartbeat', methods=['POST'])
