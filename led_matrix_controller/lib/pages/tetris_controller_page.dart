@@ -117,16 +117,31 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
     super.dispose();
   }
 
+  // Synchronous wrapper to ensure leave completes before dispose
+  void _leaveGameSync() {
+    _leaveGame().then((_) {
+      debugPrint('✅ Leave game completed in dispose');
+    }).catchError((e) {
+      debugPrint('❌ Leave game failed in dispose: $e');
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        title: const Text('Tetris'),
-        centerTitle: true,
-        backgroundColor: Colors.purple[900],
-      ),
-      body: LayoutBuilder(
+    return WillPopScope(
+      onWillPop: () async {
+        debugPrint('👈 Back button pressed, leaving game before navigation...');
+        await _leaveGame();
+        return true;  // Allow pop
+      },
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          title: const Text('Tetris'),
+          centerTitle: true,
+          backgroundColor: Colors.purple[900],
+        ),
+        body: LayoutBuilder(
         builder: (context, constraints) {
           final screenHeight = constraints.maxHeight;
           final screenWidth = constraints.maxWidth;
@@ -198,6 +213,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
             ],
           );
         },
+      ),
       ),
     );
   }
