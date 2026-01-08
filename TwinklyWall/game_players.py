@@ -6,6 +6,7 @@ import time
 from typing import Dict, List, Optional
 
 from players import Player, register_player, set_input_handler, get_registry, InputPayload
+from logger import log
 
 
 # Per-game configuration
@@ -38,6 +39,7 @@ class GamePlayerManager:
         Returns True if successful, False if game is full.
         """
         if not self.can_join(game):
+            log(f"Game {game} is full, rejecting join from {player_id}", level='WARNING', module="GamePlayers")
             return False
 
         # Register with the shared registry
@@ -56,6 +58,7 @@ class GamePlayerManager:
             "phone_id": phone_id,
         }
 
+        log(f"Player {phone_id} ({player_id}) joined {game}. Total in game: {len(self._active_by_game[game])}", module="GamePlayers")
         return True
 
     def leave(self, player_id: str) -> None:
@@ -87,7 +90,7 @@ class GamePlayerManager:
     def cleanup_idle(self, timeout_sec: float = PLAYER_TIMEOUT_SEC) -> None:
         """Remove all idle players."""
         for player_id in self.get_idle_players(timeout_sec):
-            print(f"[GamePlayers] Removing idle player: {player_id}")
+            log(f"Removing idle player: {player_id}", module="GamePlayers")
             self.leave(player_id)
 
     def get_active_players_for_game(self, game: str) -> List[Player]:

@@ -24,6 +24,7 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 from dotmatrix import DotMatrix
 from games.tetris import Tetris
 from video_player import VideoPlayer
+from logger import log
 import pygame
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
@@ -167,7 +168,7 @@ def main():
                     
                     # Start Tetris if players just joined
                     if current_count > 0 and last_player_count == 0:
-                        print(f"[Tetris Monitor] {current_count} player(s) joined Tetris, starting game...")
+                        log(f"{current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
                         matrix = build_matrix()
                         tetris_thread = threading.Thread(
                             target=run_tetris,
@@ -178,12 +179,12 @@ def main():
                     
                     # Stop Tetris if all players left
                     elif current_count == 0 and last_player_count > 0:
-                        print(f"[Tetris Monitor] All players left Tetris, stopping game...")
+                        log(f"All players left Tetris, stopping game...", module="TetrisMonitor")
                     
                     last_player_count = current_count
                     time.sleep(1)
                 except Exception as e:
-                    print(f"[Tetris Monitor] Error: {e}")
+                    log(f"Error: {e}", level='ERROR', module="TetrisMonitor")
                     time.sleep(1)
         
         monitor_thread = threading.Thread(target=_monitor_tetris, daemon=True)

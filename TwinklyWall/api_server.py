@@ -12,6 +12,7 @@ from flask_cors import CORS
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
 from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full
+from logger import log
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -266,12 +267,15 @@ def game_join():
             return jsonify({'error': 'Missing player_id'}), 400
 
         # Attempt to join
+        log(f"Player {phone_id} ({player_id}) attempting to join {game}", module="API")
         success = join_game(player_id, phone_id=phone_id, game=game)
         if not success:
+            log(f"Failed: Game {game} is full", level='WARNING', module="API")
             return jsonify({'error': f'Game "{game}" is full'}), 403
 
         # Return active players for this game
         players = get_active_players_for_game(game)
+        log(f"Player {phone_id} joined {game}! Total players: {len(players)}", module="API")
         return jsonify({
             'status': 'ok',
             'player_id': player_id,
