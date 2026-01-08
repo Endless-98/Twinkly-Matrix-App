@@ -14,7 +14,7 @@ GAME_LIMITS = {
     "tetris": 2,  # Max 2 players for Tetris
 }
 
-PLAYER_TIMEOUT_SEC = 30  # Mark player as idle if no heartbeat for 30s
+PLAYER_TIMEOUT_SEC = 10  # Mark player as idle if no heartbeat for 10s (matches heartbeat interval)
 
 
 class GamePlayerManager:
@@ -90,7 +90,9 @@ class GamePlayerManager:
     def cleanup_idle(self, timeout_sec: float = PLAYER_TIMEOUT_SEC) -> None:
         """Remove all idle players."""
         for player_id in self.get_idle_players(timeout_sec):
-            log(f"Removing idle player: {player_id}", module="GamePlayers")
+            game = self._player_metadata.get(player_id, {}).get("game", "unknown")
+            phone_id = self._player_metadata.get(player_id, {}).get("phone_id", player_id)
+            log(f"⏱️  TIMEOUT - Removing idle player: {phone_id} from {game} (no heartbeat for {timeout_sec}s)", module="GamePlayers")
             self.leave(player_id)
 
     def get_active_players_for_game(self, game: str) -> List[Player]:
