@@ -143,6 +143,7 @@ if [ $DEBUG_MODE -eq 1 ]; then
     sudo systemctl stop twinklywall || true
     sudo systemctl stop ddp_bridge || true
     echo '▶️ Launching DDP debug runner (Ctrl+C to exit)...'
+    export TWINKLYWALL_DEBUG=1
     /home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin/python /home/fpp/TwinklyWall_Project/TwinklyWall/debug_ddp.py --port 4049 --width "$WIDTH" --height "$HEIGHT" --model "$MODEL"
     exit 0
 fi

@@ -18,6 +18,7 @@ class DebugLogger:
         self.fpp_debug = os.environ.get('FPP_DEBUG', '').lower() in ('1', 'true', 'yes')
         self.log_file = os.environ.get('TWINKLYWALL_LOG_FILE', None)
         self.start_time = time.time()
+        self.enabled = self.debug_mode or self.fpp_debug
         
     def log(self, message, level='INFO', module=None):
         """
@@ -28,7 +29,7 @@ class DebugLogger:
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             module: Optional module name for context
         """
-        if not self.debug_mode and not self.fpp_debug:
+        if not self.enabled:
             return
         
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
