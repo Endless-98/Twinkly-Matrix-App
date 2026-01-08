@@ -225,8 +225,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
   Future<void> _sendTestFrame() async {
     final fppIp = ref.read(fppIpProvider);
     final fppPort = ref.read(fppDdpPortProvider);
+    // Fallback to native FPP DDP port (4048) if the configured port is a bridge
+    final fallbackPort = fppPort == 4048 ? null : 4048;
     setState(() {
-      statusMessage = "Sending test frame (red)...";
+      statusMessage = "Sending test frame (red) to $fppIp:$fppPort" +
+          (fallbackPort != null ? " (also trying $fallbackPort)" : "");
     });
 
     // Create a pure red frame: all pixels R=255, G=0, B=0
@@ -238,15 +241,34 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     }
 
     DDPSender.setDebug(true);
-    final sent = await DDPSender.sendFrameStatic(
+    final sentPrimary = await DDPSender.sendFrameStatic(
       fppIp,
       testFrame,
       port: fppPort,
     );
 
+    bool sentFallback = false;
+    if (!sentPrimary && fallbackPort != null) {
+      sentFallback = await DDPSender.sendFrameStatic(
+        fppIp,
+        testFrame,
+        port: fallbackPort,
+      );
+    } else if (fallbackPort != null) {
+      // Still push to 4048 to cover native FPP even when primary succeeds (e.g., bridge port)
+      sentFallback = await DDPSender.sendFrameStatic(
+        fppIp,
+        testFrame,
+        port: fallbackPort,
+      );
+    }
+
     setState(() {
-      if (sent) {
-        statusMessage = "✓ Test frame sent! Check FPP for red color";
+      if (sentPrimary || sentFallback) {
+        final portInfo = sentFallback && fallbackPort != null
+            ? "$fppPort and $fallbackPort"
+            : "$fppPort";
+        statusMessage = "✓ Test frame sent! Ports: $portInfo";
       } else {
         statusMessage = "✗ Failed to send test frame";
       }
