@@ -150,6 +150,11 @@ class _TetrisButtonState extends State<_TetrisButton> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () {
+        _handlePressStart();
+        Future.delayed(const Duration(milliseconds: 50), _handlePressEnd);
+      },
       onTapDown: (_) => _handlePressStart(),
       onTapUp: (_) => _handlePressEnd(),
       onTapCancel: _handlePressEnd,
