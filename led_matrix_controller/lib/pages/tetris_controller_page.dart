@@ -82,13 +82,15 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
   Future<void> _leaveGame() async {
     try {
       final fppIp = ref.read(fppIpProvider);
-      await http.post(
+      debugPrint('🚀 Leaving Tetris game, sending leave request to $fppIp...');
+      final response = await http.post(
         Uri.parse('http://$fppIp:5000/api/game/leave'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({'player_id': _playerId}),
-      );
+      ).timeout(const Duration(seconds: 5));
+      debugPrint('✅ Leave game response: ${response.statusCode}');
     } catch (e) {
-      debugPrint('Leave game error: $e');
+      debugPrint('❌ Leave game error: $e');
     }
   }
 
