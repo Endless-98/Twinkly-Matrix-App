@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../providers/app_state.dart';
 import '../services/command_sender.dart';
+import 'tetris_controller_page.dart';
 
 class GamesPage extends ConsumerWidget {
   const GamesPage({super.key});
@@ -37,27 +38,12 @@ class GamesPage extends ConsumerWidget {
   }
 
   Future<void> _launchTetris(BuildContext context, WidgetRef ref) async {
-    try {
-      final sender = await ref.read(commandSenderProvider.future);
-      sender.sendCommand('LAUNCH_TETRIS');
-      
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Tetris launched on LED wall'),
-            duration: Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to launch Tetris: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+    if (context.mounted) {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => const TetrisControllerPage(),
+        ),
+      );
     }
   }
 }
