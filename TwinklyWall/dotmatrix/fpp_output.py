@@ -166,12 +166,25 @@ class FPPOutput:
             return 0.0
 
         start = time.perf_counter()
+        
+        # Track timing for different stages
+        select_start = time.perf_counter()
 
         if HAS_NUMPY and isinstance(dot_colors, np.ndarray) and self._fast_dest is not None:
             colors_flat = dot_colors.reshape(-1, 3)
             selected = colors_flat[self._fast_src]
+            select_elapsed = time.perf_counter() - select_start
+            
+            correct_start = time.perf_counter()
             corrected = self._apply_correction_numpy(selected)
+            correct_elapsed = time.perf_counter() - correct_start
+            
+            assign_start = time.perf_counter()
             self._buffer_view[self._fast_dest] = corrected
+            assign_elapsed = time.perf_counter() - assign_start
+            
+            # Optional: verbose logging for each write (disabled by default to reduce overhead)
+            # print(f"[FPP_WRITE] select={select_elapsed*1000:.3f}ms correct={correct_elapsed*1000:.3f}ms assign={assign_elapsed*1000:.3f}ms", flush=True)
         elif HAS_NUMPY and isinstance(dot_colors, np.ndarray):
             for (row, col), byte_indices in self.routing_table.items():
                 pixel = dot_colors[row, col]
@@ -190,9 +203,17 @@ class FPPOutput:
                     self.buffer[byte_idx + 1] = g
                     self.buffer[byte_idx + 2] = b
 
+        flush_start = time.perf_counter()
         self.memory_map.seek(0)
         self.memory_map.write(self.buffer)
-        return (time.perf_counter() - start) * 1000
+        flush_elapsed = time.perf_counter() - flush_start
+        
+        total_elapsed = time.perf_counter() - start
+        
+        # Optional: verbose logging (disabled by default)
+        # print(f"[FPP_FLUSH] seek+write={flush_elapsed*1000:.3f}ms total={total_elapsed*1000:.3f}ms", flush=True)
+        
+        return total_elapsed * 1000
 
     def write_solid(self, r, g, b):
         """Write a solid color directly to the FPP buffer (bypasses mapping)."""
