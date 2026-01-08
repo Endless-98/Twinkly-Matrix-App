@@ -132,6 +132,7 @@ def join_game(
 
 def leave_game(player_id: str) -> None:
     """Remove a player from their game (on disconnect/timeout/backout)."""
+    log(f"leave_game() called for {player_id}", module="GamePlayers")
     _game_manager.leave(player_id)
 
 

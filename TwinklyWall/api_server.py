@@ -295,7 +295,7 @@ def game_leave():
     Request body: {"player_id": "uuid-123"}
     """
     try:
-        from game_players import get_game_for_player
+        from game_players import get_game_for_player, player_count_for_game
         data = request.json
         player_id = data.get('player_id')
 
@@ -303,11 +303,15 @@ def game_leave():
             return jsonify({'error': 'Missing player_id'}), 400
 
         game = get_game_for_player(player_id)
-        log(f"👋 PLAYER LEFT - Player: {player_id} | Game: {game}", module="API")
+        count_before = player_count_for_game(game) if game else 0
+        log(f"👋 PLAYER LEFT - Player: {player_id} | Game: {game} | Players before: {count_before}", module="API")
         leave_game(player_id)
+        count_after = player_count_for_game(game) if game else 0
+        log(f"   Removed! Players after: {count_after}", module="API")
         return jsonify({'status': 'ok', 'player_id': player_id}), 200
 
     except Exception as e:
+        log(f"Error in game_leave: {e}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 
