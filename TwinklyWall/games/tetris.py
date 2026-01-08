@@ -62,18 +62,19 @@ class Tetris:
         
        
     def move_piece_left():
-        log("LEFT")
+        log("LEFT", module="Tetris")
+        
     def move_piece_right():
-        log("RIGHT")
+        log("RIGHT", module="Tetris")
 
     def rotate_clockwise():
-        log("ROTATE_CLOCKWISE")
+        log("ROTATE_CLOCKWISE", module="Tetris")
 
     def rotate_counterclockwise():
-        log("ROTATE__COUNTER_CLOCKWISE")
+        log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
 
     def hard_drop_piece():
-        log("HARD_DROP_PIECE")
+        log("HARD_DROP_PIECE", module="Tetris")
 
     def tick(self): # Called in main
         
