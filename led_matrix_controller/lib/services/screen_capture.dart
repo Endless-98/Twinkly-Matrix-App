@@ -621,7 +621,7 @@ class ScreenCaptureService {
       final convertDuration = DateTime.now().difference(convertStartTime);
       debugPrint("[PROCESS] RGB conversion: ${convertDuration.inMilliseconds}ms");
 
-      final totalProcessDuration = DateTime.now().difference(process-StartTime);
+      final totalProcessDuration = DateTime.now().difference(processStartTime);
       debugPrint("[PROCESS] Total processing: ${totalProcessDuration.inMilliseconds}ms");
       debugPrint("[PROCESS] Output: ${rgbOutput.length} bytes");
       

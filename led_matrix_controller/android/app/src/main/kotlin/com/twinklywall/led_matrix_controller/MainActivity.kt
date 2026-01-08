@@ -12,6 +12,7 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Binder
 import android.os.Build
+import android.os.IBinder
 import android.util.DisplayMetrics
 import androidx.annotation.RequiresApi
 import io.flutter.embedding.android.FlutterActivity
