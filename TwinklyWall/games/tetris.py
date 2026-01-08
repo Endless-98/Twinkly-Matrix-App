@@ -1,4 +1,4 @@
-# All code in this file must be handwritten!
+# All code in this file must be handwritten! No AI allowed!
 
 import sys
 import os
@@ -34,6 +34,10 @@ class Tetris:
         self.grid = [[]]
         empty_block = "assets/tetris_blocks/TetrisSquare_Empty.png"
         self.grid = [[random.randrange(0, len(self.block_images)) for element in range(self.blocks_width)] for row in range(self.blocks_height)]
+
+    # def bind_input():
+    #     for index, player in enumerate(players):
+    #         def on_input()
 
     def tick(self): # Called in main
         self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background

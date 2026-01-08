@@ -103,10 +103,14 @@ def build_matrix():
     fpp_memory_file = _resolve_fpp_memory_file()
     if ON_PI:
         print(f"FPP memory file: {fpp_memory_file}")
+    
+    # When running locally (not on Pi), show both the dot matrix and source preview windows
+    show_windows = not ON_PI
+    
     return DotMatrix(
         headless=HEADLESS,
         fpp_output=ON_PI,
-        show_source_preview=True,
+        show_source_preview=show_windows,
         enable_performance_monitor=True,
         disable_blending=True,
         supersample=1,
