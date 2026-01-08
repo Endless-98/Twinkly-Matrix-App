@@ -252,19 +252,18 @@ class ScreenCaptureService {
         }
         
         // Output scaling and format conversion
-        // Use vertical-preserving supersampling (no vertical crop):
-        // 1) Scale height to 200 with aspect preserved (width may exceed 180)
-        // 2) Pad if narrow, crop center if wide to 180x200
+        // Supersample and fill, then crop to exact 180x200 (no pad error cases):
+        // 1) Scale to at least 180x200 (AR increase) with Lanczos
+        // 2) Center-crop to 180x200
         // 3) Downscale to 90x100 with Lanczos
-        // This keeps full vertical content while only trimming/padding horizontally.
+        // Keeps full height, trims sides as needed without invalid pad dims.
         final superSampleWidth = _targetWidth * 2;  // 180
         final superSampleHeight = _preTargetHeight * 2;  // 200
         
         ffmpegArgs.addAll([
           '-vf',
-          'scale=w=-1:h=${superSampleHeight}:flags=lanczos,'  // Set height=200, preserve aspect; width may be > or < 180
-          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // If width<180 pad to center
-          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // If width>180 crop center to 180x200
+          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=increase:flags=lanczos,'  // Ensure >=180x200
+          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Center-crop to 180x200
           'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
           'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
@@ -300,9 +299,8 @@ class ScreenCaptureService {
           '-vsync', '0',
           '-i', display,
           '-vf',
-          'scale=w=-1:h=${superSampleHeight}:flags=lanczos,'  // Set height=200, preserve aspect; width may be > or < 180
-          'pad=${superSampleWidth}:${superSampleHeight}:(ow-iw)/2:(oh-ih)/2:black,'  // Pad narrow inputs to center
-          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Crop wide inputs to center
+          'scale=w=${superSampleWidth}:h=${superSampleHeight}:force_original_aspect_ratio=increase:flags=lanczos,'  // Ensure >=180x200
+          'crop=${superSampleWidth}:${superSampleHeight}:(iw-ow)/2:(ih-oh)/2,'  // Center-crop to 180x200
           'scale=${_targetWidth}:${_preTargetHeight}:flags=lanczos,'  // Final downscale with quality filtering
           'format=rgb24',  // Ensure RGB24 format
           '-pix_fmt', 'rgb24',
