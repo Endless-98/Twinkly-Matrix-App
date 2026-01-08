@@ -295,12 +295,15 @@ def game_leave():
     Request body: {"player_id": "uuid-123"}
     """
     try:
+        from game_players import get_game_for_player
         data = request.json
         player_id = data.get('player_id')
 
         if not player_id:
             return jsonify({'error': 'Missing player_id'}), 400
 
+        game = get_game_for_player(player_id)
+        log(f"👋 PLAYER LEFT - Player: {player_id} | Game: {game}", module="API")
         leave_game(player_id)
         return jsonify({'status': 'ok', 'player_id': player_id}), 200
 
