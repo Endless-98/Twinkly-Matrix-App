@@ -50,19 +50,21 @@ def run_tetris(matrix, stop_event=None):
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
 
-
-
     running = True
     frame_count = 0
     try:
-        log("Run tetris!")
+        log("▶️ Tetris game loop started", module="Tetris")
         while running:
+            # Check stop signal first (highest priority)
             if stop_event is not None and stop_event.is_set():
+                log("⏹️  Stop signal received, exiting Tetris loop", module="Tetris")
                 break
+            
             if not HEADLESS:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
+            
             tetris.tick()
             matrix.render_frame(canvas)
             frame_count += 1
@@ -70,8 +72,12 @@ def run_tetris(matrix, stop_event=None):
                 print("First frame rendered successfully")
     except KeyboardInterrupt:
         print("\nShutting down...")
+    except Exception as e:
+        log(f"Error in Tetris loop: {e}", level='ERROR', module="Tetris")
     finally:
+        log("🛑 Tetris game shutting down, cleaning up matrix...", module="Tetris")
         matrix.shutdown()
+        log("✅ Tetris game fully stopped", module="Tetris")
 
 
 def run_video(matrix, render_path, loop, speed, start, end, brightness, playback_fps):
@@ -175,7 +181,7 @@ def main():
 
                     # Start Tetris if players just joined and no game is running
                     if current_count > 0 and last_player_count == 0 and (not tetris_thread or not tetris_thread.is_alive()):
-                        log(f"{current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
+                        log(f"🎮 {current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
                         matrix = build_matrix(show_preview=False)  # API mode doesn't show windows
                         stop_event = threading.Event()
                         tetris_thread = threading.Thread(
@@ -186,26 +192,37 @@ def main():
                         tetris_thread.start()
 
                     # Stop Tetris if all players left and a game is running
-                    elif current_count == 0 and last_player_count > 0 and tetris_thread and tetris_thread.is_alive():
-                        log("All players left Tetris, stopping game...", module="TetrisMonitor")
-                        try:
-                            if stop_event:
-                                stop_event.set()
-                            # Give the thread a moment to exit cleanly
-                            tetris_thread.join(timeout=5)
-                        except Exception as e:
-                            log(f"Error while stopping Tetris thread: {e}", level='ERROR', module="TetrisMonitor")
-                        finally:
+                    elif current_count == 0 and last_player_count > 0:
+                        if tetris_thread and tetris_thread.is_alive():
+                            log("⏹️  All players left Tetris, stopping game immediately...", module="TetrisMonitor")
                             try:
-                                if matrix:
-                                    matrix.shutdown()
-                            except Exception:
-                                pass
+                                if stop_event:
+                                    stop_event.set()
+                                # Wait for thread to exit
+                                tetris_thread.join(timeout=2)
+                                if tetris_thread.is_alive():
+                                    log("⚠️  Tetris thread did not exit after 2s, forcing cleanup...", level='WARNING', module="TetrisMonitor")
+                            except Exception as e:
+                                log(f"Error while stopping Tetris thread: {e}", level='ERROR', module="TetrisMonitor")
+                            finally:
+                                try:
+                                    if matrix:
+                                        matrix.shutdown()
+                                except Exception as e:
+                                    log(f"Error shutting down matrix: {e}", level='ERROR', module="TetrisMonitor")
+                                tetris_thread = None
+                                stop_event = None
+                                matrix = None
+                        else:
+                            # No thread to stop, just reset state
                             tetris_thread = None
                             stop_event = None
                             matrix = None
 
                     last_player_count = current_count
+                    time.sleep(1)
+                except Exception as e:
+                    log(f"Error in Tetris monitor: {e}", level='ERROR', module="TetrisMonitor")
                     time.sleep(1)
                 except Exception as e:
                     log(f"Error: {e}", level='ERROR', module="TetrisMonitor")
