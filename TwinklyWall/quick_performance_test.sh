@@ -28,8 +28,9 @@ echo "Let your screen mirroring application send data to this device."
 echo "Testing for 30 seconds..."
 echo ""
 
-# Run for 30 seconds
-cd /home/endless/Portfolio/TwinklyWall_Project/TwinklyWall
+# Run for 30 seconds (use script directory for portability)
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$SCRIPT_DIR"
 timeout 30s python3 debug_ddp.py --verbose 2>&1 | tee "$LOG_FILE"
 
 echo ""
