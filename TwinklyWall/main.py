@@ -41,9 +41,11 @@ def _resolve_fpp_memory_file():
 
 def run_tetris(matrix):
     canvas_width = matrix.width * matrix.supersample
-    # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row + offset row
-    # This ensures each dot gets unique pixel data when staggered columns are sampled
-    canvas_height = (matrix.height * 2) * matrix.supersample  # 50 * 2 = 100px tall
+    # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row + 1 extra row
+    # This ensures each dot gets unique pixel data when staggered columns are sampled.
+    # Odd columns in row 49 need pixel row 99 (49*2+1), so canvas must be at least 100 rows tall.
+    # Using 101px to ensure no off-by-one issues with the stagger sampling logic.
+    canvas_height = (matrix.height * 2 + 1) * matrix.supersample  # 50 * 2 + 1 = 101px tall
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
 
