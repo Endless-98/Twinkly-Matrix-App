@@ -41,7 +41,6 @@ dependencies:
   http: ^1.1.0
   async: ^2.11.0
   ffi: ^2.1.0
-  desktop_multi_window: ^0.2.0
   
 dev_dependencies:
   riverpod_generator: ^2.3.0

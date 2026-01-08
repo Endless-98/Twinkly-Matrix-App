@@ -102,8 +102,8 @@ class ScreenCaptureService {
   static Future<bool> startCapture() async {
     try {
       if (Platform.isAndroid) {
-        await platform.invokeMethod('startScreenCapture');
-        return true;
+        final result = await platform.invokeMethod<bool>('startScreenCapture');
+        return result ?? false;
       } else if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
         _isCapturingDesktop = true;
         debugPrint("[START] Desktop screen capture started");
@@ -577,8 +577,7 @@ class ScreenCaptureService {
       }
 
       // Decode raw RGB24 to Image object - create Image from raw RGB bytes
-      final decodeStartTime = DateTime.now();
-      final image = img.Image(
+      final decodeStartTime = DateTime.now();      final image = img.Image(
         width: _screenWidth,
         height: _screenHeight,
       );
@@ -622,7 +621,7 @@ class ScreenCaptureService {
       final convertDuration = DateTime.now().difference(convertStartTime);
       debugPrint("[PROCESS] RGB conversion: ${convertDuration.inMilliseconds}ms");
 
-      final totalProcessDuration = DateTime.now().difference(processStartTime);
+      final totalProcessDuration = DateTime.now().difference(process-StartTime);
       debugPrint("[PROCESS] Total processing: ${totalProcessDuration.inMilliseconds}ms");
       debugPrint("[PROCESS] Output: ${rgbOutput.length} bytes");
       
