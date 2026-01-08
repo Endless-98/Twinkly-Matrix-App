@@ -32,13 +32,9 @@ class ScreenCaptureService {
   static const int _targetHeight = 50;
   static const int _bytesPerPixel = 3; // RGB24
   static const int _targetFrameSize = _targetWidth * _targetHeight * _bytesPerPixel;
-  
-  // Supersampling for better quality and performance
-  // We capture at 3x resolution then downsample with filtering
-  static const int _supersampleFactor = 3;
-  static late int _captureWidth;  // Calculated as _targetWidth * _supersampleFactor
-  static late int _captureHeight; // Calculated to match monitor aspect ratio
-  static late int _captureFrameSize;
+  // Pre-target capture height to correct LED staggering aspect
+  static const int _preTargetHeight = 100;
+  static const int _preTargetFrameSize = _targetWidth * _preTargetHeight * _bytesPerPixel;
   
   // Capture mode settings
   static CaptureMode _captureMode = CaptureMode.desktop;
@@ -145,7 +141,7 @@ class ScreenCaptureService {
     }
   }
 
-  /// Detect screen resolution and calculate supersampling dimensions
+  /// Detect screen resolution
   static Future<void> _detectScreenSize() async {
     try {
       if (Platform.isWindows) {
@@ -162,8 +158,7 @@ class ScreenCaptureService {
         if (widthMatch != null && heightMatch != null) {
           _screenWidth = int.parse(widthMatch.group(1)!);
           _screenHeight = int.parse(heightMatch.group(1)!);
-          _calculateSupersampleDimensions();
-          debugPrint("[DETECT] Windows screen size: ${_screenWidth}x${_screenHeight}, supersampling to ${_captureWidth}x${_captureHeight}");
+          debugPrint("[DETECT] Windows screen size: ${_screenWidth}x${_screenHeight}");
           return;
         }
       } else {
@@ -180,40 +175,15 @@ class ScreenCaptureService {
             if (match != null) {
               _screenWidth = int.parse(match.group(1)!);
               _screenHeight = int.parse(match.group(2)!);
-              _calculateSupersampleDimensions();
-              debugPrint("[DETECT] Screen size: ${_screenWidth}x${_screenHeight}, supersampling to ${_captureWidth}x${_captureHeight}");
+              debugPrint("[DETECT] Screen size: ${_screenWidth}x${_screenHeight}");
               return;
             }
           }
         }
       }
-      // Fallback
-      _calculateSupersampleDimensions();
     } catch (e) {
       debugPrint("[DETECT] Could not detect screen size: $e, using default 1920x1080");
-      _calculateSupersampleDimensions();
     }
-  }
-
-  /// Calculate supersampling dimensions based on monitor aspect ratio
-  /// Captures at 3x the target resolution to preserve detail, then downsamples
-  static void _calculateSupersampleDimensions() {
-    // Monitor aspect ratio
-    final monitorAspect = _screenWidth / _screenHeight;
-    
-    // Target aspect ratio (LED wall: 90x50 = 1.8:1)
-    final targetAspect = _targetWidth / _targetHeight;
-    
-    // Calculate capture dimensions with supersampling (3x resolution)
-    _captureWidth = _targetWidth * _supersampleFactor; // 270
-    
-    // Adjust height to match monitor aspect ratio
-    final calculatedHeight = (_captureWidth / monitorAspect).round();
-    _captureHeight = calculatedHeight;
-    
-    _captureFrameSize = _captureWidth * _captureHeight * _bytesPerPixel;
-    
-    debugPrint("[ASPECT] Monitor: ${monitorAspect.toStringAsFixed(2)}:1, Target: ${targetAspect.toStringAsFixed(2)}:1, Capture: ${_captureWidth}x${_captureHeight}");
   }
 
   /// Start persistent FFmpeg process that streams raw RGB data
@@ -281,13 +251,12 @@ class ScreenCaptureService {
             break;
         }
         
-        // Output scaling and format conversion with supersampling
-        // Capture at _captureWidth x _captureHeight (3x target res, matched to monitor aspect)
-        // Then downsample to 90x50 in Dart with proper filtering
+        // Output scaling and format conversion
+        // Capture at 90x100 to match physical staggering, we'll fold to 90x50 in Dart
         ffmpegArgs.addAll([
-          '-vf', 'scale=${_captureWidth}:${_captureHeight}:flags=lanczos,format=rgb24',
+          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
           '-pix_fmt', 'rgb24',
-          '-s', '${_captureWidth}x${_captureHeight}',
+          '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
           'pipe:1'
         ]);
@@ -315,9 +284,9 @@ class ScreenCaptureService {
           '-framerate', '60',
           '-vsync', '0',
           '-i', display,
-          '-vf', 'scale=${_captureWidth}:${_captureHeight}:flags=lanczos,format=rgb24',
+          '-vf', 'scale=${_targetWidth}:${_preTargetHeight}:flags=fast_bilinear,format=rgb24',
           '-pix_fmt', 'rgb24',
-          '-s', '${_captureWidth}x${_captureHeight}',
+          '-s', '${_targetWidth}x${_preTargetHeight}',
           '-f', 'rawvideo',
           'pipe:1'
         ];
@@ -356,8 +325,8 @@ class ScreenCaptureService {
       });
       
       debugPrint("[FFMPEG] Process started, PID: ${_ffmpegProcess!.pid}");
-      // Prepare buffers for supersampling
-      _preFrameBuffer = Uint8List(_captureFrameSize);  // High-res supersampled frame
+      // Prepare buffers
+      _preFrameBuffer = Uint8List(_preTargetFrameSize);
       _outFrameBuffer = Uint8List(_targetFrameSize);
       _initGammaLut(2.2);
       return true;
@@ -441,9 +410,8 @@ class ScreenCaptureService {
           return null;
         }
         
-        // Downsample supersampled frame to 90x50 using proper filtering
-        final downsampled = _downsampleFrame(frameData);
-        return downsampled;
+        // Process the raw RGB data (already scaled by FFmpeg)
+        return frameData;  // Skip processing, already in correct format
       }
       return null;
     } catch (e) {
@@ -460,9 +428,9 @@ class ScreenCaptureService {
         debugPrint("[STREAM] ERROR: Process is null");
         return null;
       }
-      // Read supersampled frame size from FFmpeg
-      final frameSize = _captureFrameSize;
-      final preBuf = _preFrameBuffer ?? Uint8List(_captureFrameSize);
+      // Read pre-target size (90x100) from FFmpeg
+      final frameSize = _preTargetFrameSize;
+      final preBuf = _preFrameBuffer ?? Uint8List(_preTargetFrameSize);
       int writeOffset = 0;
 
       // Ensure we have a continuous buffer to pull exact frame sizes
@@ -550,53 +518,10 @@ class ScreenCaptureService {
     _gammaLut = lut;
   }
 
-  /// Downsample supersampled frame from _captureWidth x _captureHeight to 90x50
-  /// Uses proper filtering to preserve detail
-  static Uint8List _downsampleFrame(Uint8List supersampled) {
-    final outBuf = _outFrameBuffer ?? Uint8List(_targetFrameSize);
-    
-    // Calculate scaling factors
-    final xScale = _captureWidth / _targetWidth;
-    final yScale = _captureHeight / _targetHeight;
-    
-    // Simple 2x2 box filter for downsampling (average 4 source pixels -> 1 dest pixel)
-    int outIdx = 0;
-    for (int y = 0; y < _targetHeight; y++) {
-      final srcY = (y * yScale).toInt();
-      for (int x = 0; x < _targetWidth; x++) {
-        final srcX = (x * xScale).toInt();
-        
-        // Sample a 2x2 region and average (or use higher order filtering)
-        var r = 0, g = 0, b = 0;
-        int sampleCount = 0;
-        
-        for (int dy = 0; dy < 2 && srcY + dy < _captureHeight; dy++) {
-          for (int dx = 0; dx < 2 && srcX + dx < _captureWidth; dx++) {
-            final srcIdx = ((srcY + dy) * _captureWidth + (srcX + dx)) * _bytesPerPixel;
-            if (srcIdx + 2 < supersampled.length) {
-              r += supersampled[srcIdx];
-              g += supersampled[srcIdx + 1];
-              b += supersampled[srcIdx + 2];
-              sampleCount++;
-            }
-          }
-        }
-        
-        // Apply gamma LUT during downsampling
-        final lut = _gammaLut ?? Uint8List(256);
-        outBuf[outIdx++] = lut[(r ~/ sampleCount).clamp(0, 255)];
-        outBuf[outIdx++] = lut[(g ~/ sampleCount).clamp(0, 255)];
-        outBuf[outIdx++] = lut[(b ~/ sampleCount).clamp(0, 255)];
-      }
-    }
-    
-    return outBuf;
-  }
-
   /// Fold 90x100 -> 90x50 and apply gamma via LUT in one pass
   static void _foldAndGammaInterleave(Uint8List pre, Uint8List out) {
     final width = _targetWidth;
-    final half = _targetHeight; // 50
+    final half = _preTargetHeight ~/ 2; // 50
     final lut = _gammaLut ?? Uint8List(256);
 
     int outIdx = 0;
