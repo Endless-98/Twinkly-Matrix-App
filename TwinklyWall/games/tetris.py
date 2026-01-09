@@ -12,48 +12,48 @@ from pathlib import Path
 import copy
 import time
 
-
 class Tetrominoe:
+    width = 4
+    
     def __init__(self, type_index, position = (0,0), rotation = 0):
         self.position = position
-        self.shape = None
-        match type_index:
-            case 0: # I piece
-                self.shape = [[0,0,0,0],
-                              [1,1,1,1],
-                              [0,0,0,0],
-                              [0,0,0,0]]
-                              
-            case 1: # J piece
-                self.shape = [[0,0,0,0],
-                              [2,0,0,0],
-                              [2,2,2,0],
-                              [0,0,0,0]]
-            case 2: # L piece
-                self.shape = [[0,0,0,0],
-                              [0,0,0,3],
-                              [0,3,3,3],
-                              [0,0,0,0]]
-            case 3: # O piece
-                self.shape = [[0,0,0,0],
-                              [0,4,4,0],
-                              [0,4,4,0],
-                              [0,0,0,0]]
-            case 4: # S piece
-                self.shape = [[0,0,0,0],
-                              [0,0,5,5],
-                              [0,5,5,0],
-                              [0,0,0,0]]
-            case 5: # Z piece
-                self.shape = [[0,0,0,0],
-                              [6,6,0,0],
-                              [0,6,6,0],
-                              [0,0,0,0]]
-            case 6: # T piece
-                self.shape = [[0,0,0,0],
-                              [0,7,0,0],
-                              [7,7,7,0],
-                              [0,0,0,0]]
+        self.shapes = [ [], # Empty piece
+            # I piece
+            [[0,0,0,0],
+            [1,1,1,1],
+            [0,0,0,0],
+            [0,0,0,0]],
+            # J piece
+            [[0,0,0,0],
+             [2,0,0,0],
+             [2,2,2,0],
+             [0,0,0,0]],
+            # L piece
+            [[0,0,0,0],
+             [0,0,0,3],
+             [0,3,3,3],
+             [0,0,0,0]],
+            # O piece
+            [[0,0,0,0],
+             [0,4,4,0],
+             [0,4,4,0],
+             [0,0,0,0]],
+            # S piece
+            [[0,0,0,0],
+             [0,0,5,5],
+             [0,5,5,0],
+              [0,0,0,0]],
+            # Z piece
+            [[0,0,0,0],
+            [6,6,0,0],
+            [0,6,6,0],
+            [0,0,0,0]],
+            # T piece
+            [[0,0,0,0],
+             [0,7,0,0],
+             [7,7,7,0],
+             [0,0,0,0]], ]
+        self.shape = self.shapes[type_index]
 
 class Tetris:
     def __init__(self, canvas, HEADLESS):
@@ -65,7 +65,7 @@ class Tetris:
         self.border_color = (105,105,105)
         self.screen = canvas
         self.players = get_active_players_for_game
-        self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12))
+        self.live_tetrominoe = None
         self.is_playing = True
         self.drop_interval_secs = 0.150
         self.drop_time_elapsed = 0
@@ -76,6 +76,7 @@ class Tetris:
         # Random grid for debug
         # self.dead_grid = [[random.randrange(0, len(self.colors)) for element in range(self.blocks_height)] for row in range(self.blocks_width)]
         self.dead_grid  = [[0 for element in range(self.blocks_height)] for row in range(self.blocks_width)]
+        self.spawn_tetrominoe()
 
     def draw_square(self, color_index, position):
         pygame.draw.rect(self.screen, self.colors[color_index], (position[0], position[1], self.block_size, self.block_size))
@@ -87,7 +88,9 @@ class Tetris:
         pygame.draw.rect(self.screen, self.border_color, (x_right, 0, self.border_thickness, 1000,))
 
     def spawn_tetrominoe(self):
-        self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12)) # Switch to 7 bag method later
+        piece_width = Tetrominoe.width
+        self.live_tetrominoe = Tetrominoe(random.randrange(0, len(self.colors)), position=((self.blocks_width - piece_width) // 2,12)) # Switch to 7 bag method later
+        print(f"Spawn at {self.live_tetrominoe.position}")
    
     def move_tetrominoe(self, offset):
         print(f"Current: {self.live_tetrominoe.position}")
