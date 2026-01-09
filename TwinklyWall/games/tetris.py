@@ -55,8 +55,6 @@ class Tetrominoe:
                               [7,7,7,0],
                               [0,0,0,0]]
 
-
-
 class Tetris:
     def __init__(self, canvas, HEADLESS):
         self.headless = HEADLESS
@@ -79,19 +77,75 @@ class Tetris:
         pygame.draw.rect(self.screen, self.colors[color_index], (position[0], position[1], self.block_size, self.block_size))
 
     def spawn_tetrominoe(self):
-        return Tetrominoe(random.randrange(0,6)) # Switch to 7 bag method later
+        self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12)) # Switch to 7 bag method later
    
-    def drop_tetrominoe(self):
-        if self.live_tetrominoe.position[1] < 0: # TODO: Better logic for reaching floor or coming up against another piece
-            self.live_tetrominoe.position = (self.live_tetrominoe.position[0],) + (12,)
-            return
-        self.live_tetrominoe.position = (self.live_tetrominoe.position[0],) + (self.live_tetrominoe.position[1] - 1,)
+    def move_tetrominoe(self, offset):
+        print(f"Current: {self.live_tetrominoe.position}")
+        new_position = (self.live_tetrominoe.position[0] + offset[0], self.live_tetrominoe.position[1] + offset[1])
+        print(f"New: {new_position}")
+        
+        if not self.check_move_validity(new_position):
+            self.lock_piece() # Temporary
+            return False
+        self.live_tetrominoe.position = new_position
 
-    def move_tetrominoe_left(self):
-        self.live_tetrominoe.position = (self.live_tetrominoe.position[0] - 1,) + (self.live_tetrominoe.position[1],)
+    def check_move_validity(self, test_postion) -> bool:
+        grid = self.dead_grid
+        pos = test_postion
 
-    def move_tetrominoe_right(self):
-        self.live_tetrominoe.position = (self.live_tetrominoe.position[0] + 1,) + (self.live_tetrominoe.position[1],)
+        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)): # TODO: Duplicate code from tick function. Find encapsulation method
+            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+                tetrominoe_cell_value = self.live_tetrominoe.shape[-local_y + 3][local_x] 
+                if tetrominoe_cell_value != 0: 
+                    if grid_x < 0 or grid_y < 0: 
+                        return False
+                    if grid[grid_x][grid_y] != 0:
+                        return False
+
+        return True
+
+    def lock_piece(self):
+        pos = self.live_tetrominoe.position
+        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):# TODO: Duplicate code. Find encapsulation
+            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+                tetrominoe_cell_value = self.live_tetrominoe.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
+                if tetrominoe_cell_value != 0:
+                    self.dead_grid[grid_x][grid_y] = tetrominoe_cell_value
+
+        self.spawn_tetrominoe()
+
+    def tick(self, delta_time): # Called in main
+        self.drop_time_elapsed += delta_time
+        if self.drop_time_elapsed >= self.drop_interval_secs:
+            self.move_tetrominoe(offset=(0,-1))
+            self.drop_time_elapsed = 0
+
+        if not self.headless:
+            self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
+            pygame.display.flip()
+
+        x_offset = self.screen.get_width() / self.block_size - self.blocks_width
+        y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
+        # Draw dead cells
+        grid = copy.deepcopy(self.dead_grid) # Perform deep copy
+        # Draw tetrominoe on top of dead_grid
+        pos = self.live_tetrominoe.position
+        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
+            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+                tetrominoe_cell_value = self.live_tetrominoe.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
+                if tetrominoe_cell_value != 0:
+                    grid[grid_x][grid_y] = tetrominoe_cell_value
+                
+        for x_index, row in enumerate(grid):
+            x_position = x_index + x_offset 
+            for y_index, value in enumerate(row): 
+                y_position = self.blocks_height - y_index + y_offset
+                color_index = grid[x_index][y_index]
+                pos = (x_position * self.block_size, y_position * self.block_size)
+                self.draw_square(color_index, pos)
+                
+    def begin_play(self): # Called in main
+        self.bind_input(self)   
 
     def bind_input(self, tetris):
         players = get_active_players_for_game("tetris")
@@ -115,11 +169,11 @@ class Tetris:
        
     def move_piece_left(self):
         log("LEFT", module="Tetris")
-        self.move_tetrominoe_left()
+        self.move_tetrominoe(offset=(-1,0))
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
-        self.move_tetrominoe_right()
+        self.move_tetrominoe(offset=(1,0))
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
@@ -129,39 +183,3 @@ class Tetris:
 
     def hard_drop_piece(self):
         log("HARD_DROP_PIECE", module="Tetris")
-
-    def begin_play(self): # Called in main
-        self.bind_input(self)     
-
-    def tick(self, delta_time): # Called in main
-        self.drop_time_elapsed += delta_time
-        if self.drop_time_elapsed >= self.drop_interval_secs:
-            self.drop_tetrominoe()
-            self.drop_time_elapsed = 0
-
-        if not self.headless:
-            self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
-            pygame.display.flip()
-
-        x_offset = self.screen.get_width() / self.block_size - self.blocks_width
-        y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
-        # Draw dead cells
-        grid = copy.deepcopy(self.dead_grid) # Perform deep copy
-        # Draw tetrominoe on top of dead_grid
-        pos = self.live_tetrominoe.position
-        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
-            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
-                tetrominoe_cell_value = self.live_tetrominoe.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
-                if tetrominoe_cell_value != 0:
-                    grid[grid_x][grid_y] = tetrominoe_cell_value
-                
-        for x_index, row in enumerate(grid):
-            x_position = x_index + x_offset 
-            for y_index, value in enumerate(row): 
-                y_position = self.blocks_height - y_index + y_offset
-                # print(f"y_position: {y_position}")
-                # print(f"y_index: {y_index}")
-                # self.screen.blit(self.block_images[grid[x_index][y_index]], (x_position * self.block_size, y_position * self.block_size))
-                color_index = grid[x_index][y_index]
-                pos = (x_position * self.block_size, y_position * self.block_size)
-                self.draw_square(color_index, pos)
