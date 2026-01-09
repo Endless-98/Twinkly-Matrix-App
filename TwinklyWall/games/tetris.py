@@ -193,9 +193,9 @@ class Tetris:
                             tetris.move_piece_left()
                         case "MOVE_RIGHT":
                             tetris.move_piece_right()
-                        case "ROTATE_CLOCKWISE":
+                        case "ROTATE_RIGHT":
                             tetris.rotate_clockwise()
-                        case "ROTATE_COUNTERCLOCKWISE":
+                        case "ROTATE_LEFT":
                             tetris.rotate_counterclockwise()
                         case "MOVE_DOWN":
                             tetris.hard_drop_piece()
