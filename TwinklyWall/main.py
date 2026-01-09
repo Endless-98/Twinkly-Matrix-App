@@ -93,7 +93,8 @@ def run_tetris(matrix, stop_event=None):
                     last_game_tick = current_time
                     last_tick_time = current_time  # Update for next delta calculation
                 except Exception as e:
-                    log(f"Error in tetris.tick(): {e}", level='ERROR', module="Tetris")
+                    import traceback
+                    log(f"Error in tetris.tick(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
             # Render frame (runs at RENDER_FPS)
@@ -115,7 +116,8 @@ def run_tetris(matrix, stop_event=None):
                         last_fps_time = now
 
                 except Exception as e:
-                    log(f"Error in matrix.render_frame(): {e}", level='ERROR', module="Tetris")
+                    import traceback
+                    log(f"Error in matrix.render_frame(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
             # Small sleep to prevent busy waiting
@@ -124,13 +126,15 @@ def run_tetris(matrix, stop_event=None):
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
-        log(f"Unexpected error in Tetris loop: {e}", level='ERROR', module="Tetris")
+        import traceback
+        log(f"Unexpected error in Tetris loop: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
     finally:
         log("🛑 Tetris game shutting down, cleaned {frame_count} frames, avg FPS should be ~20", module="Tetris")
         try:
             matrix.shutdown()
         except Exception as e:
-            log(f"Error during matrix shutdown: {e}", level='ERROR', module="Tetris")
+            import traceback
+            log(f"Error during matrix shutdown: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
         log("✅ Tetris game fully stopped", module="Tetris")
 
 
