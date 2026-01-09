@@ -61,7 +61,8 @@ class Tetris:
         self.blocks_width = 10
         self.blocks_height = 15 # Only 16.5 visible on matrix with current setup
         self.block_size = 3
-        self.border_thickness = 1
+        self.border_thickness = 2
+        self.border_color = (105,105,105)
         self.screen = canvas
         self.players = get_active_players_for_game
         self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12))
@@ -80,10 +81,10 @@ class Tetris:
         pygame.draw.rect(self.screen, self.colors[color_index], (position[0], position[1], self.block_size, self.block_size))
     
     def draw_border(self):
-        x_left = int(self.game_x_offset * self.block_size) - 1
+        x_left = int(self.game_x_offset * self.block_size) - self.border_thickness
         x_right = int(self.game_x_offset * self.block_size + (self.blocks_width * self.block_size))
-        pygame.draw.rect(self.screen, (75, 75, 75), (x_left, 0, self.border_thickness, 1000))
-        pygame.draw.rect(self.screen, (75, 75, 75), (x_right, 0, self.border_thickness, 1000))
+        pygame.draw.rect(self.screen, self.border_color, (x_left, 0, self.border_thickness, 1000,))
+        pygame.draw.rect(self.screen, self.border_color, (x_right, 0, self.border_thickness, 1000,))
 
     def spawn_tetrominoe(self):
         self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12)) # Switch to 7 bag method later
