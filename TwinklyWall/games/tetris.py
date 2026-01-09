@@ -86,8 +86,8 @@ class Tetris:
         self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
         self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
         # Random grid for debug
-        # self.dead_grid = [[random.randrange(0, len(self.colors)) for element in range(self.blocks_height)] for row in range(self.blocks_width)]
-        self.dead_grid  = [[0 for element in range(self.blocks_height)] for row in range(self.blocks_width)]
+        # self.dead_grid  = [[random.randrange(0, len(self.colors)) for element in range(self.blocks_width)] for row in range(self.blocks_height)]
+        self.dead_grid  = [[0 for element in range(self.blocks_width)] for row in range(self.blocks_height)]
         self.spawn_tetromino()
 
     def draw_square(self, color_index, position):
@@ -115,39 +115,48 @@ class Tetris:
         grid = self.dead_grid
         pos = test_postion
 
-        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)): # TODO: Duplicate code from tick function. Find encapsulation method
-            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
-                tetromino_cell_value = self.live_tetromino.shape[-local_y + 3][local_x] 
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)): # TODO: Duplicate code from tick function. Find encapsulation method
+                tetromino_cell_value = self.live_tetromino.shape[local_y][local_x] 
                 if tetromino_cell_value != 0: 
                     if grid_x < 0 or grid_y < 0: 
                         return False
-                    if grid[grid_x][grid_y] != 0:
+                    if grid[grid_y][grid_x] != 0:
                         return False
-
         return True
 
-    def rotate_tetromino(self):
+    def rotate_tetromino(self, reverse = False):
         size = Tetromino.size
-        rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
-        for x, row in enumerate(self.live_tetromino.shape):
-            for y, cell in enumerate(row):
-                rotated_shape[y][x] = cell
-        for row in rotated_shape:
-            row = row.reverse()
-        self.live_tetromino.shape = rotated_shape
+
+        loops = 1 if not reverse else 3
+
+        for _ in range(loops): # This is the sloppy way. Refactor later
+            rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
+            for x, row in enumerate(self.live_tetromino.shape):
+                for y, cell in enumerate(row):
+                    rotated_shape[y][x] = cell
+            for row in rotated_shape:
+                row = row.reverse()
+            self.live_tetromino.shape = rotated_shape
 
     def lock_piece(self):
         pos = self.live_tetromino.position
-        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):# TODO: Duplicate code. Find encapsulation
-            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
                 tetromino_cell_value = self.live_tetromino.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
                 if tetromino_cell_value != 0:
-                    self.dead_grid[grid_x][grid_y] = tetromino_cell_value
+                    self.dead_grid[grid_y][grid_x] = tetromino_cell_value
 
         self.spawn_tetromino()
 
-    def tick(self, delta_time): # Called in main
+    def clear_lines(self):
+        grid = self.dead_grid
+        for y, row in enumerate(grid): 
+            if not 0 in row:
+                grid[y] = [0 for y in row]
+        # TODO: Add animation
 
+    def tick(self, delta_time): # Called in main
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval_secs:
             self.move_tetromino(offset=(0,-1))
@@ -157,24 +166,25 @@ class Tetris:
             self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
             pygame.display.flip()
 
-        # Draw dead cells
         grid = copy.deepcopy(self.dead_grid) # Perform deep copy
         # Draw tetromino on top of dead_grid
         pos = self.live_tetromino.position
-        for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
-            for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
                 tetromino_cell_value = self.live_tetromino.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
                 if tetromino_cell_value != 0:
-                    grid[grid_x][grid_y] = tetromino_cell_value
-                
-        for x_index, row in enumerate(grid):
-            x_position = x_index + self.game_x_offset 
-            for y_index, value in enumerate(row): 
-                y_position = self.blocks_height - y_index + self.game_y_offset
-                color_index = grid[x_index][y_index]
+                    grid[grid_y][grid_x] = tetromino_cell_value
+
+        # Draw grid
+        for y_index, column in enumerate(grid):
+            y_position = self.blocks_height - y_index + self.game_y_offset
+            for x_index, value in enumerate(column): 
+                x_position = x_index + self.game_x_offset 
+                color_index = grid[y_index][x_index]
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
         
+        self.clear_lines()
         self.draw_border()
 
                 
@@ -215,7 +225,7 @@ class Tetris:
 
     def rotate_counterclockwise(self):
         log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
-        self.rotate_tetromino()
+        self.rotate_tetromino(reverse=True)
 
     def hard_drop_piece(self):
         log("HARD_DROP_PIECE", module="Tetris")
