@@ -69,25 +69,14 @@ class Tetris:
         self.is_playing = True
         self.drop_interval_secs = 0.150
         self.drop_time_elapsed = 0
-        
-        # There is probably a more concise way to do this:
-        project_dir = Path(__file__).resolve().parent
-        assets_file_path = (str)(project_dir / "assets")
-        self.block_images = [pygame.image.load(assets_file_path + "/TetrisSquare_Empty.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_LightBlue.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Blue.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Orange.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Yellow.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Green.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Red.png"),
-            pygame.image.load(assets_file_path + "/TetrisSquare_Purple.png"),
-            ]
-        for index in range(len(self.block_images)):
-            self.block_images[index] = pygame.transform.scale(self.block_images[index], (self.block_size, self.block_size))
+        self.colors = [(0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
 
         # Random grid for debug
-        # self.dead_grid = [[random.randrange(0, len(self.block_images)) for element in range(self.blocks_height)] for row in range(self.blocks_width)]
+        # self.dead_grid = [[random.randrange(0, len(self.colors)) for element in range(self.blocks_height)] for row in range(self.blocks_width)]
         self.dead_grid  = [[0 for element in range(self.blocks_height)] for row in range(self.blocks_width)]
+
+    def draw_square(self, color_index, position):
+        pygame.draw.rect(self.screen, self.colors[color_index], (position[0], position[1], self.block_size, self.block_size))
 
     def spawn_tetrominoe(self):
         return Tetrominoe(random.randrange(0,6)) # Switch to 7 bag method later
@@ -172,5 +161,7 @@ class Tetris:
                 y_position = self.blocks_height - y_index + y_offset
                 # print(f"y_position: {y_position}")
                 # print(f"y_index: {y_index}")
-                self.screen.blit(self.block_images[grid[x_index][y_index]], (x_position * self.block_size, y_position * self.block_size))
-
+                # self.screen.blit(self.block_images[grid[x_index][y_index]], (x_position * self.block_size, y_position * self.block_size))
+                color_index = grid[x_index][y_index]
+                pos = (x_position * self.block_size, y_position * self.block_size)
+                self.draw_square(color_index, pos)
