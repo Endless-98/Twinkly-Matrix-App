@@ -107,8 +107,8 @@ class Tetris:
     def bind_input(self, tetris):
         players = get_active_players_for_game("tetris")
         for i, player in enumerate(players):
-            def make_input_handler(player_obj, payload):
-                def handle_tetris_input(self):
+            def make_input_handler(player_index=i):
+                def handle_tetris_input(player_obj, payload):
                     cmd = payload.get("cmd")
                     match cmd:
                         case "MOVE_LEFT":
