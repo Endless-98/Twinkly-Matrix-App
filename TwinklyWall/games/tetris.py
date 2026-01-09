@@ -14,7 +14,7 @@ import time
 
 class Tetrominoe:
     width = 4
-    
+
     def __init__(self, type_index, position = (0,0), rotation = 0):
         self.position = position
         self.shapes = [ [], # Empty piece
@@ -89,7 +89,7 @@ class Tetris:
 
     def spawn_tetrominoe(self):
         piece_width = Tetrominoe.width
-        self.live_tetrominoe = Tetrominoe(random.randrange(0, len(self.colors)), position=((self.blocks_width - piece_width) // 2,12)) # Switch to 7 bag method later
+        self.live_tetrominoe = Tetrominoe(random.randrange(1, len(self.colors)), position=((self.blocks_width - piece_width) // 2,12)) # Switch to 7 bag method later
         print(f"Spawn at {self.live_tetrominoe.position}")
    
     def move_tetrominoe(self, offset):
