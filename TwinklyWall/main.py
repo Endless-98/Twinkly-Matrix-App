@@ -21,6 +21,9 @@ if HEADLESS:
     os.environ['SDL_AUDIODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 
+# FPS/performance debug flag (off by default, enable via env or CLI)
+FPS_DEBUG = os.environ.get('TWINKLYWALL_FPS_DEBUG', '').lower() in ('1', 'true', 'yes')
+
 # Import after setting environment variables
 from dotmatrix import DotMatrix
 from games.tetris import Tetris
@@ -59,7 +62,7 @@ def run_tetris(matrix, stop_event=None):
     render_interval = 1.0 / RENDER_FPS
 
     frame_count = 0
-    fps_check_interval = 100  # Log FPS every N frames
+    fps_check_interval = 100  # Log FPS every N frames (only when FPS_DEBUG)
     last_fps_time = time.time()
     last_game_tick = time.time()
     last_render = time.time()
@@ -107,8 +110,8 @@ def run_tetris(matrix, stop_event=None):
                     if frame_count == 1:
                         print("First frame rendered successfully")
 
-                    # Log actual FPS periodically
-                    if frame_count % fps_check_interval == 0:
+                    # Log actual FPS periodically (opt-in)
+                    if FPS_DEBUG and frame_count % fps_check_interval == 0:
                         now = time.time()
                         elapsed = now - last_fps_time
                         actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
@@ -179,7 +182,7 @@ def build_matrix(show_preview=True, fps=20):
         headless=HEADLESS,
         fpp_output=ON_PI,
         show_source_preview=show_windows,
-        enable_performance_monitor=True,
+        enable_performance_monitor=FPS_DEBUG,
         disable_blending=True,
         supersample=1,
         max_fps=fps,  # Explicitly set FPS cap
@@ -200,7 +203,12 @@ def main():
     parser.add_argument("--start", type=int, default=0, help="Start frame (video mode)")
     parser.add_argument("--end", type=int, default=None, help="End frame (exclusive, video mode)")
     parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")
+    parser.add_argument("--fps-debug", action="store_true", help="Enable FPS/performance debug logging")
     args = parser.parse_args()
+    # Apply CLI flag for FPS debug (overrides env when true)
+    global FPS_DEBUG
+    if args.fps_debug:
+        FPS_DEBUG = True
 
     # Install graceful shutdown for SIGTERM/SIGINT so systemd stops cleanly
     def _graceful_exit(signum, frame):
