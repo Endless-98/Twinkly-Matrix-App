@@ -92,10 +92,17 @@ class Tetris:
     def spawn_tetrominoe(self):
         return Tetrominoe(random.randrange(0,6)) # Switch to 7 bag method later
    
-    def drop_tetrominoe_once(self):
-        if self.live_tetrominoe.position[1] <= -10: # TODO: Better logic for reaching floor or coming up against another piece
+    def drop_tetrominoe(self):
+        if self.live_tetrominoe.position[1] < 0: # TODO: Better logic for reaching floor or coming up against another piece
+            self.live_tetrominoe.position = (self.live_tetrominoe.position[0],) + (12,)
             return
         self.live_tetrominoe.position = (self.live_tetrominoe.position[0],) + (self.live_tetrominoe.position[1] - 1,)
+
+    def move_tetrominoe_left(self):
+        self.live_tetrominoe.position = (self.live_tetrominoe.position[0] - 1,) + (self.live_tetrominoe.position[1],)
+
+    def move_tetrominoe_left(self):
+        self.live_tetrominoe.position = (self.live_tetrominoe.position[0] + 1,) + (self.live_tetrominoe.position[1],)
 
     def bind_input(self):
         players = get_active_players_for_game("tetris")
@@ -112,16 +119,18 @@ class Tetris:
                             self.rotate_clockwise()
                         case "ROTATE_COUNTERCLOCKWISE":
                             self.rotate_counterclockwise()
-                        case "HARD_DROP":
+                        case "MOVE_DOWN":
                             self.hard_drop_piece()
                 return on_input
             set_input_handler(player.player_id, make_input_handler())
        
     def move_piece_left(self):
         log("LEFT", module="Tetris")
+        move_tetrominoe_left()
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
+        move_tetrominoe_right()
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
@@ -138,7 +147,7 @@ class Tetris:
     def tick(self, delta_time): # Called in main
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval_secs:
-            self.drop_tetrominoe_once()
+            self.drop_tetrominoe()
             self.drop_time_elapsed = 0
 
         if not self.headless:
