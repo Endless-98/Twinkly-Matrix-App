@@ -61,6 +61,7 @@ class Tetris:
         self.blocks_width = 10
         self.blocks_height = 15 # Only 16.5 visible on matrix with current setup
         self.block_size = 3
+        self.border_thickness = 1
         self.screen = canvas
         self.players = get_active_players_for_game
         self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12))
@@ -69,12 +70,20 @@ class Tetris:
         self.drop_time_elapsed = 0
         self.colors = [(0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
 
+        self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
+        self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
         # Random grid for debug
         # self.dead_grid = [[random.randrange(0, len(self.colors)) for element in range(self.blocks_height)] for row in range(self.blocks_width)]
         self.dead_grid  = [[0 for element in range(self.blocks_height)] for row in range(self.blocks_width)]
 
     def draw_square(self, color_index, position):
         pygame.draw.rect(self.screen, self.colors[color_index], (position[0], position[1], self.block_size, self.block_size))
+    
+    def draw_border(self):
+        x_left = int(self.game_x_offset * self.block_size) - 1
+        x_right = int(self.game_x_offset * self.block_size + (self.blocks_width * self.block_size))
+        pygame.draw.rect(self.screen, (75, 75, 75), (x_left, 0, self.border_thickness, 1000))
+        pygame.draw.rect(self.screen, (75, 75, 75), (x_right, 0, self.border_thickness, 1000))
 
     def spawn_tetrominoe(self):
         self.live_tetrominoe = Tetrominoe(random.randrange(0,6), position=(0,12)) # Switch to 7 bag method later
@@ -115,6 +124,7 @@ class Tetris:
         self.spawn_tetrominoe()
 
     def tick(self, delta_time): # Called in main
+
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval_secs:
             self.move_tetrominoe(offset=(0,-1))
@@ -124,8 +134,6 @@ class Tetris:
             self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
             pygame.display.flip()
 
-        x_offset = self.screen.get_width() / self.block_size - self.blocks_width
-        y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
         # Draw dead cells
         grid = copy.deepcopy(self.dead_grid) # Perform deep copy
         # Draw tetrominoe on top of dead_grid
@@ -137,12 +145,15 @@ class Tetris:
                     grid[grid_x][grid_y] = tetrominoe_cell_value
                 
         for x_index, row in enumerate(grid):
-            x_position = x_index + x_offset 
+            x_position = x_index + self.game_x_offset 
             for y_index, value in enumerate(row): 
-                y_position = self.blocks_height - y_index + y_offset
+                y_position = self.blocks_height - y_index + self.game_y_offset
                 color_index = grid[x_index][y_index]
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
+        
+        self.draw_border()
+
                 
     def begin_play(self): # Called in main
         self.bind_input(self)   
