@@ -2,8 +2,8 @@
 
 # TODO
     # 7 Bag Draw
-    # Rotation
     # Soft and Hard drop
+    # Spinning into another piece
     # Proper locking at the right times
     # Add higher buffer ceiling
     # T-spin
@@ -67,8 +67,34 @@ class Tetromino:
              [0,0,0,0]], ]
         self.shape = self.shapes[type_index]
 
+class Random_Bag:
+    bag_size = 7
+    
+    def __init__(self):
+        self.contents = []
+        self.next_piece = 0
+        
+    def refill_bag(self):
+        new_bag = [i for i in range(1,self.bag_size + 1)]
+        random.shuffle(new_bag)
+        print(f"New bag: {new_bag}")
+        self.contents = new_bag
+        self.next_piece = self.contents.pop()
+    
+    def draw_piece(self) -> int:
+        if len(self.contents) <= 0:
+            self.refill_bag()
+
+        new_piece = self.next_piece
+        self.next_piece = self.contents.pop()
+        
+        print(f"Current bag: {self.contents}")
+        print(f"new piece: {new_piece}")
+        return new_piece
+
 class Tetris:
     def __init__(self, canvas, HEADLESS):
+        ### Settings ###
         self.headless = HEADLESS
         self.blocks_width = 10
         self.blocks_height = 15 # Only 16.5 visible on matrix with current setup
@@ -76,12 +102,18 @@ class Tetris:
         self.border_thickness = 2
         self.border_color = (105,105,105)
         self.screen = canvas
+
         self.players = get_active_players_for_game
         self.live_drop_tetromino = None
         self.is_playing = True
         self.drop_interval_secs = 0.350
         self.drop_time_elapsed = 0
+        self.max_lock_down_time = 0.500
+        self.down_time_elapsed = 0.0
+        self.max_moves_while_down = 0
+        self.moves_while_down = 0
         self.colors = [(0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
+        self.bag = Random_Bag()
 
         self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
         self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
@@ -101,8 +133,8 @@ class Tetris:
 
     def spawn_tetromino(self):
         piece_width = Tetromino.size
-        self.live_tetromino = Tetromino(random.randrange(1, len(self.colors)), position=((self.blocks_width - piece_width) // 2,12)) # Switch to 7 bag method later
-        # self.live_tetromino = Tetromino(3, position=((self.blocks_width - piece_width) // 2,12)) # Switch to 7 bag method later
+        piece_type = self.bag.draw_piece()
+        self.live_tetromino = Tetromino(piece_type, position=((self.blocks_width - piece_width) // 2,12))
    
     def move_tetromino(self, offset:()):
         new_position = (self.live_tetromino.position[0] + offset[0], self.live_tetromino.position[1] + offset[1])
