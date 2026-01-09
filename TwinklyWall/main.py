@@ -239,6 +239,13 @@ def main():
                     # Start Tetris if players just joined and no game is running
                     if current_count > 0 and last_player_count == 0 and (not tetris_thread or not tetris_thread.is_alive()):
                         log(f"🎮 {current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
+                        # Stop any active video playback managed by the API server
+                        try:
+                            from api_server import stop_current_playback
+                            stop_current_playback()
+                            log("🔇 Stopped active video playback before starting game", module="TetrisMonitor")
+                        except Exception as e:
+                            log(f"Error stopping video playback: {e}", level='ERROR', module="TetrisMonitor")
                         matrix = build_matrix(show_preview=False)  # API mode doesn't show windows
                         stop_event = threading.Event()
                         tetris_thread = threading.Thread(
