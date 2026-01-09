@@ -164,7 +164,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               // Bottom Left: Move Left
               Positioned(
                 left: 20,
-                bottom: 40,
+                bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_back,
                   color: Colors.blue,
@@ -177,7 +177,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               // Above Left: Rotate Left
               Positioned(
                 left: 40,
-                bottom: 200,
+                bottom: 280,
                 child: _TetrisButton(
                   icon: Icons.rotate_left,
                   color: Colors.cyan,
@@ -189,7 +189,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               // Bottom Right: Move Right
               Positioned(
                 right: 20,
-                bottom: 40,
+                bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_forward,
                   color: Colors.green,
@@ -202,7 +202,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               // Above Right: Rotate Right
               Positioned(
                 right: 40,
-                bottom: 200,
+                bottom: 280,
                 child: _TetrisButton(
                   icon: Icons.rotate_right,
                   color: Colors.pink,

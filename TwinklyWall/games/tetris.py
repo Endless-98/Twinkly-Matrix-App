@@ -128,14 +128,13 @@ class Tetris:
 
     def rotate_tetromino(self):
         size = Tetromino.size
-        new_shape = [[0 for _ in range(size)] for _ in range(size)]
-        
+        rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
         for x, row in enumerate(self.live_tetromino.shape):
             for y, cell in enumerate(row):
-                new_shape[y][x] = cell
-        for row in new_shape:
+                rotated_shape[y][x] = cell
+        for row in rotated_shape:
             row = row.reverse()
-        self.live_tetromino.shape = new_shape
+        self.live_tetromino.shape = rotated_shape
 
     def lock_piece(self):
         pos = self.live_tetromino.position
