@@ -121,7 +121,7 @@ class Tetris:
                             self.rotate_counterclockwise()
                         case "MOVE_DOWN":
                             self.hard_drop_piece()
-                return on_input
+                return handle_tetris_input
             set_input_handler(player.player_id, make_input_handler())
        
     def move_piece_left(self):
