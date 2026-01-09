@@ -101,7 +101,7 @@ class Tetris:
     def move_tetrominoe_left(self):
         self.live_tetrominoe.position = (self.live_tetrominoe.position[0] - 1,) + (self.live_tetrominoe.position[1],)
 
-    def move_tetrominoe_left(self):
+    def move_tetrominoe_right(self):
         self.live_tetrominoe.position = (self.live_tetrominoe.position[0] + 1,) + (self.live_tetrominoe.position[1],)
 
     def bind_input(self):
@@ -142,7 +142,7 @@ class Tetris:
         log("HARD_DROP_PIECE", module="Tetris")
 
     def begin_play(self): # Called in main
-        pass        
+        bind_input()     
 
     def tick(self, delta_time): # Called in main
         self.drop_time_elapsed += delta_time
