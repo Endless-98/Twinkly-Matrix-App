@@ -104,23 +104,23 @@ class Tetris:
     def move_tetrominoe_right(self):
         self.live_tetrominoe.position = (self.live_tetrominoe.position[0] + 1,) + (self.live_tetrominoe.position[1],)
 
-    def bind_input(self):
+    def bind_input(self, tetris):
         players = get_active_players_for_game("tetris")
         for i, player in enumerate(players):
-            def make_input_handler(player_index=i):
+            def make_input_handler(player_obj, payload):
                 def handle_tetris_input(self):
                     cmd = payload.get("cmd")
                     match cmd:
                         case "MOVE_LEFT":
-                            self.move_piece_left()
+                            tetris.move_piece_left()
                         case "MOVE_RIGHT":
-                            self.move_piece_right()
+                            tetris.move_piece_right()
                         case "ROTATE_CLOCKWISE":
-                            self.rotate_clockwise()
+                            tetris.rotate_clockwise()
                         case "ROTATE_COUNTERCLOCKWISE":
-                            self.rotate_counterclockwise()
+                            tetris.rotate_counterclockwise()
                         case "MOVE_DOWN":
-                            self.hard_drop_piece()
+                            tetris.hard_drop_piece()
                 return handle_tetris_input
             set_input_handler(player.player_id, make_input_handler())
        
@@ -142,7 +142,7 @@ class Tetris:
         log("HARD_DROP_PIECE", module="Tetris")
 
     def begin_play(self): # Called in main
-        self.bind_input()     
+        self.bind_input(self)     
 
     def tick(self, delta_time): # Called in main
         self.drop_time_elapsed += delta_time
