@@ -127,7 +127,6 @@ class Tetris:
 
     def rotate_tetromino(self, reverse = False):
         size = Tetromino.size
-
         loops = 1 if not reverse else 3
 
         for _ in range(loops): # This is the sloppy way. Refactor later
@@ -150,10 +149,14 @@ class Tetris:
         self.spawn_tetromino()
 
     def clear_lines(self):
-        grid = self.dead_grid
-        for y, row in enumerate(grid): 
-            if not 0 in row:
-                grid[y] = [0 for y in row]
+        lines_cleared = 0 
+        for y, row in enumerate(self.dead_grid): 
+            inverse_y = self.blocks_height - y
+            if not 0 in row: # Row is full
+                self.dead_grid.pop(y)
+                self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
+        
+                    
         # TODO: Add animation
 
     def tick(self, delta_time): # Called in main
