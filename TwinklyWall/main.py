@@ -50,11 +50,21 @@ def run_tetris(matrix, stop_event=None):
     canvas_height = (matrix.height) * matrix.supersample  # 50 * 2 = 100px tall
     canvas = pygame.Surface((canvas_width, canvas_height))
     tetris = Tetris(canvas, HEADLESS)
+    tetris.begin_play()
+
+    # Game timing constants
+    GAME_TICK_RATE = 60  # Game logic updates per second
+    RENDER_FPS = 20      # Display refresh rate
+    game_tick_interval = 1.0 / GAME_TICK_RATE
+    render_interval = 1.0 / RENDER_FPS
 
     frame_count = 0
     fps_check_interval = 100  # Log FPS every N frames
     last_fps_time = time.time()
-    
+    last_game_tick = time.time()
+    last_render = time.time()
+    last_tick_time = time.time()  # Track time for delta time calculation
+
     try:
         log("▶️ Tetris game loop started", module="Tetris")
         while True:
@@ -62,45 +72,55 @@ def run_tetris(matrix, stop_event=None):
             if stop_event is not None and stop_event.is_set():
                 log("⏹️  Stop signal received, exiting Tetris loop", module="Tetris")
                 break
-            
+
+            current_time = time.time()
+
             if not HEADLESS:
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         log("Quit event received", module="Tetris")
                         break
-            
-            # Check again before rendering (in case stop was set during tick)
+
+            # Check again before operations (in case stop was set during event handling)
             if stop_event is not None and stop_event.is_set():
                 break
-                
-            try:
-                tetris.tick()
-            except Exception as e:
-                log(f"Error in tetris.tick(): {e}", level='ERROR', module="Tetris")
-                break
-            
-            # Check again before rendering
-            if stop_event is not None and stop_event.is_set():
-                break
-                
-            try:
-                matrix.render_frame(canvas)
-            except Exception as e:
-                log(f"Error in matrix.render_frame(): {e}", level='ERROR', module="Tetris")
-                break
-            
-            frame_count += 1
-            if frame_count == 1:
-                print("First frame rendered successfully")
-            
-            # Log actual FPS periodically
-            if frame_count % fps_check_interval == 0:
-                now = time.time()
-                elapsed = now - last_fps_time
-                actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
-                log(f"📊 Tetris FPS: {actual_fps:.1f} (frame {frame_count})", module="Tetris")
-                last_fps_time = now
-                
+
+            # Game logic tick (runs at GAME_TICK_RATE)
+            if current_time - last_game_tick >= game_tick_interval:
+                delta_time = current_time - last_tick_time  # Calculate time since last tick
+                try:
+                    tetris.tick(delta_time)  # Pass delta time to tick method
+                    last_game_tick = current_time
+                    last_tick_time = current_time  # Update for next delta calculation
+                except Exception as e:
+                    log(f"Error in tetris.tick(): {e}", level='ERROR', module="Tetris")
+                    break
+
+            # Render frame (runs at RENDER_FPS)
+            if current_time - last_render >= render_interval:
+                try:
+                    matrix.render_frame(canvas)
+                    frame_count += 1
+                    last_render = current_time
+
+                    if frame_count == 1:
+                        print("First frame rendered successfully")
+
+                    # Log actual FPS periodically
+                    if frame_count % fps_check_interval == 0:
+                        now = time.time()
+                        elapsed = now - last_fps_time
+                        actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
+                        log(f"📊 Tetris FPS: {actual_fps:.1f} (frame {frame_count})", module="Tetris")
+                        last_fps_time = now
+
+                except Exception as e:
+                    log(f"Error in matrix.render_frame(): {e}", level='ERROR', module="Tetris")
+                    break
+
+            # Small sleep to prevent busy waiting
+            time.sleep(0.001)
+
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
