@@ -150,12 +150,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
             children: [
               // Center: Fast Drop button
               Positioned(
-                left: screenWidth * 0.5 - 60,
+                left: screenWidth * 0.5 - 80,
                 bottom: screenHeight * 0.35,
                 child: _TetrisButton(
                   icon: Icons.arrow_downward,
                   color: Colors.orange,
-                  size: 120,
+                  size: 160,
                   onPressed: () => _sendCommand('MOVE_DOWN'),
                   onHeld: () => _sendCommand('HARD_DROP'),
                 ),
@@ -163,12 +163,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Bottom Left: Move Left
               Positioned(
-                left: 20,
+                left: 10,
                 bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_back,
                   color: Colors.blue,
-                  size: 140,
+                  size: 180,
                   onPressed: () => _sendCommand('MOVE_LEFT'),
                   onHeld: () => _sendCommand('MOVE_LEFT_HELD'),
                 ),
@@ -176,24 +176,24 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Above Left: Rotate Left
               Positioned(
-                left: 40,
+                left: 20,
                 bottom: 280,
                 child: _TetrisButton(
                   icon: Icons.rotate_left,
                   color: Colors.cyan,
-                  size: 100,
+                  size: 140,
                   onPressed: () => _sendCommand('ROTATE_LEFT'),
                 ),
               ),
               
               // Bottom Right: Move Right
               Positioned(
-                right: 20,
+                right: 10,
                 bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_forward,
                   color: Colors.green,
-                  size: 140,
+                  size: 180,
                   onPressed: () => _sendCommand('MOVE_RIGHT'),
                   onHeld: () => _sendCommand('MOVE_RIGHT_HELD'),
                 ),
@@ -201,12 +201,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Above Right: Rotate Right
               Positioned(
-                right: 40,
+                right: 20,
                 bottom: 280,
                 child: _TetrisButton(
                   icon: Icons.rotate_right,
                   color: Colors.pink,
-                  size: 100,
+                  size: 140,
                   onPressed: () => _sendCommand('ROTATE_RIGHT'),
                 ),
               ),
