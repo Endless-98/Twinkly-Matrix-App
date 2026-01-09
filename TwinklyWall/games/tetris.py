@@ -126,11 +126,11 @@ class Tetris:
        
     def move_piece_left(self):
         log("LEFT", module="Tetris")
-        move_tetrominoe_left()
+        self.move_tetrominoe_left()
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
-        move_tetrominoe_right()
+        self.move_tetrominoe_right()
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
