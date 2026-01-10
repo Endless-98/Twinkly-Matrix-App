@@ -67,6 +67,8 @@ def run_tetris(matrix, stop_event=None):
     last_game_tick = time.time()
     last_render = time.time()
     last_tick_time = time.time()  # Track time for delta time calculation
+    last_frame_time = time.time()
+    current_fps = RENDER_FPS
 
     try:
         log("▶️ Tetris game loop started", module="Tetris")
@@ -92,7 +94,7 @@ def run_tetris(matrix, stop_event=None):
             if current_time - last_game_tick >= game_tick_interval:
                 delta_time = current_time - last_tick_time  # Calculate time since last tick
                 try:
-                    tetris.tick(delta_time)  # Pass delta time to tick method
+                    tetris.tick(delta_time, current_fps)  # Pass delta time and current FPS to tick method
                     last_game_tick = current_time
                     last_tick_time = current_time  # Update for next delta calculation
                 except Exception as e:
@@ -105,6 +107,10 @@ def run_tetris(matrix, stop_event=None):
                 try:
                     matrix.render_frame(canvas)
                     frame_count += 1
+                    render_delta = current_time - last_frame_time
+                    if render_delta > 0:
+                        current_fps = 1.0 / render_delta
+                    last_frame_time = current_time
                     last_render = current_time
 
                     if frame_count == 1:
