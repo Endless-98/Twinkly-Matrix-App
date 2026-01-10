@@ -339,6 +339,8 @@ class Tetris:
 
 
     def lock_piece(self):
+        self.move_tetromino(offset=(0, -1))
+
         pos = self.live_tetromino.grid_position
         size = self.get_size(self.live_tetromino.type_index)
 
