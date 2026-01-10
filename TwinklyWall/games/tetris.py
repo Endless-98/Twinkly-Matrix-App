@@ -110,7 +110,8 @@ class Tetris:
         self.drop_time_elapsed = 0
         self.max_lock_down_time = 0.500
         self.down_time_elapsed = 0.0
-        self.max_moves_while_down = 0
+        self.is_down = False
+        self.max_moves_while_down = 15
         self.moves_while_down = 0
         self.colors = [(0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
         self.bag = Random_Bag()
@@ -136,12 +137,12 @@ class Tetris:
         piece_type = self.bag.draw_piece()
         self.live_tetromino = Tetromino(piece_type, position=((self.blocks_width - piece_width) // 2,12))
    
-    def move_tetromino(self, offset:()):
+    def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.position[0] + offset[0], self.live_tetromino.position[1] + offset[1])
         if not self.check_move_validity(new_position):
-            self.lock_piece() # Temporary
             return False
         self.live_tetromino.position = new_position
+        return True
 
     def check_move_validity(self, test_postion : ()) -> bool:
         grid = self.dead_grid
@@ -192,9 +193,22 @@ class Tetris:
         # TODO: Add animation
 
     def tick(self, delta_time): # Called in main
+        if self.is_down:
+            print(f"down_time_elapsed: {self.down_time_elapsed}")
+            self.down_time_elapsed += delta_time
+        else:
+            self.down_time_elapsed = 0
+        if self.down_time_elapsed >= self.max_lock_down_time:
+            print("Lock piece")
+            self.lock_piece()
+            self.down_time_elapsed = 0
+            self.is_down = False
+
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval_secs:
-            self.move_tetromino(offset=(0,-1))
+            down_offset = (0,-1)
+            self.is_down = not self.move_tetromino(down_offset)
+            print(f"is down: {self.is_down}")
             self.drop_time_elapsed = 0
 
         if not self.headless:
