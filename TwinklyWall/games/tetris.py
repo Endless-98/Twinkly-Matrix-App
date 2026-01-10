@@ -102,7 +102,7 @@ class Tetris:
         ### Settings ###
         self.headless = HEADLESS
         self.blocks_width = 10
-        self.blocks_height = 15 # Only 16.5 visible on matrix with current setup
+        self.blocks_height = 25 # Only 16.5 visible on matrix with current setup
         self.block_size = 3
         self.border_thickness = 2
         self.border_color = (105,105,105)
