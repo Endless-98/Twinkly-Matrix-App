@@ -1,17 +1,15 @@
 # All code in this file must be handwritten! No AI allowed!
 
 # TODO
-    # Soft and Hard drop
+    # Hard drop
     # Ghost piece
-    # Spinning into another piece
     # Super Rotation System 
         # (also known as SRS) specifies tetromino rotation and wall kicks. SRS defines 5 points of rotation, each with a different purpose.
-        # Visual rotation - The natural rotation of a tetromino.
+        # Visual rotation - The natural rotation of a tetromino. 
         # Right/Left wall kick - Kick off an obstruction on the right or left.
         # Floor kick - Kick off the floor, for when a tetromino has landed. Without kicks no rotation would be possible in some cases.
         # Out of right well kick - If a tetromino is in a well, it can be rotated out.
         # Out of left well kick - If a tetromino is in a well, it can be rotated out.
-    # Add higher buffer ceiling
     # T-spin
     # Scoring
         # Scoring system, including Back-to-Back recognition rules
@@ -88,7 +86,7 @@ class Random_Bag:
         if self.next_piece == None: # Should happen only on the first bag fill 
             self.next_piece = self.contents.pop()
     
-    def draw_piece(self) -> int:
+    def pull_piece(self) -> int:
         if len(self.contents) <= 0:
             self.refill_bag()
 
@@ -105,7 +103,7 @@ class Tetris:
         ### Settings ###
         self.headless = HEADLESS
         self.blocks_width = 10
-        self.blocks_height = 15 # Only 16.5 visible on matrix with current setup
+        self.blocks_height = 25 # Only 16.5 visible on matrix with current setup
         self.block_size = 3
         self.border_thickness = 2
         self.border_color = (105,105,105)
@@ -150,8 +148,8 @@ class Tetris:
 
     def spawn_tetromino(self):
         piece_width = Tetromino.size
-        piece_type = self.bag.draw_piece()
-        self.live_tetromino = Tetromino(piece_type, position=((self.blocks_width - piece_width) // 2,12))
+        piece_type = self.bag.pull_piece()
+        self.live_tetromino = Tetromino(piece_type, position=((self.blocks_width - piece_width) // 2, self.blocks_height - Tetromino.size))
    
     def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.position[0] + offset[0], self.live_tetromino.position[1] + offset[1])
