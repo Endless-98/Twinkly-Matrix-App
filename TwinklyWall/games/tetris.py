@@ -135,8 +135,8 @@ class Tetris:
         return size
 
     def calc_gravity(self): # TODO: Call every level change
-        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
-        # self.gravity = 3
+        # self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+        self.gravity = 3
 
     def drop_tetromino_by_gravity(self, fps):
         frame_adjusted_gravity = self.gravity / fps
@@ -147,8 +147,11 @@ class Tetris:
         height_grid_delta = int(numpy.floor(height_precise_delta))
         if height_grid_delta > 0:
             for _ in range(height_grid_delta):
-                # self.rotate_tetromino() # For debug only
-                self.is_down = not self.move_tetromino(offset=(0, -1))
+                if not self.move_tetromino(offset=(0, -1)):
+                    self.is_down = True
+                if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
+                    self.is_down = False
+                self.rotate_tetromino() # For debug only
                 print("Drop")
                 # self.move_tetromino(offset=(-1, 0))
 
@@ -352,8 +355,12 @@ class Tetris:
         self.moves_while_down = 0
         self.is_down = False
 
-    def moved(self):
+    def moved(self, wants_to_lock = False):
         if self.is_down:
+            if wants_to_lock:
+                self.lock_piece()
+                return
+
             if self.moves_while_down < self.max_moves_while_down:
                 self.moves_while_down += 1
                 self.down_time_elapsed = 0
@@ -475,10 +482,10 @@ class Tetris:
     def drop_piece(self):
         log("MOVE_DOWN", module="Tetris")
         self.move_tetromino(offset=(0,-1))
-        self.moved()
+        self.moved(wants_to_lock=true)
 
     def hard_drop_piece(self):
         log("HARD_DROP", module="Tetris")
         for _ in range(self.blocks_height):
             self.move_tetromino(offset=(0,-1))
-            self.moved()
+            self.moved(wants_to_lock=true)
