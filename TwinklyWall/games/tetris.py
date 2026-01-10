@@ -198,7 +198,7 @@ class Tetris:
             for local_x, grid_x in enumerate(range(test_postion[0], test_postion[0] + size)): # TODO: Duplicate code from tick function. Find encapsulation method
                 tetromino_cell_value = self.live_tetromino.shape[-local_y + size - 1][local_x]
                 if tetromino_cell_value != 0: 
-                    if grid_x < 0 or grid_y < 0 or grid_x > self.blocks_width or grid_y > self.blocks_height: 
+                    if grid_x < 0 or grid_y < 0 or grid_x >= self.blocks_width or grid_y > self.blocks_height: 
                         return False
                     if grid[grid_y][grid_x] != 0:
                         return False
