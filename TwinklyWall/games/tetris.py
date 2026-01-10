@@ -5,6 +5,13 @@
     # Ghost piece
     # Show next piece
     # Spinning into another piece
+    # Super Rotation System 
+        # (also known as SRS) specifies tetromino rotation and wall kicks. SRS defines 5 points of rotation, each with a different purpose.
+        # Visual rotation - The natural rotation of a tetromino.
+        # Right/Left wall kick - Kick off an obstruction on the right or left.
+        # Floor kick - Kick off the floor, for when a tetromino has landed. Without kicks no rotation would be possible in some cases.
+        # Out of right well kick - If a tetromino is in a well, it can be rotated out.
+        # Out of left well kick - If a tetromino is in a well, it can be rotated out.
     # Add higher buffer ceiling
     # T-spin
     # Scoring
@@ -295,7 +302,9 @@ class Tetris:
                         case "ROTATE_LEFT":
                             tetris.rotate_counterclockwise()
                         case "MOVE_DOWN":
-                            tetris.hard_drop_piece()
+                            tetris.drop_piece()
+                        case "HARD_DROP":
+                            tetris.drop_piece()
                 return handle_tetris_input
             set_input_handler(player.player_id, make_input_handler())
        
@@ -319,5 +328,13 @@ class Tetris:
         self.rotate_tetromino(reverse=True)
         self.moved()
 
+    def drop_piece(self):
+        log("MOVE_DOWN", module="Tetris")
+        self.move_tetromino(offset=(0,-1))
+        self.moved()
+
     def hard_drop_piece(self):
-        log("HARD_DROP_PIECE", module="Tetris")
+        log("HARD_DROP", module="Tetris")
+        for _ in range(self.blocks_height)
+            self.move_tetromino(offset=(0,-1))
+        self.moved()
