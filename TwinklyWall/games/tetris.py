@@ -139,6 +139,7 @@ class Tetris:
    
     def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.position[0] + offset[0], self.live_tetromino.position[1] + offset[1])
+
         if not self.check_move_validity(new_position):
             return False
         self.live_tetromino.position = new_position
@@ -161,7 +162,6 @@ class Tetris:
     def rotate_tetromino(self, reverse = False):
         size = Tetromino.size
         loops = 1 if not reverse else 3
-
         for _ in range(loops): # This is the sloppy way. Refactor later
             rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
             for x, row in enumerate(self.live_tetromino.shape):
@@ -181,6 +181,21 @@ class Tetris:
 
         self.spawn_tetromino()
 
+    def reset_down(self):
+        self.down_time_elapsed = 0
+        self.moves_while_down = 0
+        self.is_down = False
+
+
+    def moved(self):
+        if self.is_down:
+            if self.moves_while_down < self.max_moves_while_down:
+                self.moves_while_down += 1
+                self.down_time_elapsed = 0
+                print("Move input")
+            else:
+                self.lock_piece()
+
     def clear_lines(self):
         lines_cleared = 0 
         for y, row in enumerate(self.dead_grid): 
@@ -192,25 +207,7 @@ class Tetris:
                     
         # TODO: Add animation
 
-    def tick(self, delta_time): # Called in main
-        if self.is_down:
-            print(f"down_time_elapsed: {self.down_time_elapsed}")
-            self.down_time_elapsed += delta_time
-        else:
-            self.down_time_elapsed = 0
-        if self.down_time_elapsed >= self.max_lock_down_time:
-            print("Lock piece")
-            self.lock_piece()
-            self.down_time_elapsed = 0
-            self.is_down = False
-
-        self.drop_time_elapsed += delta_time
-        if self.drop_time_elapsed >= self.drop_interval_secs:
-            down_offset = (0,-1)
-            self.is_down = not self.move_tetromino(down_offset)
-            print(f"is down: {self.is_down}")
-            self.drop_time_elapsed = 0
-
+    def draw_grid(self):
         if not self.headless:
             self.screen.fill((35,35,35)) # Help the preview pixels to stand out from the black background
             pygame.display.flip()
@@ -232,7 +229,29 @@ class Tetris:
                 color_index = grid[y_index][x_index]
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
-        
+
+    def tick(self, delta_time): # Called in main
+        if self.is_down:
+            print(f"down_time_elapsed: {self.down_time_elapsed}")
+            self.down_time_elapsed += delta_time
+        if self.down_time_elapsed >= self.max_lock_down_time:
+            self.down_time_elapsed = 0
+            
+            print("Lock piece")
+            self.lock_piece()
+            self.reset_down()
+
+        self.drop_time_elapsed += delta_time
+        if self.drop_time_elapsed >= self.drop_interval_secs:
+            self.drop_time_elapsed = 0
+
+            down_offset = (0,-1)
+            self.is_down = not self.move_tetromino(down_offset)
+            print(f"is down: {self.is_down}")
+            if not self.is_down:
+                self.reset_down()
+
+        self.draw_grid()
         self.clear_lines()
         self.draw_border()
 
@@ -263,18 +282,22 @@ class Tetris:
     def move_piece_left(self):
         log("LEFT", module="Tetris")
         self.move_tetromino(offset=(-1,0))
+        self.moved()
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
         self.move_tetromino(offset=(1,0))
+        self.moved()
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
         self.rotate_tetromino()
+        self.moved()
 
     def rotate_counterclockwise(self):
         log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
         self.rotate_tetromino(reverse=True)
+        self.moved()
 
     def hard_drop_piece(self):
         log("HARD_DROP_PIECE", module="Tetris")
