@@ -45,7 +45,7 @@ class Tetris:
         self.is_down = False
         self.max_moves_while_down = 15
         self.moves_while_down = 0
-        self.colors = [(0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
+        self.colors = [(0,0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
         self.bag = Random_Bag()
 
         self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
@@ -81,7 +81,11 @@ class Tetris:
         self.accumulated_gravity = height_precise_delta - height_grid_delta
 
     def draw_square(self, color_index, position, opacity = 255):
-        pygame.draw.rect(self.screen, (*self.colors[color_index], opacity), (position[0], position[1], self.block_size, self.block_size))
+        color = self.colors[color_index]
+        if (color_index > 0):
+            color = (*color, opacity)
+        
+        pygame.draw.rect(self.screen, color, (position[0], position[1], self.block_size, self.block_size))
     
     def draw_border(self):
         x_left = int(self.game_x_offset * self.block_size) - self.border_thickness
@@ -101,11 +105,12 @@ class Tetris:
         type_index = self.live_tetromino.type_index
         pos = self.live_tetromino.grid_position
         rotation = self.live_tetromino.rotation
-        opacity = 88
+        opacity = 44
         ghost_piece = Tetromino(type_index, pos, self.live_tetromino.rotation)
         for y in range(pos[1], -2, -1): # Should be 0, not -2. Dunno what's happening here...
             pos = (pos[0], y)
             if not self.check_move_validity(pos):
+                pos = (pos[0], y + 1)
                 break
         self.draw_tetromino(pos, type_index, opacity)
 
@@ -263,10 +268,10 @@ class Tetris:
 
         self.drop_tetromino_by_gravity(fps)
         self.draw_grid()
+        self.draw_ghost_piece()
         self.clear_lines()
         self.draw_border()
         self.draw_tetromino()
-        self.draw_ghost_piece()
         self.draw_next_piece_preview()
                 
     def begin_play(self): # Called in main
