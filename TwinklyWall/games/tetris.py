@@ -33,38 +33,38 @@ import time
 
 class Tetromino:
     size = 4
-    shapes = [ [], # Empty piece
-                # I piece
+    shapes = [ [], # Empty piece (0)
+                # I piece (1)
                 [[0,0,0,0],
                 [0,0,0,0],
                 [1,1,1,1],
                 [0,0,0,0]],
-                # J piece
+                # J piece (2)
                 [[0,0,0,0],
                 [2,0,0,0],
                 [2,2,2,0],
                 [0,0,0,0]],
-                # L piece
+                # L piece (3)
                 [[0,0,0,0],
                 [0,0,0,3],
                 [0,3,3,3],
                 [0,0,0,0]],
-                # O piece
+                # O piece (4)
                 [[0,0,0,0],
                 [0,4,4,0],
                 [0,4,4,0],
                 [0,0,0,0]],
-                # S piece
+                # S piece (5)
                 [[0,0,0,0],
                 [0,0,5,5],
                 [0,5,5,0],
                 [0,0,0,0]],
-                # Z piece
+                # Z piece (6)
                 [[0,0,0,0],
                 [6,6,0,0],
                 [0,6,6,0],
                 [0,0,0,0]],
-                # T piece
+                # T piece (7)
                 [[0,0,0,0],
                 [0,7,0,0],
                 [7,7,7,0],
@@ -79,14 +79,15 @@ class Random_Bag:
     
     def __init__(self):
         self.contents = []
-        self.next_piece = 0
+        self.next_piece = None
         
     def refill_bag(self):
         new_bag = [i for i in range(1,self.bag_size + 1)]
         random.shuffle(new_bag)
         print(f"New bag: {new_bag}")
         self.contents = new_bag
-        self.next_piece = self.contents.pop()
+        if self.next_piece == None: # Should happen only on the first bag fill 
+            self.next_piece = self.contents.pop()
     
     def draw_piece(self) -> int:
         if len(self.contents) <= 0:
@@ -96,7 +97,8 @@ class Random_Bag:
         self.next_piece = self.contents.pop()
         
         print(f"Current bag: {self.contents}")
-        print(f"new piece: {new_piece}")
+        print(f"Current piece: {new_piece}")
+        print(f"Next piece: {self.next_piece}")
         return new_piece
 
 class Tetris:
