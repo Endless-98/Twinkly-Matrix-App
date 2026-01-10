@@ -147,7 +147,7 @@ class Tetris:
         if height_grid_delta > 0:
             for _ in range(height_grid_delta):
                 self.is_down = not self.move_tetromino(offset=(0, -1))
-            # self.rotate_tetromino()
+            # self.rotate_tetromino() # For debug only
 
         if not self.is_down:
             self.reset_down()
@@ -199,19 +199,37 @@ class Tetris:
                         return False
         return True
 
-    def rotate_tetromino(self, reverse = False) -> bool:
+    def rotate_tetromino(self, clockwise = True) -> bool:
         if self.live_tetromino.type_index == 4: # O (square) piece doesn't rotate
             return
 
-        loops = 1 if not reverse else 3
+        loops = 1 if clockwise else 3 # Three rights make a left
         initial_shape = self.live_tetromino.shape
-        for _ in range(loops): # This is the sloppy way. Refactor later
-            self.rotate_tetromino_clockwise()
+        for _ in range(loops): # This is the sloppy way to turn counter-clockwise. Refactor later
+            self.attempt_rotate_tetromino_clockwise()
 
         if self.check_move_validity(test_shape=self.live_tetromino.shape):
             return True
-        
-    def rotate_tetromino_clockwise(self):
+        # Else we are inside something:
+        if clockwise: # Clockwise
+            if self.move_tetromino(test_postion=(-1,0)):
+                return True
+            if self.move_tetromino(test_postion=(0,-2)):
+                return True
+            if self.move_tetromino(test_postion=(-1,2)):
+                return True
+        else: # Counter-clockwise
+            if self.move_tetromino(test_postion=(1,0)):
+                return True
+            if self.move_tetromino(test_postion=(1,-1)):
+                return True
+            if self.move_tetromino(test_postion=(0,2)):
+                return True
+            if self.move_tetromino(test_postion=(1,2)):
+                return True
+
+
+    def attempt_rotate_tetromino_clockwise(self):
         size = Tetromino.size
         rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
         for x, row in enumerate(self.live_tetromino.shape):
@@ -351,7 +369,7 @@ class Tetris:
 
     def rotate_counterclockwise(self):
         log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
-        self.rotate_tetromino(reverse=True)
+        self.rotate_tetromino(clockwise=False)
         self.moved()
 
     def drop_piece(self):
