@@ -335,6 +335,6 @@ class Tetris:
 
     def hard_drop_piece(self):
         log("HARD_DROP", module="Tetris")
-        for _ in range(self.blocks_height)
+        for _ in range(self.blocks_height):
             self.move_tetromino(offset=(0,-1))
         self.moved()
