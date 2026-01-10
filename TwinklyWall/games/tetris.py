@@ -58,28 +58,6 @@ class Tetris:
         size = 4 if type_index == 4 or type_index == 1 else 3
         return size
 
-    def calc_gravity(self): # TODO: Call every level change
-        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
-
-    def drop_tetromino_by_gravity(self, fps):
-        frame_adjusted_gravity = self.gravity / fps
-        original_height = self.live_tetromino.precise_height
-        new_height = original_height - (frame_adjusted_gravity + self.accumulated_gravity)
-        self.live_tetromino.precise_height = new_height
-        height_precise_delta = original_height - new_height
-        height_grid_delta = int(numpy.floor(height_precise_delta))
-        if height_grid_delta > 0:
-            for _ in range(height_grid_delta):
-                if not self.move_tetromino(offset=(0, -1)):
-                    self.is_down = True
-                if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
-                    self.is_down = False
-                # self.rotate_tetromino() # For debug only
-
-        if not self.is_down:
-            self.reset_down()
-        self.accumulated_gravity = height_precise_delta - height_grid_delta
-
     def draw_square(self, color_index, position, opacity = 255):
         color = self.colors[color_index]
         if (color_index > 0):
@@ -106,13 +84,12 @@ class Tetris:
         pos = self.live_tetromino.grid_position
         rotation = self.live_tetromino.rotation
         opacity = 44
-        ghost_piece = Tetromino(type_index, pos, self.live_tetromino.rotation)
-        for y in range(pos[1], -2, -1): # Should be 0, not -2. Dunno what's happening here...
+        for y in range(pos[1], -self.get_size(type_index), -1): 
             pos = (pos[0], y)
             if not self.check_move_validity(pos):
                 pos = (pos[0], y + 1)
                 break
-        self.draw_tetromino(pos, type_index, opacity)
+        self.draw_tetromino(grid_position=pos, opacity=opacity)
 
     def draw_tetromino(self, grid_position = None, type_index = None, opacity = 255):
         # Draw tetromino on top of dead_grid
@@ -154,6 +131,27 @@ class Tetris:
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
 
+    def calc_gravity(self): # TODO: Call every level change
+        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+
+    def drop_tetromino_by_gravity(self, fps):
+        frame_adjusted_gravity = self.gravity / fps
+        original_height = self.live_tetromino.precise_height
+        new_height = original_height - (frame_adjusted_gravity + self.accumulated_gravity)
+        self.live_tetromino.precise_height = new_height
+        height_precise_delta = original_height - new_height
+        height_grid_delta = int(numpy.floor(height_precise_delta))
+        if height_grid_delta > 0:
+            for _ in range(height_grid_delta):
+                if not self.move_tetromino(offset=(0, -1)):
+                    self.is_down = True
+                if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
+                    self.is_down = False
+                self.rotate_tetromino() # For debug only
+
+        if not self.is_down:
+            self.reset_down()
+        self.accumulated_gravity = height_precise_delta - height_grid_delta
 
     def spawn_tetromino(self):
         piece_type = self.bag.pull_piece()
