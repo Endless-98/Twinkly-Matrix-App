@@ -1,16 +1,8 @@
 # All code in this file must be handwritten! No AI allowed!
 
 # TODO
-    # Hard drop
     # Ghost piece
     # Tidy piece preview
-    # Super Rotation System 
-        # (also known as SRS) specifies tetromino rotation and wall kicks. SRS defines 5 points of rotation, each with a different purpose.
-        # Visual rotation - The natural rotation of a tetromino. 
-        # Right/Left wall kick - Kick off an obstruction on the right or left.
-        # Floor kick - Kick off the floor, for when a tetromino has landed. Without kicks no rotation would be possible in some cases.
-        # Out of right well kick - If a tetromino is in a well, it can be rotated out.
-        # Out of left well kick - If a tetromino is in a well, it can be rotated out.
     # T-spin
     # Scoring
         # Scoring system, including Back-to-Back recognition rules
@@ -22,80 +14,12 @@ import os
 import pygame
 import numpy
 import random
+from .tetromino import Tetromino, Random_Bag
 from logger import log
 from game_players import get_active_players_for_game, get_game_for_player
 from players import set_input_handler
-from pathlib import Path
 import copy
 import time
-
-class Tetromino:
-    shapes = [ [], # Empty piece (0)
-                # I piece (1)
-                [[0,0,0,0],
-                [0,0,0,0],
-                [1,1,1,1],
-                [0,0,0,0]],
-                # J piece (2)
-                [[2,0,0],
-                 [2,2,2],
-                 [0,0,0]],
-                # L piece (3)
-                [[0,0,3],
-                 [3,3,3],
-                 [0,0,0]],
-                # O piece (4)
-                [[0,0,0,0],
-                 [0,4,4,0],
-                 [0,4,4,0],
-                 [0,0,0,0]],
-                # S piece (5)
-                [[0,5,5],
-                 [5,5,0],
-                 [0,0,0],],
-                # Z piece (6)
-                [[6,6,0],
-                 [0,6,6],
-                 [0,0,0],],
-                # T piece (7)
-                [[0,7,0],
-                 [7,7,7],
-                 [0,0,0]], ]
-    def __init__(self, type_index : int, grid_position = (0,0), rotation = 0):
-        self.grid_position = grid_position
-        self.precise_height = 0.0 # Won't fall on the grid, but we snap to grid.
-        self.ghost_opacity = 0.2
-        self.type_index = type_index
-        self.shape = self.shapes[type_index]
-        self.rotation = 0 # Multiply by 90 for degrees
-
-
-class Random_Bag:
-    bag_size = 7
-    
-    def __init__(self):
-        self.contents = []
-        self.next_piece = None
-        
-    def refill_bag(self):
-        new_bag = [i for i in range(1,self.bag_size + 1)]
-        random.shuffle(new_bag)
-        print(f"New bag: {new_bag}")
-        self.contents = new_bag
-        if self.next_piece == None: # Should happen only on the first bag fill 
-            self.next_piece = self.contents.pop()
-    
-    def pull_piece(self) -> int:
-        if len(self.contents) <= 0:
-            self.refill_bag()
-
-        new_piece = self.next_piece
-        self.next_piece = self.contents.pop()
-        
-        print(f"Current bag: {self.contents}")
-        print(f"Current piece: {new_piece}")
-        print(f"Next piece: {self.next_piece}")
-        return new_piece
 
 class Tetris:
     def __init__(self, canvas, HEADLESS):
@@ -135,8 +59,7 @@ class Tetris:
         return size
 
     def calc_gravity(self): # TODO: Call every level change
-        # self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
-        self.gravity = 3
+        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
 
     def drop_tetromino_by_gravity(self, fps):
         frame_adjusted_gravity = self.gravity / fps
@@ -151,9 +74,7 @@ class Tetris:
                     self.is_down = True
                 if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
                     self.is_down = False
-                # self.rotate_tetromino() # For debug only
-                print("Drop")
-                # self.move_tetromino(offset=(-1, 0))
+                self.rotate_tetromino() # For debug only
 
         if not self.is_down:
             self.reset_down()
@@ -208,8 +129,8 @@ class Tetris:
         return True
 
     def rotate_tetromino(self, clockwise = True) -> bool:
-        print("ROTATE")
-        if self.live_tetromino.type_index == 4: # O (square) piece doesn't rotate
+        type_index = self.live_tetromino.type_index
+        if type_index == 4: # O (square) piece doesn't rotate
             return True
 
         loops = 1 if clockwise else 3 # Three rights make a left
@@ -222,121 +143,19 @@ class Tetris:
         if self.check_move_validity():
             self.live_tetromino.rotation = desired_rot
             return True
-        # Else we are inside something:
-        print("Try kicks")
-        if clockwise:
-            if desired_rot == 0:
-                if self.move_tetromino(offset=(-1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 1:
-                if self.move_tetromino(offset=(1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,-1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 2:
-                if self.move_tetromino(offset=(1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 3:
-                if self.move_tetromino(offset=(-1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,-1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-        else: # Counter-clockwise
-            if desired_rot == 0:
-                if self.move_tetromino(offset=(1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 1:
-                if self.move_tetromino(offset=(1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,-1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(1,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 2:
-                if self.move_tetromino(offset=(-1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,-2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-            if desired_rot == 3:
-                if self.move_tetromino(offset=(-1,0)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,-1)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(0,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
-                if self.move_tetromino(offset=(-1,2)):
-                    print(f"Kick: {desired_rot}. Clockwise: {clockwise}")
-                    return True
+
+        piece_group = 1 if type_index == 1 else 0
+        # print(f"KICK: [piece_group: {piece_group}] [int(clockwise): {int(clockwise)}] [desired_rot: {desired_rot}]")
+        for offset in Tetromino.kick_offsets[piece_group][clockwise][desired_rot]:
+            if self.move_tetromino(offset):
+                return True
+
         self.live_tetromino.shape = initial_shape
         self.live_tetromino.rotation = initial_rot  
         return False
 
     def rotate_shape_clockwise(self):
         self.live_tetromino.shape = [list(reversed(element)) for element in zip(*self.live_tetromino.shape)]
-
 
     def lock_piece(self):
         self.move_tetromino(offset=(0, -1))
