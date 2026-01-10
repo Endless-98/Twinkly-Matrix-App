@@ -3,7 +3,6 @@
 # TODO
     # Soft and Hard drop
     # Ghost piece
-    # Show next piece
     # Spinning into another piece
     # Super Rotation System 
         # (also known as SRS) specifies tetromino rotation and wall kicks. SRS defines 5 points of rotation, each with a different purpose.
