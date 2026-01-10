@@ -172,7 +172,8 @@ class Tetris:
     def spawn_tetromino(self):
         piece_width = Tetromino.size
         piece_type = self.bag.pull_piece()
-        self.live_tetromino = Tetromino(piece_type, grid_position=((self.blocks_width - piece_width) // 2, self.blocks_height - Tetromino.size))
+        # self.live_tetromino = Tetromino(piece_type, grid_position=((self.blocks_width - piece_width) // 2, self.blocks_height - Tetromino.size))
+        self.live_tetromino = Tetromino(piece_type, grid_position=(0, self.blocks_height - Tetromino.size))
    
     def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.grid_position[0] + offset[0], self.live_tetromino.grid_position[1] + offset[1])
@@ -193,7 +194,7 @@ class Tetris:
             for local_x, grid_x in enumerate(range(test_postion[0], test_postion[0] + 4)): # TODO: Duplicate code from tick function. Find encapsulation method
                 tetromino_cell_value = test_shape[-local_y + 3][local_x]
                 if tetromino_cell_value != 0: 
-                    if grid_x < 0 or grid_y < 0: 
+                    if grid_x < 0 or grid_y < 0 or grid_x > self.blocks_width or grid_y > self.blocks_height: 
                         return False
                     if grid[grid_y][grid_x] != 0:
                         return False
