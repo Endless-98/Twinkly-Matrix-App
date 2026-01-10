@@ -30,7 +30,6 @@ import copy
 import time
 
 class Tetromino:
-    size = 4
     shapes = [ [], # Empty piece (0)
                 # I piece (1)
                 [[0,0,0,0],
@@ -38,41 +37,38 @@ class Tetromino:
                 [1,1,1,1],
                 [0,0,0,0]],
                 # J piece (2)
-                [[0,0,0,0],
-                [2,0,0,0],
-                [2,2,2,0],
-                [0,0,0,0]],
+                [[2,0,0],
+                 [2,2,2],
+                 [0,0,0]],
                 # L piece (3)
-                [[0,0,0,0],
-                [0,0,0,3],
-                [0,3,3,3],
-                [0,0,0,0]],
+                [[0,0,3],
+                 [3,3,3],
+                 [0,0,0]],
                 # O piece (4)
                 [[0,0,0,0],
                 [0,4,4,0],
                 [0,4,4,0],
                 [0,0,0,0]],
                 # S piece (5)
-                [[0,0,0,0],
-                [0,0,5,5],
-                [0,5,5,0],
-                [0,0,0,0]],
+                [[0,5,5],
+                 [5,5,0],
+                 [0,0,0],],
                 # Z piece (6)
-                [[0,0,0,0],
-                [6,6,0,0],
-                [0,6,6,0],
-                [0,0,0,0]],
+                [[6,6,0],
+                 [0,6,6],
+                 [0,0,0],],
                 # T piece (7)
-                [[0,0,0,0],
-                [0,7,0,0],
-                [7,7,7,0],
-                [0,0,0,0]], ]
-    def __init__(self, type_index, grid_position = (0,0), rotation = 0):
+                [[0,7,0],
+                 [7,7,7],
+                 [0,0,0]], ]
+    def __init__(self, type_index : int, grid_position = (0,0), rotation = 0):
         self.grid_position = grid_position
         self.precise_height = 0.0 # Won't fall on the grid, but we snap to grid.
         self.ghost_opacity = 0.2
         self.type_index = type_index
         self.shape = self.shapes[type_index]
+        self.rotation = 0 # Multiply by 90 for degrees
+
 
 class Random_Bag:
     bag_size = 7
@@ -134,8 +130,13 @@ class Tetris:
         self.calc_gravity()
         self.spawn_tetromino()
 
+    def get_size(self, type_index) -> int:
+        size = 4 if type_index == 4 or type_index == 1 else 3
+        return size
+
     def calc_gravity(self): # TODO: Call every level change
-        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level)
+        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+        # self.gravity = 3
 
     def drop_tetromino_by_gravity(self, fps):
         frame_adjusted_gravity = self.gravity / fps
@@ -147,6 +148,7 @@ class Tetris:
         if height_grid_delta > 0:
             for _ in range(height_grid_delta):
                 self.is_down = not self.move_tetromino(offset=(0, -1))
+                # self.move_tetromino(offset=(-1, 0))
             # self.rotate_tetromino() # For debug only
 
         if not self.is_down:
@@ -163,17 +165,19 @@ class Tetris:
         pygame.draw.rect(self.screen, self.border_color, (x_right, 0, self.border_thickness, 1000,))
 
     def draw_next_piece_preview(self):
-        thickness = self.block_size + Tetromino.size + 4
+        type_index = self.bag.next_piece
+        thickness = self.block_size + self.get_size(type_index) * 4
         x_left = int(self.game_x_offset * self.block_size) - thickness - self.border_thickness
         pygame.draw.rect(self.screen, self.border_color, (x_left, 0, thickness, thickness,))
         
-        self.draw_tetromino(grid_position=(-4,13), type_index=self.bag.next_piece)
+        self.draw_tetromino(grid_position=(-4,13), type_index=type_index)
 
     def spawn_tetromino(self):
-        piece_width = Tetromino.size
         piece_type = self.bag.pull_piece()
-        # self.live_tetromino = Tetromino(piece_type, grid_position=((self.blocks_width - piece_width) // 2, self.blocks_height - Tetromino.size))
-        self.live_tetromino = Tetromino(piece_type, grid_position=(0, self.blocks_height - Tetromino.size))
+        size = self.get_size(piece_type)
+
+        self.live_tetromino = Tetromino(piece_type, grid_position=((self.blocks_width - size) // 2, self.blocks_height - size))
+        # self.live_tetromino = Tetromino(piece_type, grid_position=(0, self.blocks_height - size))
    
     def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.grid_position[0] + offset[0], self.live_tetromino.grid_position[1] + offset[1])
@@ -189,10 +193,10 @@ class Tetris:
             test_shape = self.live_tetromino.shape
         if test_postion == None:
             test_postion = self.live_tetromino.grid_position
-
-        for local_y, grid_y in enumerate(range(test_postion[1], test_postion[1] + 4)):
-            for local_x, grid_x in enumerate(range(test_postion[0], test_postion[0] + 4)): # TODO: Duplicate code from tick function. Find encapsulation method
-                tetromino_cell_value = test_shape[-local_y + 3][local_x]
+        size = self.get_size(self.live_tetromino.type_index)
+        for local_y, grid_y in enumerate(range(test_postion[1], test_postion[1] + size)):
+            for local_x, grid_x in enumerate(range(test_postion[0], test_postion[0] + size)): # TODO: Duplicate code from tick function. Find encapsulation method
+                tetromino_cell_value = test_shape[-local_y + size - 1][local_x]
                 if tetromino_cell_value != 0: 
                     if grid_x < 0 or grid_y < 0 or grid_x > self.blocks_width or grid_y > self.blocks_height: 
                         return False
@@ -201,37 +205,132 @@ class Tetris:
         return True
 
     def rotate_tetromino(self, clockwise = True) -> bool:
+        print("ROTATE")
         if self.live_tetromino.type_index == 4: # O (square) piece doesn't rotate
-            return
+            return True
 
         loops = 1 if clockwise else 3 # Three rights make a left
         initial_shape = self.live_tetromino.shape
         for _ in range(loops): # This is the sloppy way to turn counter-clockwise. Refactor later
             self.attempt_rotate_tetromino_clockwise()
 
-        if self.check_move_validity(test_shape=self.live_tetromino.shape):
+        if self.check_move_validity():
+            self.live_tetromino.rotation = (self.live_tetromino.rotation + loops) % 4
             return True
         # Else we are inside something:
-        if clockwise: # Clockwise
-            if self.move_tetromino(test_postion=(-1,0)):
-                return True
-            if self.move_tetromino(test_postion=(0,-2)):
-                return True
-            if self.move_tetromino(test_postion=(-1,2)):
-                return True
+        print("Try kicks")
+        rot = self.live_tetromino.rotation
+        if clockwise:
+            if rot == 0:
+                if self.move_tetromino(offset=(-1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,-2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,-2)):
+                    print("KICK")
+                    return True
+            if rot == 1:
+                if self.move_tetromino(offset=(1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,-1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,2)):
+                    print("KICK")
+                    return True
+            if rot == 2:
+                if self.move_tetromino(offset=(1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,-2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,-2)):
+                    print("KICK")
+                    return True
+            if rot == 3:
+                if self.move_tetromino(offset=(-1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,-1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,2)):
+                    print("KICK")
+                    return True
         else: # Counter-clockwise
-            if self.move_tetromino(test_postion=(1,0)):
-                return True
-            if self.move_tetromino(test_postion=(1,-1)):
-                return True
-            if self.move_tetromino(test_postion=(0,2)):
-                return True
-            if self.move_tetromino(test_postion=(1,2)):
-                return True
+            if rot == 0:
+                if self.move_tetromino(offset=(1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,-2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,-2)):
+                    print("KICK")
+                    return True
+            if rot == 1:
+                if self.move_tetromino(offset=(1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,-1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(1,2)):
+                    print("KICK")
+                    return True
+            if rot == 2:
+                if self.move_tetromino(offset=(-1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,-2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,-2)):
+                    print("KICK")
+                    return True
+            if rot == 3:
+                if self.move_tetromino(offset=(-1,0)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,-1)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(0,2)):
+                    print("KICK")
+                    return True
+                if self.move_tetromino(offset=(-1,2)):
+                    print("KICK")
+                    return True
+        self.live_tetromino.shape = initial_shape
 
 
     def attempt_rotate_tetromino_clockwise(self):
-        size = Tetromino.size
+        size = self.get_size(self.live_tetromino.type_index)
         rotated_shape = [[0 for _ in range(size)] for _ in range(size)]
         for x, row in enumerate(self.live_tetromino.shape):
             for y, cell in enumerate(row):
@@ -240,12 +339,13 @@ class Tetris:
             row = row.reverse()
         self.live_tetromino.shape = rotated_shape
 
-
     def lock_piece(self):
         pos = self.live_tetromino.grid_position
-        for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
-            for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
-                tetromino_cell_value = self.live_tetromino.shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
+        size = self.get_size(self.live_tetromino.type_index)
+
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + size)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + size)):
+                tetromino_cell_value = self.live_tetromino.shape[-local_y + size - 1][local_x] # Invert y because the origin is in the bottom left of the grid
                 if tetromino_cell_value != 0:
                     self.dead_grid[grid_y][grid_x] = tetromino_cell_value
 
@@ -285,13 +385,15 @@ class Tetris:
             shape = Tetromino.shapes[type_index]
         else:
             shape = self.live_tetromino.shape
-        for local_y, grid_y in enumerate(range(pos[1], pos[1] + 4)):
+            type_index = self.live_tetromino.type_index
+        size = self.get_size(type_index)
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + size)):
             y_position = self.blocks_height - grid_y + self.game_y_offset
             y_position *= self.block_size
-            for local_x, grid_x in enumerate(range(pos[0], pos[0] + 4)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + size)):
                 x_position = grid_x + self.game_x_offset 
                 x_position *= self.block_size
-                tetromino_cell_value = shape[-local_y + 3][local_x] # Invert y because the origin is in the bottom left of the grid
+                tetromino_cell_value = shape[-local_y + size -1][local_x] # Invert y because the origin is in the bottom left of the grid
                 if tetromino_cell_value != 0:
                     if type_index != None:
                         tetromino_cell_value = type_index
@@ -315,6 +417,7 @@ class Tetris:
 
     def tick(self, delta_time, fps): # Called in main
         if self.is_down:
+            print(f"Down time elapsed {self.down_time_elapsed}")
             self.down_time_elapsed += delta_time
         if self.down_time_elapsed >= self.max_lock_down_time:
             self.down_time_elapsed = 0
