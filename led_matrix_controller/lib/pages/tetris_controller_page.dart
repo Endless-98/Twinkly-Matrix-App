@@ -149,6 +149,18 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
           
           return Stack(
             children: [
+              // Store piece button (above/left of controls)
+              Positioned(
+                left: 30,
+                bottom: 430,
+                child: _TetrisButton(
+                  icon: Icons.inventory_2,
+                  color: Colors.amber,
+                  size: 150,
+                  onPressed: () => _sendCommand('STORE_PIECE'),
+                ),
+              ),
+
               // Center: Fast Drop button
               Positioned(
                 left: screenWidth * 0.5 - 90,
