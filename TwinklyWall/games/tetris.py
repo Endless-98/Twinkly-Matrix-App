@@ -151,7 +151,7 @@ class Tetris:
                     self.is_down = True
                 if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
                     self.is_down = False
-                self.rotate_tetromino() # For debug only
+                # self.rotate_tetromino() # For debug only
                 print("Drop")
                 # self.move_tetromino(offset=(-1, 0))
 
