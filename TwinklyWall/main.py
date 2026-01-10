@@ -51,7 +51,7 @@ def run_tetris(matrix, stop_event=None):
     # This ensures each dot gets unique pixel data when staggered columns are sampled.
     # Even columns sample rows [0,2,4,...,98], odd columns sample [1,3,5,...,99]
     canvas_height = (matrix.height) * matrix.supersample  # 50 * 2 = 100px tall
-    canvas = pygame.Surface((canvas_width, canvas_height))
+    canvas = pygame.Surface((canvas_width, canvas_height), pygame.SRCALPHA)
     tetris = Tetris(canvas, HEADLESS)
     tetris.begin_play()
 

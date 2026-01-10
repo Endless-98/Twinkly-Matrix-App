@@ -288,10 +288,20 @@ class DotMatrix:
         """Directly sample colors without luminance blending (numpy path).
         
         Handles staggered canvas (90×100) by extracting rows based on column parity.
+        Applies alpha channel to RGB brightness.
         """
-        pixel_view = surfarray.pixels3d(surface)
-        # pixel_view shape is (width, height, 3)
-        w, h = pixel_view.shape[0], pixel_view.shape[1]
+        # Try to get RGBA, fall back to RGB
+        try:
+            pixel_array = surfarray.array3d(surface)
+            # array3d returns (width, height, channels) - get RGBA if available
+            alpha_view = surfarray.array_alpha(surface)
+            has_alpha = True
+        except (ValueError, pygame.error):
+            # Fallback: only RGB available
+            pixel_array = surfarray.pixels3d(surface)
+            has_alpha = False
+        
+        w, h = pixel_array.shape[0], pixel_array.shape[1]
         
         # Check if this is a staggered canvas (height = width * 2)
         if self.should_stagger and h == self.height * 2:
@@ -306,15 +316,26 @@ class DotMatrix:
                     # Odd column: sample every other row starting at 1
                     src_rows = np.arange(1, h, 2, dtype=np.int32)
                 
-                # Copy sampled rows for this column
+                # Copy sampled rows for this column, applying alpha if available
                 for dst_row, src_row in enumerate(src_rows):
                     if src_row < h:
-                        result[dst_row, col] = pixel_view[col, src_row]
+                        color = pixel_array[col, src_row][:3]  # Get RGB
+                        if has_alpha:
+                            alpha = alpha_view[col, src_row] / 255.0
+                            color = (color * alpha).astype(np.uint8)
+                        result[dst_row, col] = color
             self.dot_colors = result
         else:
-            # Regular canvas: standard transpose
-            self.dot_colors = np.transpose(pixel_view, (1, 0, 2)).copy(order='C')
-        del pixel_view
+            # Regular canvas: standard transpose with alpha applied
+            result = np.transpose(pixel_array[:, :, :3], (1, 0, 2)).copy(order='C')
+            if has_alpha:
+                alpha = np.transpose(alpha_view, (1, 0)).astype(np.float32) / 255.0
+                result = (result.astype(np.float32) * alpha[:, :, np.newaxis]).astype(np.uint8)
+            self.dot_colors = result
+        
+        del pixel_array
+        if has_alpha:
+            del alpha_view
 
     def _sample_no_blend_fallback(self, surface):
         """Direct sampling without blending (fallback path).
