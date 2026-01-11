@@ -5,6 +5,7 @@
     # Save piece
     # Tidy piece preview
     # Scoring
+        # Soft drop score
         # Scoring system, including Back-to-Back recognition rules
         # Combo recognition
         # Perfect clear recognition (for later games)
@@ -22,7 +23,7 @@ import copy
 import time
 
 class Tetris:
-    def __init__(self, canvas, HEADLESS):
+    def __init__(self, canvas, HEADLESS, level):
         ### Settings ###
         self.headless = HEADLESS
         self.blocks_width = 10
@@ -31,15 +32,26 @@ class Tetris:
         self.border_thickness = 2
         self.border_color = (105,105,105)
         self.screen = canvas
-
+        self.ghost_opacity = 65
+        
+        ### Leveling ###
         self.level = 1
+        self.score = 0 # For the scoreboard
+        self.points = 0 # Progresses towards goal
+        self.base_goal = 5
+        self.next_level_goal = self.base_goal * level
         self.speed_increment = 0.007
         self.base_speed = 0.8
-        self.gravity = 0
-        self.accumulated_gravity = 0
+        self.combo = 0
+        self.points_reward = [0,1,3,5,8] # Index: num lines cleared at once
+        self.was_last_score_tetris = False
+
         self.players = get_active_players_for_game 
         self.live_tetromino = None
         self.is_playing = True
+        self.gravity = 0
+        self.drop_interval = 0.0
+        self.drop_time_elapsed = 0.0
         self.max_lock_down_time = 0.500
         self.down_time_elapsed = 0.0
         self.is_down = False
@@ -51,8 +63,8 @@ class Tetris:
         self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
         self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
         self.dead_grid  = [[0 for element in range(self.blocks_width)] for row in range(self.blocks_height)]
-        self.calc_gravity()
         self.spawn_tetromino()
+
 
     def get_size(self, type_index) -> int:
         size = 4 if type_index == 4 or type_index == 1 else 3
@@ -60,7 +72,8 @@ class Tetris:
 
     def draw_square(self, color_index, position, opacity = 255):
         color = self.colors[color_index]
-        if (color_index > 0):
+        
+        if len(color) <= 3:
             color = (*color, opacity)
         
         pygame.draw.rect(self.screen, color, (position[0], position[1], self.block_size, self.block_size))
@@ -83,13 +96,12 @@ class Tetris:
         type_index = self.live_tetromino.type_index
         pos = self.live_tetromino.grid_position
         rotation = self.live_tetromino.rotation
-        opacity = 44
         for y in range(pos[1], -self.get_size(type_index), -1): 
             pos = (pos[0], y)
             if not self.check_move_validity(pos):
                 pos = (pos[0], y + 1)
                 break
-        self.draw_tetromino(grid_position=pos, opacity=opacity)
+        self.draw_tetromino(grid_position=pos, opacity=self.ghost_opacity)
 
     def draw_tetromino(self, grid_position = None, type_index = None, opacity = 255):
         # Draw tetromino on top of dead_grid
@@ -121,37 +133,25 @@ class Tetris:
             pygame.display.flip()
 
         grid = copy.deepcopy(self.dead_grid) # Perform deep copy
-
         # Draw dead_grid
         for y_index, column in enumerate(self.dead_grid):
             y_position = self.blocks_height - y_index + self.game_y_offset
             for x_index, value in enumerate(column): 
+
                 x_position = x_index + self.game_x_offset 
                 color_index = self.dead_grid[y_index][x_index]
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
 
-    def calc_gravity(self): # TODO: Call every level change
-        self.gravity = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
-
-    def drop_tetromino_by_gravity(self, fps):
-        frame_adjusted_gravity = self.gravity / fps
-        original_height = self.live_tetromino.precise_height
-        new_height = original_height - (frame_adjusted_gravity + self.accumulated_gravity)
-        self.live_tetromino.precise_height = new_height
-        height_precise_delta = original_height - new_height
-        height_grid_delta = int(numpy.floor(height_precise_delta))
-        if height_grid_delta > 0:
-            for _ in range(height_grid_delta):
-                if not self.move_tetromino(offset=(0, -1)):
-                    self.is_down = True
-                if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
-                    self.is_down = False
-                # self.rotate_tetromino() # For debug only
+    def drop_tetromino(self):
+        if not self.move_tetromino(offset=(0, -1)):
+            self.is_down = True
+        if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
+            self.is_down = False
+        # self.rotate_tetromino() # For debug only
 
         if not self.is_down:
             self.reset_down()
-        self.accumulated_gravity = height_precise_delta - height_grid_delta
 
     def spawn_tetromino(self):
         piece_type = self.bag.pull_piece()
@@ -244,6 +244,9 @@ class Tetris:
             else:
                 self.lock_piece()
 
+    def calc_gravity(self, fps): # TODO: Call every level change
+        self.drop_interval = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+
     def clear_lines(self):
         lines_cleared = 0 
         for y, row in enumerate(self.dead_grid): 
@@ -251,11 +254,33 @@ class Tetris:
             if not 0 in row: # Row is full
                 self.dead_grid.pop(y)
                 self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
-        
+                lines_cleared += 1
+                self.next_level_goal *= self.level
                     
         # TODO: Add animation
+        self.score_lines(lines_cleared)
+
+    def score_lines(self, lines_cleared):
+        reward = self.points_reward[lines_cleared] 
+        self.points += reward
+        self.score += (reward * 100) * self.level
+        if self.points >= self.next_level_goal:
+            self.level_up()
+
+    def level_up(self):
+        self.level += 1
+        log(f"Level up: {self.level}")
+        print(f"Level up: {self.level}")
 
     def tick(self, delta_time, fps): # Called in main
+        self.calc_gravity(fps)
+
+        self.drop_time_elapsed += delta_time
+        if self.drop_time_elapsed >= self.drop_interval:
+            self.drop_tetromino()
+            self.clear_lines()
+            self.drop_time_elapsed = 0
+            
         if self.is_down:
             # print(f"Down time elapsed {self.down_time_elapsed}")
             self.down_time_elapsed += delta_time
@@ -264,10 +289,8 @@ class Tetris:
             self.lock_piece()
             self.is_down = False
 
-        self.drop_tetromino_by_gravity(fps)
         self.draw_grid()
         self.draw_ghost_piece()
-        self.clear_lines()
         self.draw_border()
         self.draw_tetromino()
         self.draw_next_piece_preview()

@@ -45,14 +45,14 @@ def _resolve_fpp_memory_file():
 
 from logger import log
 
-def run_tetris(matrix, stop_event=None):
+def run_tetris(matrix, stop_event=None, level=1):
     canvas_width = matrix.width * matrix.supersample
     # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row
     # This ensures each dot gets unique pixel data when staggered columns are sampled.
     # Even columns sample rows [0,2,4,...,98], odd columns sample [1,3,5,...,99]
     canvas_height = (matrix.height) * matrix.supersample  # 50 * 2 = 100px tall
     canvas = pygame.Surface((canvas_width, canvas_height), pygame.SRCALPHA)
-    tetris = Tetris(canvas, HEADLESS)
+    tetris = Tetris(canvas, HEADLESS, level)
     tetris.begin_play()
 
     # Game timing constants
@@ -209,6 +209,7 @@ def main():
     parser.add_argument("--start", type=int, default=0, help="Start frame (video mode)")
     parser.add_argument("--end", type=int, default=None, help="End frame (exclusive, video mode)")
     parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")
+    parser.add_argument("--level", type=int, default=1, help="Starting level for Tetris")
     parser.add_argument("--fps-debug", action="store_true", help="Enable FPS/performance debug logging")
     args = parser.parse_args()
     # Apply CLI flag for FPS debug (overrides env when true)
@@ -325,7 +326,7 @@ def main():
         matrix = build_matrix()
 
         if args.mode == "tetris":
-            run_tetris(matrix)
+            run_tetris(matrix, level=args.level)
         else:
             # Default to Shireworks render if none specified
             render_path = args.render or "dotmatrix/rendered_videos/Shireworks - Trim_90x50_20fps.npz"
