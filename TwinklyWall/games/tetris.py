@@ -39,7 +39,7 @@ class Tetris:
         self.score = 0 # For the scoreboard
         self.points = 0 # Progresses towards goal
         self.base_goal = 5
-        self.next_level_goal = self.base_goal * level
+        self.next_level_goal = self.base_goal * self.level
         self.speed_increment = 0.007
         self.base_speed = 0.8
         self.combo = 0
@@ -269,6 +269,8 @@ class Tetris:
 
     def level_up(self):
         self.level += 1
+        self.next_level_goal = self.base_goal * self.level
+
         log(f"Level up: {self.level}")
         print(f"Level up: {self.level}")
 
