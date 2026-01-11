@@ -346,4 +346,5 @@ class Tetris:
         log("HARD_DROP", module="Tetris")
         for _ in range(self.blocks_height):
             self.move_tetromino(offset=(0,-1))
+        self.lock_piece()
         self.moved(wants_to_lock=True)
