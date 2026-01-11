@@ -50,6 +50,8 @@ class Tetris:
         self.live_tetromino = None
         self.is_playing = True
         self.gravity = 0
+        self.hard_drop_cooldown = 0.0
+        self.hard_drop_time_elapsed = 0.0
         self.drop_interval = 0.0
         self.drop_time_elapsed = 0.0
         self.max_lock_down_time = 0.500
@@ -151,6 +153,11 @@ class Tetris:
 
         if not self.is_down:
             self.reset_down()
+
+    def hard_drop_tetromino(self):
+        for _ in range(self.blocks_height):
+            self.drop_tetromino()
+        self.lock_piece()
 
     def spawn_tetromino(self):
         piece_type = self.bag.pull_piece()
@@ -319,32 +326,36 @@ class Tetris:
        
     def move_piece_left(self):
         log("LEFT", module="Tetris")
+        print("LEFT")
         self.move_tetromino(offset=(-1,0))
         self.moved()
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
+        print("RIGHT")
         self.move_tetromino(offset=(1,0))
         self.moved()
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
+        print("CLOCKWISE")
         self.rotate_tetromino()
         self.moved()
 
     def rotate_counterclockwise(self):
         log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
+        print("COUNTER_CLOCKWISE")
         self.rotate_tetromino(clockwise=False)
         self.moved()
 
     def drop_piece(self):
         log("MOVE_DOWN", module="Tetris")
-        self.move_tetromino(offset=(0,-1))
+        print("DROP")
+        self.drop_tetromino()
         self.moved(wants_to_lock=True)
 
     def hard_drop_piece(self):
         log("HARD_DROP", module="Tetris")
-        for _ in range(self.blocks_height):
-            self.move_tetromino(offset=(0,-1))
-        self.lock_piece()
+        print("HARD_DROP")
+        self.hard_drop_tetromino()
         self.moved(wants_to_lock=True)

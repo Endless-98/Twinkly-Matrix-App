@@ -184,6 +184,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   size: 190,
                   onPressed: () => _sendCommand('MOVE_LEFT'),
                   onHeld: () => _sendCommand('MOVE_LEFT_HELD'),
+                  enableAutoRepeat: true,
                 ),
               ),
               
@@ -196,6 +197,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.cyan,
                   size: 150,
                   onPressed: () => _sendCommand('ROTATE_LEFT'),
+                  enableAutoRepeat: true,
                 ),
               ),
               
@@ -209,6 +211,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   size: 190,
                   onPressed: () => _sendCommand('MOVE_RIGHT'),
                   onHeld: () => _sendCommand('MOVE_RIGHT_HELD'),
+                  enableAutoRepeat: true,
                 ),
               ),
               
@@ -221,6 +224,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.pink,
                   size: 150,
                   onPressed: () => _sendCommand('ROTATE_RIGHT'),
+                  enableAutoRepeat: true,
                 ),
               ),
             ],
@@ -238,6 +242,7 @@ class _TetrisButton extends StatefulWidget {
   final double size;
   final VoidCallback onPressed;
   final VoidCallback? onHeld;
+  final bool enableAutoRepeat;
 
   const _TetrisButton({
     required this.icon,
@@ -245,6 +250,7 @@ class _TetrisButton extends StatefulWidget {
     required this.size,
     required this.onPressed,
     this.onHeld,
+    this.enableAutoRepeat = false,
   });
 
   @override
@@ -256,11 +262,13 @@ class _TetrisButtonState extends State<_TetrisButton> {
   bool _isActuallyPressed = false; // Track actual press state separately
   Timer? _feedbackTimer;
   Timer? _holdTimer;
+  Timer? _autoRepeatTimer;
 
   void _handlePressStart() {
     // Cancel any pending timers
     _feedbackTimer?.cancel();
     _holdTimer?.cancel();
+    _autoRepeatTimer?.cancel();
     
     // Mark as actually pressed
     _isActuallyPressed = true;
@@ -283,6 +291,23 @@ class _TetrisButtonState extends State<_TetrisButton> {
       });
     }
     
+    // Start auto-repeat timer for left/right buttons (0.125s delay, then repeat every 50ms)
+    if (widget.enableAutoRepeat) {
+      _autoRepeatTimer = Timer(const Duration(milliseconds: 125), () {
+        if (mounted && _isActuallyPressed) {
+          // Cancel the delay timer and start repeating
+          _autoRepeatTimer?.cancel();
+          _autoRepeatTimer = Timer.periodic(const Duration(milliseconds: 50), (_) {
+            if (mounted && _isActuallyPressed) {
+              widget.onPressed();
+            } else {
+              _autoRepeatTimer?.cancel();
+            }
+          });
+        }
+      });
+    }
+    
     // Keep button visually pressed for at least 150ms even if touch is 1ms
     _feedbackTimer = Timer(const Duration(milliseconds: 150), () {
       if (mounted && !_isActuallyPressed) {
@@ -292,8 +317,9 @@ class _TetrisButtonState extends State<_TetrisButton> {
   }
 
   void _handlePressEnd() {
-    // Cancel hold timer on release
+    // Cancel all timers on release
     _holdTimer?.cancel();
+    _autoRepeatTimer?.cancel();
     
     // Mark as not actually pressed
     _isActuallyPressed = false;
@@ -310,6 +336,7 @@ class _TetrisButtonState extends State<_TetrisButton> {
   void dispose() {
     _feedbackTimer?.cancel();
     _holdTimer?.cancel();
+    _autoRepeatTimer?.cancel();
     super.dispose();
   }
 

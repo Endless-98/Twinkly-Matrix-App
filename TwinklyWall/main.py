@@ -29,6 +29,7 @@ from dotmatrix import DotMatrix
 from games.tetris import Tetris
 from video_player import VideoPlayer
 from logger import log
+from event_poller import EventPoller
 import pygame
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
@@ -47,117 +48,171 @@ from logger import log
 
 def run_tetris(matrix, stop_event=None, level=1):
     canvas_width = matrix.width * matrix.supersample
-    # Canvas height accounts for stagger: 50 logical rows × 2 pixels per row
-    # This ensures each dot gets unique pixel data when staggered columns are sampled.
-    # Even columns sample rows [0,2,4,...,98], odd columns sample [1,3,5,...,99]
-    canvas_height = (matrix.height) * matrix.supersample  # 50 * 2 = 100px tall
+    canvas_height = (matrix.height) * matrix.supersample
     canvas = pygame.Surface((canvas_width, canvas_height), pygame.SRCALPHA)
     tetris = Tetris(canvas, HEADLESS, level)
     tetris.begin_play()
 
     # Game timing constants
-    GAME_TICK_RATE = 60  # Game logic updates per second
-    RENDER_FPS = 20      # Display refresh rate
+    GAME_TICK_RATE = 60
+    RENDER_FPS = 20
     game_tick_interval = 1.0 / GAME_TICK_RATE
     render_interval = 1.0 / RENDER_FPS
 
-    frame_count = 0
-    fps_check_interval = 100  # Log FPS every N frames (only when FPS_DEBUG)
-    last_fps_time = time.time()
-    last_game_tick = time.time()
-    last_render = time.time()
-    last_tick_time = time.time()  # Track time for delta time calculation
-    last_frame_time = time.time()
+    # Timing state
+    current_time = time.time()
+    last_game_tick = current_time
+    last_render = current_time
+    last_tick_time = current_time
+    last_frame_time = current_time
     current_fps = RENDER_FPS
+    
+    # FPS tracking (always enabled for Tetris)
+    frame_count = 0
+    fps_check_interval = 100
+    last_fps_time = current_time
+    
+    # Input state
+    input_triggered_render = False
+    key_press_time = {}
+    key_repeating = {}
+    key_last_repeat = {}
+    AUTO_REPEAT_DELAY = 0.125
+    AUTO_REPEAT_INTERVAL = 0.05
+
+    # Pre-compute key list for auto-repeat
+    REPEATABLE_KEYS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP)
+    
+    # Start dedicated event polling thread (prevents event drops)
+    event_poller = None
+    if not HEADLESS:
+        event_poller = EventPoller()
+        event_poller.start()
 
     try:
         log("▶️ Tetris game loop started", module="Tetris")
         while True:
-            # Check stop signal FIRST, before any blocking operations
-            if stop_event is not None and stop_event.is_set():
+            current_time = time.time()
+            
+            # Check stop signal
+            if stop_event and stop_event.is_set():
                 log("⏹️  Stop signal received, exiting Tetris loop", module="Tetris")
                 break
 
-            current_time = time.time()
-
+            # ALWAYS process events first - highest priority to prevent drops
             if not HEADLESS:
-                for event in pygame.event.get():
+                input_triggered_render = False
+                
+                # Get all events from the dedicated polling thread
+                events = event_poller.get_events()
+                
+                # Process all pending events in one batch
+                for event in events:
                     if event.type == pygame.QUIT:
                         log("Quit event received", module="Tetris")
                         break
                     elif event.type == pygame.KEYDOWN:
-                        # Arrow keys for local testing (desktop only)
-                        if event.key == pygame.K_LEFT:
-                            try:
+                        input_triggered_render = True
+                        key = event.key
+                        
+                        # Execute command immediately
+                        try:
+                            if key == pygame.K_LEFT:
                                 tetris.move_piece_left()
-                            except Exception as e:
-                                log(f"Error handling LEFT key: {e}", level='ERROR', module="Tetris")
-                        elif event.key == pygame.K_RIGHT:
-                            try:
+                                key_press_time[key] = current_time
+                                key_repeating[key] = False
+                            elif key == pygame.K_RIGHT:
                                 tetris.move_piece_right()
-                            except Exception as e:
-                                log(f"Error handling RIGHT key: {e}", level='ERROR', module="Tetris")
-                        elif event.key == pygame.K_DOWN:
-                            try:
-                                tetris.drop_piece()
-                            except Exception as e:
-                                log(f"Error handling DOWN key: {e}", level='ERROR', module="Tetris")
-                        elif event.key == pygame.K_UP:
-                            try:
+                                key_press_time[key] = current_time
+                                key_repeating[key] = False
+                            elif key == pygame.K_UP:
                                 tetris.rotate_clockwise()
-                            except Exception as e:
-                                log(f"Error handling UP key: {e}", level='ERROR', module="Tetris")
-                        elif event.key == pygame.K_SPACE:
-                            try:
+                                key_press_time[key] = current_time
+                                key_repeating[key] = False
+                            elif key == pygame.K_DOWN:
+                                tetris.drop_piece()
+                            elif key == pygame.K_SPACE:
                                 tetris.hard_drop_piece()
-                            except Exception as e:
-                                log(f"Error handling SPACE key: {e}", level='ERROR', module="Tetris")
+                        except Exception as e:
+                            log(f"Error handling key: {e}", level='ERROR', module="Tetris")
+                            
+                    elif event.type == pygame.KEYUP:
+                        # Clear tracking
+                        key = event.key
+                        key_press_time.pop(key, None)
+                        key_repeating.pop(key, None)
+                        key_last_repeat.pop(key, None)
+                
+                # Auto-repeat for held keys (only if no events were processed)
+                if key_press_time:
+                    keys_pressed = pygame.key.get_pressed()
+                    for key in REPEATABLE_KEYS:
+                        if key not in key_press_time or not keys_pressed[key]:
+                            continue
+                            
+                        hold_duration = current_time - key_press_time[key]
+                        
+                        # Start repeating after delay
+                        if not key_repeating.get(key) and hold_duration >= AUTO_REPEAT_DELAY:
+                            key_repeating[key] = True
+                            key_last_repeat[key] = current_time
+                        
+                        # Fire repeat commands
+                        if key_repeating.get(key):
+                            if current_time - key_last_repeat[key] >= AUTO_REPEAT_INTERVAL:
+                                input_triggered_render = True
+                                try:
+                                    if key == pygame.K_LEFT:
+                                        tetris.move_piece_left()
+                                    elif key == pygame.K_RIGHT:
+                                        tetris.move_piece_right()
+                                    elif key == pygame.K_UP:
+                                        tetris.rotate_clockwise()
+                                    key_last_repeat[key] = current_time
+                                except Exception as e:
+                                    log(f"Error in auto-repeat: {e}", level='ERROR', module="Tetris")
 
-            # Check again before operations (in case stop was set during event handling)
-            if stop_event is not None and stop_event.is_set():
-                break
-
-            # Game logic tick (runs at GAME_TICK_RATE)
-            if current_time - last_game_tick >= game_tick_interval:
-                delta_time = current_time - last_tick_time  # Calculate time since last tick
+            # Game logic tick (only if enough time has passed)
+            tick_needed = current_time - last_game_tick >= game_tick_interval
+            if tick_needed:
+                delta_time = current_time - last_tick_time
                 try:
-                    tetris.tick(delta_time, current_fps)  # Pass delta time and current FPS to tick method
+                    tetris.tick(delta_time, current_fps)
                     last_game_tick = current_time
-                    last_tick_time = current_time  # Update for next delta calculation
+                    last_tick_time = current_time
                 except Exception as e:
                     import traceback
                     log(f"Error in tetris.tick(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
-            # Render frame (runs at RENDER_FPS)
-            if current_time - last_render >= render_interval:
+            # Render frame (only if needed - don't block event processing)
+            render_needed = input_triggered_render or current_time - last_render >= render_interval
+            if render_needed:
                 try:
                     matrix.render_frame(canvas)
                     frame_count += 1
+                    
+                    # Calculate actual FPS
                     render_delta = current_time - last_frame_time
                     if render_delta > 0:
                         current_fps = 1.0 / render_delta
+                    
                     last_frame_time = current_time
                     last_render = current_time
 
-                    if frame_count == 1:
-                        print("First frame rendered successfully")
-
-                    # Log actual FPS periodically (opt-in)
-                    if FPS_DEBUG and frame_count % fps_check_interval == 0:
-                        now = time.time()
-                        elapsed = now - last_fps_time
+                    # FPS logging (always enabled for Tetris)
+                    if frame_count % fps_check_interval == 0:
+                        elapsed = current_time - last_fps_time
                         actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
-                        log(f"📊 Tetris FPS: {actual_fps:.1f} (frame {frame_count})", module="Tetris")
-                        last_fps_time = now
+                        log(f"📊 Tetris FPS: {actual_fps:.1f} | Frame: {frame_count}", module="Tetris")
+                        last_fps_time = current_time
 
                 except Exception as e:
                     import traceback
                     log(f"Error in matrix.render_frame(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
-            # Small sleep to prevent busy waiting
-            time.sleep(0.001)
+            # NO SLEEP - poll events as fast as possible to prevent drops
 
     except KeyboardInterrupt:
         print("\nShutting down...")
@@ -165,13 +220,18 @@ def run_tetris(matrix, stop_event=None, level=1):
         import traceback
         log(f"Unexpected error in Tetris loop: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
     finally:
-        log("🛑 Tetris game shutting down, cleaned {frame_count} frames, avg FPS should be ~20", module="Tetris")
+        log(f"🛑 Tetris shutting down | Total frames: {frame_count}", module="Tetris")
+        
+        # Stop event poller thread
+        if event_poller:
+            event_poller.stop()
+        
         try:
             matrix.shutdown()
         except Exception as e:
             import traceback
             log(f"Error during matrix shutdown: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
-        log("✅ Tetris game fully stopped", module="Tetris")
+        log("✅ Tetris fully stopped", module="Tetris")
 
 
 def run_video(matrix, render_path, loop, speed, start, end, brightness, playback_fps):
