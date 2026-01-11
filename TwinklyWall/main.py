@@ -85,6 +85,33 @@ def run_tetris(matrix, stop_event=None, level=1):
                     if event.type == pygame.QUIT:
                         log("Quit event received", module="Tetris")
                         break
+                    elif event.type == pygame.KEYDOWN:
+                        # Arrow keys for local testing (desktop only)
+                        if event.key == pygame.K_LEFT:
+                            try:
+                                tetris.move_piece_left()
+                            except Exception as e:
+                                log(f"Error handling LEFT key: {e}", level='ERROR', module="Tetris")
+                        elif event.key == pygame.K_RIGHT:
+                            try:
+                                tetris.move_piece_right()
+                            except Exception as e:
+                                log(f"Error handling RIGHT key: {e}", level='ERROR', module="Tetris")
+                        elif event.key == pygame.K_DOWN:
+                            try:
+                                tetris.drop_piece()
+                            except Exception as e:
+                                log(f"Error handling DOWN key: {e}", level='ERROR', module="Tetris")
+                        elif event.key == pygame.K_UP:
+                            try:
+                                tetris.rotate_clockwise()
+                            except Exception as e:
+                                log(f"Error handling UP key: {e}", level='ERROR', module="Tetris")
+                        elif event.key == pygame.K_SPACE:
+                            try:
+                                tetris.hard_drop_piece()
+                            except Exception as e:
+                                log(f"Error handling SPACE key: {e}", level='ERROR', module="Tetris")
 
             # Check again before operations (in case stop was set during event handling)
             if stop_event is not None and stop_event.is_set():

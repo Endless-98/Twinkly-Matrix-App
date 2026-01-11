@@ -1,9 +1,9 @@
 # All code in this file must be handwritten! No AI allowed!
 
 # TODO
-    # Ghost piece
     # Save piece
     # Tidy piece preview
+    # BUG: Piece stopping in wall (possibly when pressing down?)
     # Scoring
         # Soft drop score
         # Scoring system, including Back-to-Back recognition rules
@@ -35,7 +35,7 @@ class Tetris:
         self.ghost_opacity = 65
         
         ### Leveling ###
-        self.level = 1
+        self.level = 6
         self.score = 0 # For the scoreboard
         self.points = 0 # Progresses towards goal
         self.base_goal = 5
@@ -148,7 +148,6 @@ class Tetris:
             self.is_down = True
         if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
             self.is_down = False
-        # self.rotate_tetromino() # For debug only
 
         if not self.is_down:
             self.reset_down()
@@ -234,10 +233,6 @@ class Tetris:
 
     def moved(self, wants_to_lock = False):
         if self.is_down:
-            if wants_to_lock:
-                self.lock_piece()
-                return
-
             if self.moves_while_down < self.max_moves_while_down:
                 self.moves_while_down += 1
                 self.down_time_elapsed = 0
@@ -318,7 +313,7 @@ class Tetris:
                         case "MOVE_DOWN":
                             tetris.drop_piece()
                         case "HARD_DROP":
-                            tetris.drop_piece()
+                            tetris.hard_drop_piece()
                 return handle_tetris_input
             set_input_handler(player.player_id, make_input_handler())
        
@@ -345,10 +340,10 @@ class Tetris:
     def drop_piece(self):
         log("MOVE_DOWN", module="Tetris")
         self.move_tetromino(offset=(0,-1))
-        self.moved(wants_to_lock=true)
+        self.moved(wants_to_lock=True)
 
     def hard_drop_piece(self):
         log("HARD_DROP", module="Tetris")
         for _ in range(self.blocks_height):
             self.move_tetromino(offset=(0,-1))
-        self.moved(wants_to_lock=true)
+        self.moved(wants_to_lock=True)
