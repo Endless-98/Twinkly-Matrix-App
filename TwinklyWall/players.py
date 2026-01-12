@@ -29,6 +29,7 @@ class Player:
     last_seen: datetime = field(default_factory=datetime.utcnow)
     on_input: Optional[InputHandler] = None
     backlog: Deque[InputPayload] = field(default_factory=deque)
+    game_state: Dict[str, Any] = field(default_factory=dict)  # For game-specific data (score, level, etc.)
 
     def enqueue(self, payload: InputPayload) -> None:
         """Append a payload to this player's backlog and update last_seen."""

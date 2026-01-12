@@ -382,6 +382,47 @@ def game_status():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/game/state', methods=['GET'])
+def game_state():
+    """
+    Get current game state for a player (score, level, lines, etc.).
+    Query params: ?game=tetris&player_id=uuid-123
+    """
+    try:
+        from game_players import get_player_data
+
+        game = request.args.get('game', 'tetris')
+        player_id = request.args.get('player_id')
+
+        if not player_id:
+            return jsonify({'error': 'Missing player_id'}), 400
+
+        # Fetch player data from the game state
+        player_data = get_player_data(player_id)
+        
+        if not player_data:
+            # Return default state if player not found
+            return jsonify({
+                'status': 'ok',
+                'player_id': player_id,
+                'game': game,
+                'score': 0,
+                'level': 1,
+                'lines': 0,
+            }), 200
+
+        return jsonify({
+            'status': 'ok',
+            'player_id': player_id,
+            'game': game,
+            'score': player_data.get('score', 0),
+            'level': player_data.get('level', 1),
+            'lines': player_data.get('lines', 0),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/test/solid', methods=['POST'])
 def test_solid():

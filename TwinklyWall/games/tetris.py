@@ -17,7 +17,7 @@ import numpy
 import random
 from .tetromino import Tetromino, Random_Bag
 from logger import log
-from game_players import get_active_players_for_game, get_game_for_player
+from game_players import set_player_score_data,get_active_players_for_game, get_game_for_player
 from players import set_input_handler
 import copy
 import time
@@ -35,7 +35,7 @@ class Tetris:
         self.ghost_opacity = 65
         
         ### Leveling ###
-        self.level = 6
+        self.level = 1
         self.score = 0 # For the scoreboard
         self.points = 0 # Progresses towards goal
         self.base_goal = 5
@@ -46,7 +46,7 @@ class Tetris:
         self.points_reward = [0,1,3,5,8] # Index: num lines cleared at once
         self.was_last_score_tetris = False
 
-        self.players = get_active_players_for_game 
+        self.players = get_active_players_for_game('tetris')
         self.live_tetromino = None
         self.is_playing = True
         self.gravity = 0
@@ -66,7 +66,6 @@ class Tetris:
         self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
         self.dead_grid  = [[0 for element in range(self.blocks_width)] for row in range(self.blocks_height)]
         self.spawn_tetromino()
-
 
     def get_size(self, type_index) -> int:
         size = 4 if type_index == 4 or type_index == 1 else 3
@@ -145,18 +144,26 @@ class Tetris:
                 pos = (x_position * self.block_size, y_position * self.block_size)
                 self.draw_square(color_index, pos)
 
-    def drop_tetromino(self):
+    def drop_tetromino(self, is_soft_drop = False) -> bool:
+        move_succeeded = True
         if not self.move_tetromino(offset=(0, -1)):
             self.is_down = True
+            move_succeeded = False
+        elif is_soft_drop:
+            self.award_score(1)
+
         if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
             self.is_down = False
 
         if not self.is_down:
             self.reset_down()
 
-    def hard_drop_tetromino(self):
+        return move_succeeded
+
+    def hard_drop_tetromino(self, was_player_called = False):
         for _ in range(self.blocks_height):
-            self.drop_tetromino()
+            if self.drop_tetromino() and was_player_called:
+                self.award_score(2)
         self.lock_piece()
 
     def spawn_tetromino(self):
@@ -220,6 +227,7 @@ class Tetris:
         self.live_tetromino.shape = [list(reversed(element)) for element in zip(*self.live_tetromino.shape)]
 
     def lock_piece(self):
+        self.clear_lines()
         self.move_tetromino(offset=(0, -1))
 
         pos = self.live_tetromino.grid_position
@@ -232,6 +240,7 @@ class Tetris:
                     self.dead_grid[grid_y][grid_x] = tetromino_cell_value
 
         self.spawn_tetromino()
+        self.is_down = False
 
     def reset_down(self):
         self.down_time_elapsed = 0
@@ -250,28 +259,43 @@ class Tetris:
         self.drop_interval = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
 
     def clear_lines(self):
-        lines_cleared = 0 
-        for y, row in enumerate(self.dead_grid): 
-            inverse_y = self.blocks_height - y
-            if not 0 in row: # Row is full
-                self.dead_grid.pop(y)
-                self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
-                lines_cleared += 1
-                self.next_level_goal *= self.level
-                    
-        # TODO: Add animation
-        self.score_lines(lines_cleared)
+        keep_clearing = True
+        while keep_clearing:
+            lines_cleared = 0 
+            for y, row in enumerate(self.dead_grid): 
+                inverse_y = self.blocks_height - y
+                if not 0 in row: # Row is full
+                    self.dead_grid.pop(y)
+                    self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
+                    lines_cleared += 1
+                    print("Line clear")
+                        
+            # TODO: Add animation
+            self.score_lines(lines_cleared)
+            keep_clearing = lines_cleared > 0
+
+    def award_score(self, score_amount):
+        self.score += score_amount
+        
+        print(f"Score: {self.score}")
 
     def score_lines(self, lines_cleared):
-        reward = self.points_reward[lines_cleared] 
-        self.points += reward
-        self.score += (reward * 100) * self.level
+        points_award = self.points_reward[lines_cleared] 
+        self.points += points_award
+        score_award = (points_award * 100) * self.level
+        if score_award > 0:
+            self.award_score(score_award)
+
+        if points_award > 0:
+            print(f"Points: {self.points}: Goal: {self.next_level_goal}")
         if self.points >= self.next_level_goal:
             self.level_up()
 
     def level_up(self):
         self.level += 1
+        self.points -= self.next_level_goal
         self.next_level_goal = self.base_goal * self.level
+        self.update_score()
 
         log(f"Level up: {self.level}")
         print(f"Level up: {self.level}")
@@ -286,11 +310,11 @@ class Tetris:
             self.drop_time_elapsed = 0
             
         if self.is_down:
-            # print(f"Down time elapsed {self.down_time_elapsed}")
+            print(f"Down time elapsed {self.down_time_elapsed}")
             self.down_time_elapsed += delta_time
         if self.down_time_elapsed >= self.max_lock_down_time:
             self.down_time_elapsed = 0
-            self.lock_piece()
+            self.hard_drop_tetromino()
             self.is_down = False
 
         self.draw_grid()
@@ -301,6 +325,10 @@ class Tetris:
                 
     def begin_play(self): # Called in main
         self.bind_input(self)   
+
+    def update_score(self):
+        for player in self.players:
+            set_player_score_data(player.player_id, self.score, self.level, self.lines_cleared)
 
     def bind_input(self, tetris):
         players = get_active_players_for_game("tetris")
@@ -326,36 +354,30 @@ class Tetris:
        
     def move_piece_left(self):
         log("LEFT", module="Tetris")
-        print("LEFT")
         self.move_tetromino(offset=(-1,0))
         self.moved()
 
     def move_piece_right(self):
         log("RIGHT", module="Tetris")
-        print("RIGHT")
         self.move_tetromino(offset=(1,0))
         self.moved()
 
     def rotate_clockwise(self):
         log("ROTATE_CLOCKWISE", module="Tetris")
-        print("CLOCKWISE")
         self.rotate_tetromino()
         self.moved()
 
     def rotate_counterclockwise(self):
         log("ROTATE__COUNTER_CLOCKWISE", module="Tetris")
-        print("COUNTER_CLOCKWISE")
         self.rotate_tetromino(clockwise=False)
         self.moved()
 
     def drop_piece(self):
         log("MOVE_DOWN", module="Tetris")
-        print("DROP")
         self.drop_tetromino()
         self.moved(wants_to_lock=True)
 
     def hard_drop_piece(self):
         log("HARD_DROP", module="Tetris")
-        print("HARD_DROP")
-        self.hard_drop_tetromino()
+        self.hard_drop_tetromino(was_player_called=True)
         self.moved(wants_to_lock=True)

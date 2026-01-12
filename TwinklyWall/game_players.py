@@ -164,3 +164,29 @@ def cleanup_idle_players() -> None:
 def player_count_for_game(game: str) -> int:
     """Get current player count for a game."""
     return _game_manager.player_count_for_game(game)
+
+
+def get_player_data(player_id: str) -> Optional[dict]:
+    """
+    Get game state data for a player (score, level, lines, etc.).
+    Returns the game_state dict stored on the player, or None if player not found.
+    """
+    registry = get_registry()
+    player = registry._players.get(player_id)
+    if player:
+        return player.game_state
+    return None
+
+
+def set_player_score_data(player_id: str, score: int, level: int = 1, lines: int = 0) -> None:
+    """
+    Update a player's game score data.
+    This should be called from the game (e.g., Tetris) whenever score changes.
+    """
+    registry = get_registry()
+    player = registry._players.get(player_id)
+    if player:
+        player.game_state['score'] = score
+        player.game_state['level'] = level
+        player.game_state['lines'] = lines
+

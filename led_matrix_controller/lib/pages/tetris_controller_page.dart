@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../providers/app_state.dart';
+import '../providers/game_state.dart';
+import '../widgets/score_counter.dart';
 
 class TetrisControllerPage extends ConsumerStatefulWidget {
   const TetrisControllerPage({super.key});
@@ -19,11 +21,36 @@ class TetrisControllerPage extends ConsumerStatefulWidget {
 class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
   String? _playerId;
   Timer? _heartbeatTimer;
+  Timer? _scoreUpdateTimer;
 
   @override
   void initState() {
     super.initState();
     _initializePlayer();
+  }
+
+  Future<void> _fetchGameScore() async {
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final response = await http.get(
+        Uri.parse('http://$fppIp:5000/api/game/state?game=tetris&player_id=$_playerId'),
+      ).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final score = data['score'] ?? 0;
+        final level = data['level'] ?? 1;
+        final lines = data['lines'] ?? 0;
+
+        ref.read(gameScoreProvider.notifier).updateGameState(
+          score: score,
+          level: level,
+          lines: lines,
+        );
+      }
+    } catch (e) {
+      debugPrint('Score fetch error: $e');
+    }
   }
 
   Future<void> _initializePlayer() async {
@@ -41,6 +68,11 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
     // Start heartbeat timer (send every 10 seconds to prevent timeout)
     _heartbeatTimer = Timer.periodic(const Duration(seconds: 10), (_) {
       _sendHeartbeat();
+    });
+
+    // Start score update timer (fetch every 200ms for smooth updates)
+    _scoreUpdateTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+      _fetchGameScore();
     });
   }
 
@@ -114,6 +146,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
   @override
   void dispose() {
     _heartbeatTimer?.cancel();
+    _scoreUpdateTimer?.cancel();
     _leaveGame();
     super.dispose();
   }
@@ -129,6 +162,8 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
 
   @override
   Widget build(BuildContext context) {
+    final gameScore = ref.watch(gameScoreProvider);
+
     return WillPopScope(
       onWillPop: () async {
         debugPrint('👈 Back button pressed, leaving game before navigation...');
@@ -141,6 +176,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
           title: const Text('Tetris'),
           centerTitle: true,
           backgroundColor: Colors.purple[900],
+          elevation: 0,
         ),
         body: LayoutBuilder(
         builder: (context, constraints) {
@@ -149,21 +185,35 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
           
           return Stack(
             children: [
+              // Score counter at the top
+              Positioned(
+                top: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: ScoreCounter(
+                    score: gameScore.score,
+                    level: gameScore.level,
+                    lines: gameScore.lines,
+                  ),
+                ),
+              ),
+
               // Store piece button (above/left of controls)
               Positioned(
                 left: 30,
-                bottom: 430,
+                bottom: 460,
                 child: _TetrisButton(
                   icon: Icons.inventory_2,
                   color: Colors.amber,
-                  size: 150,
+                  size: 130,
                   onPressed: () => _sendCommand('STORE_PIECE'),
                 ),
               ),
 
               // Center: Fast Drop button
               Positioned(
-                left: screenWidth * 0.5 - 90,
+                left: screenWidth * 0.5 - 85,
                 bottom: screenHeight * 0.40,
                 child: _TetrisButton(
                   icon: Icons.arrow_downward,
@@ -176,12 +226,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Bottom Left: Move Left
               Positioned(
-                left: 10,
-                bottom: 140,
+                left: 20,
+                bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_back,
                   color: Colors.blue,
-                  size: 190,
+                  size: 170,
                   onPressed: () => _sendCommand('MOVE_LEFT'),
                   onHeld: () => _sendCommand('MOVE_LEFT_HELD'),
                   enableAutoRepeat: true,
@@ -190,12 +240,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Above Left: Rotate Left
               Positioned(
-                left: 20,
-                bottom: 330,
+                left: 30,
+                bottom: 310,
                 child: _TetrisButton(
                   icon: Icons.rotate_left,
                   color: Colors.cyan,
-                  size: 150,
+                  size: 130,
                   onPressed: () => _sendCommand('ROTATE_LEFT'),
                   enableAutoRepeat: true,
                 ),
@@ -203,12 +253,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Bottom Right: Move Right
               Positioned(
-                right: 10,
-                bottom: 140,
+                right: 20,
+                bottom: 120,
                 child: _TetrisButton(
                   icon: Icons.arrow_forward,
                   color: Colors.green,
-                  size: 190,
+                  size: 170,
                   onPressed: () => _sendCommand('MOVE_RIGHT'),
                   onHeld: () => _sendCommand('MOVE_RIGHT_HELD'),
                   enableAutoRepeat: true,
@@ -217,12 +267,12 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
               
               // Above Right: Rotate Right
               Positioned(
-                right: 20,
-                bottom: 330,
+                right: 30,
+                bottom: 310,
                 child: _TetrisButton(
                   icon: Icons.rotate_right,
                   color: Colors.pink,
-                  size: 150,
+                  size: 130,
                   onPressed: () => _sendCommand('ROTATE_RIGHT'),
                   enableAutoRepeat: true,
                 ),
