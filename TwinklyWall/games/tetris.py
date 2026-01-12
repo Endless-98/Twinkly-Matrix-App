@@ -275,8 +275,12 @@ class Tetris:
             keep_clearing = lines_cleared > 0
 
     def award_score(self, score_amount):
+        if score_amount <= 0:
+            return
+
         self.score += score_amount
-        
+        self.update_scoreboard()
+
         print(f"Score: {self.score}")
 
     def score_lines(self, lines_cleared):
@@ -295,7 +299,7 @@ class Tetris:
         self.level += 1
         self.points -= self.next_level_goal
         self.next_level_goal = self.base_goal * self.level
-        self.update_score()
+        self.update_scoreboard()
 
         log(f"Level up: {self.level}")
         print(f"Level up: {self.level}")
@@ -326,7 +330,7 @@ class Tetris:
     def begin_play(self): # Called in main
         self.bind_input(self)   
 
-    def update_score(self):
+    def update_scoreboard(self):
         for player in self.players:
             set_player_score_data(player.player_id, self.score, self.level, self.lines_cleared)
 
