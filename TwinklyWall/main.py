@@ -27,8 +27,10 @@ os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
 import pygame
 # Initialize pygame to ensure image module is available even in headless mode
 if HEADLESS:
-    # Initialize only what we need for image loading
-    pygame.display.init()  # Needed for image loading even with dummy driver
+    # Initialize display and set a video mode for the dummy driver
+    # This is required for convert_alpha() to work when loading images
+    pygame.display.init()
+    pygame.display.set_mode((1, 1))  # Minimal dummy surface
 
 # FPS/performance debug flag (off by default, enable via env or CLI)
 FPS_DEBUG = os.environ.get('TWINKLYWALL_FPS_DEBUG', '').lower() in ('1', 'true', 'yes')
