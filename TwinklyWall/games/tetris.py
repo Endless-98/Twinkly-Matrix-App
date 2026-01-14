@@ -13,6 +13,7 @@
 import sys
 import os
 import pygame
+from pathlib import Path
 import numpy
 import random
 from .tetromino import Tetromino, Random_Bag
@@ -47,11 +48,8 @@ class Tetris:
         self.combo = 0
         self.points_reward = [0,1,3,5,8] # Index: num lines cleared at once
         self.was_last_score_tetris = False
-        games_filepath = os.path.dirname(os.path.abspath(__file__))
-        game_over_path = games_filepath + "/game_over_screen.png"
-        # print(games_filepath)
-        # print(game_over_path)
-        # log(game_over_path)
+        games_filepath = Path(__file__).parent
+        game_over_path = str(games_filepath) + "/game_over_screen.png"
         self.game_over_image = pygame.image.load(game_over_path).convert_alpha()
 
         self.players = get_active_players_for_game('tetris')
