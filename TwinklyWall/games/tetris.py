@@ -33,6 +33,7 @@ class Tetris:
         self.border_color = (105,105,105)
         self.screen = canvas
         self.ghost_opacity = 65
+        self.game_over_image = pygame.image.load("TwinklyWall/games/game_over_screen.png").convert_alpha()
         
         ### Leveling ###
         self.level = 1
@@ -317,7 +318,19 @@ class Tetris:
         print(f"Score: {self.score}")
         print(f"Level: {self.level}")
 
+
     def tick(self, delta_time, fps): # Called in main
+        if not self.is_playing:
+            self.screen.fill((0, 0, 0))
+            image_height = self.blocks_height * self.block_size / 1.3
+            image_width = self.blocks_width * self.block_size
+            scaled_image = pygame.transform.scale(self.game_over_image, (image_width, image_height))
+            scaled_rect = scaled_image.get_rect()
+            scaled_rect.center = ((self.screen.get_width() // 2) + image_width / 1.2, self.screen.get_height() - (scaled_rect.height // 2))
+            self.screen.blit(scaled_image, scaled_rect)
+            pygame.display.update()
+            return
+        
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval:
             self.drop_tetromino()

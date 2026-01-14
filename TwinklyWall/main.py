@@ -92,7 +92,7 @@ def run_tetris(matrix, stop_event=None, level=1):
 
     try:
         log("▶️ Tetris game loop started", module="Tetris")
-        while tetris.is_playing:
+        while True:
             current_time = time.time()
             
             # Check stop signal
