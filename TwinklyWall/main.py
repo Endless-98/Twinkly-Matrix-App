@@ -31,6 +31,7 @@ from video_player import VideoPlayer
 from logger import log
 from event_poller import EventPoller
 import pygame
+import players
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
 print(f"Mode: {'Headless' if HEADLESS else 'Windowed'}")
@@ -186,7 +187,7 @@ def run_tetris(matrix, stop_event=None, level=1):
                     break
 
             # Render frame (only if needed - don't block event processing)
-            render_needed = input_triggered_render or current_time - last_render >= render_interval
+            render_needed = input_triggered_render or players.input_received or current_time - last_render >= render_interval
             if render_needed:
                 try:
                     matrix.render_frame(canvas)
@@ -199,6 +200,7 @@ def run_tetris(matrix, stop_event=None, level=1):
                     
                     last_frame_time = current_time
                     last_render = current_time
+                    players.input_received = False
 
                     # FPS logging (always enabled for Tetris)
                     if frame_count % fps_check_interval == 0:
