@@ -33,7 +33,7 @@ class Tetris:
         self.border_color = (105,105,105)
         self.screen = canvas
         self.ghost_opacity = 65
-        self.game_over_image = pygame.image.load("TwinklyWall/games/game_over_screen.png").convert_alpha()
+        self.game_over_image = pygame.image.load("./TwinklyWall/games/game_over_screen.png").convert_alpha()
         
         ### Leveling ###
         self.level = 1
