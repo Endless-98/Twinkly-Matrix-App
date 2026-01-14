@@ -49,6 +49,7 @@ class Tetris:
         self.was_last_score_tetris = False
         game_over_path = os.path.join(os.path.dirname(os.path.abspath(__file__)))
         print(game_over_path + "/game_over_screen.png")
+        log(game_over_path + "/game_over_screen.png")
         self.game_over_image = pygame.image.load(game_over_path + "/game_over_screen.png").convert_alpha()
 
         self.players = get_active_players_for_game('tetris')
