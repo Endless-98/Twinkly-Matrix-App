@@ -17,9 +17,18 @@ ON_PI = is_raspberry_pi()
 HEADLESS = ON_PI or ('DISPLAY' not in os.environ)
 
 if HEADLESS:
+    # Use 'dummy' driver but ensure image loading still works
+    # The dummy driver doesn't initialize a display but pygame.image still works
     os.environ['SDL_VIDEODRIVER'] = 'dummy'
     os.environ['SDL_AUDIODRIVER'] = 'dummy'
 os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = '1'
+
+# Import pygame after setting env vars
+import pygame
+# Initialize pygame to ensure image module is available even in headless mode
+if HEADLESS:
+    # Initialize only what we need for image loading
+    pygame.display.init()  # Needed for image loading even with dummy driver
 
 # FPS/performance debug flag (off by default, enable via env or CLI)
 FPS_DEBUG = os.environ.get('TWINKLYWALL_FPS_DEBUG', '').lower() in ('1', 'true', 'yes')
@@ -30,7 +39,6 @@ from games.tetris import Tetris
 from video_player import VideoPlayer
 from logger import log
 from event_poller import EventPoller
-import pygame
 import players
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
