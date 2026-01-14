@@ -39,6 +39,7 @@ class Tetris:
         self.score = 0 # For the scoreboard
         self.points = 0 # Progresses towards goal
         self.base_goal = 5
+        self.total_lines_cleared = 0
         self.next_level_goal = self.base_goal * self.level
         self.play_ceiling = self.screen.get_height() / self.block_size # Only ~ 16.667 visible on matrix with current setup
         self.speed_increment = 0.007
@@ -273,6 +274,7 @@ class Tetris:
                     self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
                     lines_cleared += 1
                     print("Line clear")
+            self.total_lines_cleared += lines_cleared
                         
             # TODO: Add animation
             self.score_lines(lines_cleared)
@@ -340,7 +342,7 @@ class Tetris:
 
     def update_scoreboard(self):
         for player in self.players:
-            set_player_score_data(player.player_id, self.score, self.level, self.lines_cleared)
+            set_player_score_data(player.player_id, self.score, self.level, self.total_lines_cleared)
 
     def bind_input(self, tetris):
         players = get_active_players_for_game("tetris")
