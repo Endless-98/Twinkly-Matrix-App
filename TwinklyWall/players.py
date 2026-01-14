@@ -119,20 +119,17 @@ class Players:
         - Ensures the player exists (auto-registers if needed).
         - Updates last_seen.
         - Enqueues the payload.
-        - Invokes per-player and global callbacks (outside the lock).
+        - Invokes global callbacks immediately (logging/metrics).
+        - Per-player handlers are invoked on the game thread by draining the queue.
         """
         listeners: List[InputHandler]
         player: Player
-        handler: Optional[InputHandler]
 
         with self._lock:
             player = self._players.get(player_id) or self.register(player_id)
             player.enqueue(payload)
-            handler = player.on_input
             listeners = list(self._global_listeners)
 
-        if handler:
-            handler(player, payload)
         for listener in listeners:
             listener(player, payload)
 
@@ -203,3 +200,8 @@ def set_input_handler(player_id: str, handler: InputHandler) -> None:
 def active_players() -> List[Player]:
     """Snapshot of active players from the shared registry."""
     return _registry.active_players()
+
+
+def next_input(player_id: str) -> Optional[InputPayload]:
+    """Pop the oldest queued payload for a player, if any."""
+    return _registry.next_input(player_id)

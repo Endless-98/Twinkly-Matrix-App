@@ -173,6 +173,21 @@ def run_tetris(matrix, stop_event=None, level=1):
                                 except Exception as e:
                                     log(f"Error in auto-repeat: {e}", level='ERROR', module="Tetris")
 
+            # Drain any queued player inputs (from API threads) on the game thread
+            for player in players.active_players():
+                while True:
+                    payload = players.next_input(player.player_id)
+                    if payload is None:
+                        break
+                    handler = player.on_input
+                    if handler:
+                        try:
+                            handler(player, payload)
+                            input_triggered_render = True
+                        except Exception as e:
+                            import traceback
+                            log(f"Error handling queued input for player {player.player_id}: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
+
             # Game logic tick (only if enough time has passed)
             tick_needed = current_time - last_game_tick >= game_tick_interval
             if tick_needed:
