@@ -27,7 +27,7 @@ class Tetris:
         ### Settings ###
         self.headless = HEADLESS
         self.blocks_width = 10
-        self.blocks_height = 25 # Only 16.5 visible on matrix with current setup
+        self.blocks_height = 25 
         self.block_size = 3
         self.border_thickness = 2
         self.border_color = (105,105,105)
@@ -40,6 +40,7 @@ class Tetris:
         self.points = 0 # Progresses towards goal
         self.base_goal = 5
         self.next_level_goal = self.base_goal * self.level
+        self.play_ceiling = self.screen.get_height() / self.block_size # Only ~ 16.667 visible on matrix with current setup
         self.speed_increment = 0.007
         self.base_speed = 0.8
         self.combo = 0
@@ -49,13 +50,14 @@ class Tetris:
         self.players = get_active_players_for_game('tetris')
         self.live_tetromino = None
         self.is_playing = True
-        self.gravity = 0
         self.hard_drop_cooldown = 0.0
         self.hard_drop_time_elapsed = 0.0
         self.drop_interval = 0.0
         self.drop_time_elapsed = 0.0
         self.max_lock_down_time = 0.500
         self.down_time_elapsed = 0.0
+        self.gravity = 0
+        self.calc_gravity() # Also called each time we level up
         self.is_down = False
         self.max_moves_while_down = 15
         self.moves_while_down = 0
@@ -214,7 +216,6 @@ class Tetris:
             return True
 
         piece_group = 1 if type_index == 1 else 0
-        # print(f"KICK: [piece_group: {piece_group}] [int(clockwise): {int(clockwise)}] [desired_rot: {desired_rot}]")
         for offset in Tetromino.kick_offsets[piece_group][clockwise][desired_rot]:
             if self.move_tetromino(offset):
                 return True
@@ -233,11 +234,14 @@ class Tetris:
         pos = self.live_tetromino.grid_position
         size = self.get_size(self.live_tetromino.type_index)
 
+        # There is probably a "Pythonic" way to make this more concise
         for local_y, grid_y in enumerate(range(pos[1], pos[1] + size)):
             for local_x, grid_x in enumerate(range(pos[0], pos[0] + size)):
                 tetromino_cell_value = self.live_tetromino.shape[-local_y + size - 1][local_x] # Invert y because the origin is in the bottom left of the grid
                 if tetromino_cell_value != 0:
                     self.dead_grid[grid_y][grid_x] = tetromino_cell_value
+                    if grid_y >= self.play_ceiling:
+                        self.game_over()
 
         self.spawn_tetromino()
         self.is_down = False
@@ -255,7 +259,7 @@ class Tetris:
             else:
                 self.lock_piece()
 
-    def calc_gravity(self, fps): # TODO: Call every level change
+    def calc_gravity(self): # TODO: Call every level change
         self.drop_interval = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
 
     def clear_lines(self):
@@ -300,13 +304,18 @@ class Tetris:
         self.points -= self.next_level_goal
         self.next_level_goal = self.base_goal * self.level
         self.update_scoreboard()
+        self.calc_gravity()
 
         log(f"Level up: {self.level}")
         print(f"Level up: {self.level}")
 
-    def tick(self, delta_time, fps): # Called in main
-        self.calc_gravity(fps)
+    def game_over(self):
+        self.is_playing = False
+        print("Game over!")
+        print(f"Score: {self.score}")
+        print(f"Level: {self.level}")
 
+    def tick(self, delta_time, fps): # Called in main
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval:
             self.drop_tetromino()
@@ -314,7 +323,6 @@ class Tetris:
             self.drop_time_elapsed = 0
             
         if self.is_down:
-            print(f"Down time elapsed {self.down_time_elapsed}")
             self.down_time_elapsed += delta_time
         if self.down_time_elapsed >= self.max_lock_down_time:
             self.down_time_elapsed = 0

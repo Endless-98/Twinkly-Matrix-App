@@ -310,11 +310,16 @@ class _TetrisButton extends StatefulWidget {
 class _TetrisButtonState extends State<_TetrisButton> {
   bool _isPressed = false;
   bool _isActuallyPressed = false; // Track actual press state separately
+  bool _hasHandledPress = false; // Prevent duplicate handler calls
   Timer? _feedbackTimer;
   Timer? _holdTimer;
   Timer? _autoRepeatTimer;
 
   void _handlePressStart() {
+    // Prevent duplicate calls (onTapDown + onLongPressStart can both fire)
+    if (_hasHandledPress) return;
+    _hasHandledPress = true;
+
     // Cancel any pending timers
     _feedbackTimer?.cancel();
     _holdTimer?.cancel();
@@ -329,16 +334,17 @@ class _TetrisButtonState extends State<_TetrisButton> {
     // Show visual feedback immediately
     setState(() => _isPressed = true);
     
-    // Send tap command immediately
-    widget.onPressed();
-    
-    // Start hold timer if onHeld callback exists
+    // If onHeld exists, don't fire onPressed immediately - wait to see if it's a hold
     if (widget.onHeld != null) {
+      // Start hold timer - if held long enough, fire onHeld
       _holdTimer = Timer(const Duration(milliseconds: 300), () {
         if (mounted && _isActuallyPressed) {
           widget.onHeld!();
         }
       });
+    } else {
+      // No onHeld callback, fire onPressed immediately
+      widget.onPressed();
     }
     
     // Start auto-repeat timer for left/right buttons (0.125s delay, then repeat every 50ms)
@@ -367,13 +373,22 @@ class _TetrisButtonState extends State<_TetrisButton> {
   }
 
   void _handlePressEnd() {
+    // Check if we should fire onPressed (quick tap, not a hold)
+    bool shouldFireOnPressed = widget.onHeld != null && (_holdTimer?.isActive ?? false);
+
     // Cancel all timers on release
     _holdTimer?.cancel();
     _autoRepeatTimer?.cancel();
-    
+
     // Mark as not actually pressed
     _isActuallyPressed = false;
-    
+    _hasHandledPress = false; // Reset for next press
+
+    // Fire onPressed if it was a quick tap (onHeld exists but hold timer was still active)
+    if (shouldFireOnPressed) {
+      widget.onPressed();
+    }
+
     // If feedback timer hasn't fired yet, keep visual feedback until it does
     // The timer will handle resetting the visual state after 150ms
     // If timer already fired, we need to reset immediately
