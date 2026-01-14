@@ -336,6 +336,13 @@ def game_heartbeat():
         if not player_id:
             return jsonify({'error': 'Missing player_id'}), 400
 
+        # Ensure the player is joined so per-game handlers are bound
+        current_game = get_game_for_player(player_id)
+        if current_game is None:
+            # Auto-join to tetris if not already tracked
+            join_game(player_id, phone_id=player_id, game='tetris')
+            current_game = 'tetris'
+
         # Update heartbeat
         heartbeat(player_id)
 
@@ -343,7 +350,14 @@ def game_heartbeat():
         if 'cmd' in data:
             from game_players import get_game_for_player as get_player_game
             player_game = get_player_game(player_id)
-            cmd = data.get('cmd', 'UNKNOWN')
+            # Normalize command for consistent routing
+            raw_cmd = data.get('cmd', 'UNKNOWN')
+            cmd = raw_cmd.strip().upper()
+            # Map common variants to expected command names
+            if cmd in ("DROP", "DROP_HARD", "HARD"):  # allow Flutter variations
+                cmd = "HARD_DROP"
+            data['cmd'] = cmd
+
             log(f"🕹️  BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", module="API")
             handle_input(player_id, data)
 
