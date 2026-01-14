@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from threading import Lock
 from typing import Any, Callable, Deque, Dict, Iterable, List, Optional
+import time
 
 InputPayload = Dict[str, Any]
 InputHandler = Callable[["Player", InputPayload], None]
@@ -52,6 +53,9 @@ class Players:
         self._players: Dict[str, Player] = {}
         self._lock = Lock()
         self._global_listeners: List[InputHandler] = []
+        self._last_hard_drop: Dict[str, float] = {}
+
+    HARD_DROP_COOLDOWN_SEC = 0.75  # prevent repeat hard-drops while held
 
     def register(
         self,
@@ -127,6 +131,20 @@ class Players:
 
         with self._lock:
             player = self._players.get(player_id) or self.register(player_id)
+
+            # Drop repeated HARD_DROP while the button is held (cooldown-based)
+            cmd = str(payload.get("cmd", "")).upper()
+            now = time.monotonic()
+            if cmd == "HARD_DROP":
+                last_ts = self._last_hard_drop.get(player_id, 0.0)
+                if (now - last_ts) < self.HARD_DROP_COOLDOWN_SEC:
+                    # Ignore this repeat hard drop
+                    return
+                self._last_hard_drop[player_id] = now
+            else:
+                # Any other command clears the cooldown marker
+                self._last_hard_drop.pop(player_id, None)
+
             player.enqueue(payload)
             listeners = list(self._global_listeners)
 
