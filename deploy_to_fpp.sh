@@ -53,6 +53,18 @@ ssh -p "$FPP_PORT" "$FPP_USER@$FPP_HOST" "
     fi
 "
 
+# Create symlink for game_over image if it doesn't exist
+echo "🔗 Creating game_over.png symlink..."
+ssh -p "$FPP_PORT" "$FPP_USER@$FPP_HOST" "
+    cd ~/TwinklyWall_Project/TwinklyWall/games
+    if [ ! -e game_over.png ]; then
+        ln -sf game_over_screen.png game_over.png
+        echo 'Created symlink: game_over.png -> game_over_screen.png'
+    else
+        echo 'Symlink already exists'
+    fi
+"
+
 # Run the setup script in debug mode
 echo "🧪 Running setup script with debug logging..."
 ssh -p "$FPP_PORT" "$FPP_USER@$FPP_HOST" "
