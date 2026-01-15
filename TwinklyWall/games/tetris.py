@@ -50,12 +50,7 @@ class Tetris:
         self.was_last_score_tetris = False
         current_dir = os.path.dirname(os.path.abspath(__file__))
         img_path = os.path.join(current_dir, 'game_over.png')
-        print(img_path)
-        # game_over_path = str(games_filepath) + "/game_over_screen.png"
-        # game_over_img_path = sys.argv[0] + "/games/game_over_screen.png"
         self.game_over_image = pygame.image.load(str(img_path)).convert_alpha()
-        # self.game_over_image = pygame.image.load(abs_script_path).convert_alpha()
-        # self.game_over_image = pygame.image.load("./game_over_screen.png").convert_alpha()
 
         self.players = get_active_players_for_game('tetris')
         self.live_tetromino = None
@@ -238,9 +233,7 @@ class Tetris:
         self.live_tetromino.shape = [list(reversed(element)) for element in zip(*self.live_tetromino.shape)]
 
     def lock_piece(self):
-        self.clear_lines()
         self.move_tetromino(offset=(0, -1))
-
         pos = self.live_tetromino.grid_position
         size = self.get_size(self.live_tetromino.type_index)
 
@@ -255,6 +248,7 @@ class Tetris:
 
         self.spawn_tetromino()
         self.is_down = False
+        self.clear_lines()
 
     def reset_down(self):
         self.down_time_elapsed = 0
@@ -283,6 +277,8 @@ class Tetris:
                     self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
                     lines_cleared += 1
                     print("Line clear")
+                    pygame.display.flip()
+
             self.total_lines_cleared += lines_cleared
                         
             # TODO: Add animation
@@ -326,17 +322,19 @@ class Tetris:
         print(f"Score: {self.score}")
         print(f"Level: {self.level}")
 
+    def draw_game_over_frame(self):
+        self.screen.fill((0, 0, 0))
+        image_height = self.blocks_height * self.block_size / 1.3
+        image_width = self.blocks_width * self.block_size
+        scaled_image = pygame.transform.scale(self.game_over_image, (image_width, image_height))
+        scaled_rect = scaled_image.get_rect()
+        scaled_rect.center = ((self.screen.get_width() // 2) + image_width / 1.2, self.screen.get_height() - (scaled_rect.height // 2))
+        self.screen.blit(scaled_image, scaled_rect)
+        pygame.display.update()
 
     def tick(self, delta_time, fps): # Called in main
         if not self.is_playing:
-            self.screen.fill((0, 0, 0))
-            image_height = self.blocks_height * self.block_size / 1.3
-            image_width = self.blocks_width * self.block_size
-            scaled_image = pygame.transform.scale(self.game_over_image, (image_width, image_height))
-            scaled_rect = scaled_image.get_rect()
-            scaled_rect.center = ((self.screen.get_width() // 2) + image_width / 1.2, self.screen.get_height() - (scaled_rect.height // 2))
-            self.screen.blit(scaled_image, scaled_rect)
-            pygame.display.update()
+            self.draw_game_over_frame()
             return
         
         self.drop_time_elapsed += delta_time
