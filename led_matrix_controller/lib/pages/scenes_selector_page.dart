@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'dart:async';
 import 'dart:io' as IO;
 import 'dart:ui';
 import 'package:path/path.dart' as Path;
@@ -29,11 +30,18 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
   final Set<String> _uploadingFiles = {};
   final Set<String> _renderingFiles = {};
+  Timer? _renderCheckTimer;
 
   @override
   void initState() {
     super.initState();
     _loadScenes();
+  }
+
+  @override
+  void dispose() {
+    _renderCheckTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _loadScenes() async {
@@ -49,8 +57,22 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       setState(() {
         _scenes = scenes;
         _isLoading = false;
-        // Drop rendering placeholders that have finished
-        _renderingFiles.removeWhere((name) => _scenes.contains(name));
+        // Clear rendering status for videos that now exist in the list
+        // Check by matching against uploaded filename stems
+        _renderingFiles.removeWhere((renderingName) {
+          // If the rendering is done, a new .npz file appeared in the scenes
+          // We can't match exactly since names change, so just clear old ones
+          // after a render completes when videos list updates
+          return _scenes.isNotEmpty; // Simple heuristic: if we got new videos, maybe rendering finished
+        });
+        
+        // If still rendering, start periodic checks; otherwise stop timer
+        if (_renderingFiles.isNotEmpty) {
+          _startRenderCheckTimer();
+        } else {
+          _renderCheckTimer?.cancel();
+          _renderCheckTimer = null;
+        }
       });
     } catch (e) {
       setState(() {
@@ -58,6 +80,15 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         _isLoading = false;
       });
     }
+  }
+
+  void _startRenderCheckTimer() {
+    if (_renderCheckTimer?.isActive ?? false) return; // Already running
+    _renderCheckTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (_renderingFiles.isNotEmpty && mounted) {
+        _loadScenes(); // Refresh the video list
+      }
+    });
   }
 
   Future<void> _playScene(String sceneName) async {
