@@ -153,4 +153,19 @@ class ApiService {
       throw Exception('Render error: $e');
     }
   }
+
+  /// Delete a video file
+  Future<void> deleteVideo(String videoName) async {
+    try {
+      final response = await http
+          .delete(Uri.parse('$_baseUrl/api/videos/$videoName'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception('Failed to delete video: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Delete error: $e');
+    }
+  }
 }

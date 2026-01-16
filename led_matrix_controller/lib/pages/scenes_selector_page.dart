@@ -99,6 +99,58 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     }
   }
 
+  Future<void> _deleteVideo(String videoName) async {
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Video'),
+        content: Text('Are you sure you want to delete "$videoName"?\n\nThis action cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final apiService = ApiService(host: fppIp);
+      
+      await apiService.deleteVideo(videoName);
+      
+      // Reload the scenes list
+      await _loadScenes();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Deleted $videoName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete video: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Future<void> _uploadAndRenderVideo() async {
     try {
       // Pick a video file
@@ -295,19 +347,32 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                             color: isPlaying ? Colors.green : Colors.blue,
                                           ),
                                           title: Text(scene),
-                                          trailing: IconButton(
-                                            icon: Icon(
-                                              isPlaying ? Icons.stop : Icons.play_arrow,
-                                              color: isPlaying ? Colors.red : Colors.green,
-                                              size: 32,
-                                            ),
-                                            onPressed: () {
-                                              if (isPlaying) {
-                                                _stopPlayback();
-                                              } else {
-                                                _playScene(scene);
-                                              }
-                                            },
+                                          trailing: Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                icon: Icon(
+                                                  isPlaying ? Icons.stop : Icons.play_arrow,
+                                                  color: isPlaying ? Colors.red : Colors.green,
+                                                  size: 32,
+                                                ),
+                                                onPressed: () {
+                                                  if (isPlaying) {
+                                                    _stopPlayback();
+                                                  } else {
+                                                    _playScene(scene);
+                                                  }
+                                                },
+                                              ),
+                                              IconButton(
+                                                icon: const Icon(
+                                                  Icons.delete,
+                                                  color: Colors.red,
+                                                  size: 28,
+                                                ),
+                                                onPressed: () => _deleteVideo(scene),
+                                              ),
+                                            ],
                                           ),
                                         ),
                                       );

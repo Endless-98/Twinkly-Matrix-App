@@ -182,6 +182,45 @@ def get_videos():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/videos/<filename>', methods=['DELETE'])
+def delete_video(filename):
+    """Delete a specific video file.
+    
+    Args:
+        filename: Name of the video file to delete (must end with .npz)
+    """
+    try:
+        # Security: Only allow .npz files to be deleted
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type. Only .npz files can be deleted.'}), 400
+        
+        # Construct the file path
+        file_path = rendered_videos_dir / filename
+        
+        # Check if file exists
+        if not file_path.exists():
+            return jsonify({'error': f'Video not found: {filename}'}), 404
+        
+        # If this video is currently playing, stop playback first
+        global current_video_name
+        if current_video_name == filename:
+            stop_playback()
+            log(f"Stopped playback of {filename} before deletion", module="API")
+        
+        # Delete the file
+        file_path.unlink()
+        log(f"Deleted video: {filename}", module="API")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Video {filename} deleted successfully'
+        }), 200
+        
+    except Exception as e:
+        log(f"Delete video error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
 def allowed_file(filename):
     """Check if file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
