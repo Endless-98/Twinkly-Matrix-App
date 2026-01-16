@@ -19,6 +19,7 @@ class VideoEditorDialog extends StatefulWidget {
 }
 
 class _VideoEditorDialogState extends State<VideoEditorDialog> {
+  static const double _ledAspectRatio = 90 / 50; // Keep crop locked to curtain aspect
   late VideoPlayerController _controller;
   bool _isInitialized = false;
   bool _isLoading = true;
@@ -34,6 +35,9 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
   Rect? _cropRect;
   Offset? _cropStart;
   Offset? _cropEnd;
+  bool _isMovingCrop = false;
+  Offset? _dragOffset;
+  Size? _viewSize;
 
   @override
   void initState() {
@@ -90,50 +94,108 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     });
   }
 
-  void _handleCropPanStart(DragStartDetails details, Size videoSize) {
-    final RenderBox box = context.findRenderObject() as RenderBox;
-    final localPosition = box.globalToLocal(details.globalPosition);
-    
+  void _handleCropPanStart(DragStartDetails details, Size viewSize) {
+    final localPosition = details.localPosition;
+    final normalized = _normalizePosition(localPosition, viewSize);
+
+    // If tapping inside existing crop, start moving it
+    if (_cropRect != null && _cropRect!.contains(normalized)) {
+      _isMovingCrop = true;
+      _dragOffset = normalized - _cropRect!.topLeft;
+      return;
+    }
+
+    // Start a new crop selection
     setState(() {
-      _cropStart = _normalizePosition(localPosition, videoSize);
-      _cropEnd = null;
+      _isMovingCrop = false;
+      _cropStart = normalized;
+      _cropEnd = normalized;
+      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!);
     });
   }
 
-  void _handleCropPanUpdate(DragUpdateDetails details, Size videoSize) {
-    final RenderBox box = context.findRenderObject() as RenderBox;
-    final localPosition = box.globalToLocal(details.globalPosition);
-    
+  void _handleCropPanUpdate(DragUpdateDetails details, Size viewSize) {
+    final localPosition = details.localPosition;
+    final normalized = _normalizePosition(localPosition, viewSize);
+
+    if (_isMovingCrop && _cropRect != null && _dragOffset != null) {
+      final width = _cropRect!.width;
+      final height = _cropRect!.height;
+      // Maintain size and aspect while moving
+      var newLeft = (normalized.dx - _dragOffset!.dx).clamp(0.0, 1.0 - width);
+      var newTop = (normalized.dy - _dragOffset!.dy).clamp(0.0, 1.0 - height);
+
+      setState(() {
+        _cropRect = Rect.fromLTWH(newLeft, newTop, width, height);
+      });
+      return;
+    }
+
+    if (_cropStart == null) return;
+
     setState(() {
-      _cropEnd = _normalizePosition(localPosition, videoSize);
+      _cropEnd = normalized;
+      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!);
     });
   }
 
   void _handleCropPanEnd(DragEndDetails details) {
-    if (_cropStart != null && _cropEnd != null) {
-      final left = _cropStart!.dx < _cropEnd!.dx ? _cropStart!.dx : _cropEnd!.dx;
-      final top = _cropStart!.dy < _cropEnd!.dy ? _cropStart!.dy : _cropEnd!.dy;
-      final right = _cropStart!.dx > _cropEnd!.dx ? _cropStart!.dx : _cropEnd!.dx;
-      final bottom = _cropStart!.dy > _cropEnd!.dy ? _cropStart!.dy : _cropEnd!.dy;
-      
-      setState(() {
-        _cropRect = Rect.fromLTRB(
-          left.clamp(0.0, 1.0),
-          top.clamp(0.0, 1.0),
-          right.clamp(0.0, 1.0),
-          bottom.clamp(0.0, 1.0),
-        );
-        _cropStart = null;
-        _cropEnd = null;
-      });
-    }
+    setState(() {
+      _cropStart = null;
+      _cropEnd = null;
+      _isMovingCrop = false;
+      _dragOffset = null;
+    });
   }
 
-  Offset _normalizePosition(Offset position, Size videoSize) {
-    // Convert pixel position to normalized 0-1 coordinates
+  Offset _normalizePosition(Offset position, Size viewSize) {
+    // Convert pixel position to normalized 0-1 coordinates, clamped to bounds
     return Offset(
-      (position.dx / videoSize.width).clamp(0.0, 1.0),
-      (position.dy / videoSize.height).clamp(0.0, 1.0),
+      (position.dx / viewSize.width).clamp(0.0, 1.0),
+      (position.dy / viewSize.height).clamp(0.0, 1.0),
+    );
+  }
+
+  Rect _buildAspectLockedRect(Offset start, Offset current) {
+    // Create a rect that respects the LED aspect ratio and stays within bounds
+    final dx = current.dx - start.dx;
+    final dy = current.dy - start.dy;
+
+    final widthAbs = dx.abs();
+    final heightAbs = dy.abs();
+
+    // Decide size based on whichever dimension is more restrictive for the aspect ratio
+    double targetWidth;
+    double targetHeight;
+
+    if (widthAbs / (heightAbs == 0 ? 0.0001 : heightAbs) > _ledAspectRatio) {
+      // Width is too large relative to height; limit by height
+      targetHeight = heightAbs;
+      targetWidth = targetHeight * _ledAspectRatio;
+    } else {
+      // Height is too large; limit by width
+      targetWidth = widthAbs;
+      targetHeight = targetWidth / _ledAspectRatio;
+    }
+
+    // Ensure a small minimum size to avoid zero-area rects
+    const double minSize = 0.02; // 2% of the view
+    targetWidth = targetWidth.clamp(minSize, 1.0);
+    targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
+
+    // Determine orientation (drag direction)
+    final left = dx >= 0 ? start.dx : start.dx - targetWidth;
+    final top = dy >= 0 ? start.dy : start.dy - targetHeight;
+
+    // Clamp to viewport
+    final clampedLeft = left.clamp(0.0, 1.0 - targetWidth);
+    final clampedTop = top.clamp(0.0, 1.0 - targetHeight);
+
+    return Rect.fromLTWH(
+      clampedLeft,
+      clampedTop,
+      targetWidth,
+      targetHeight,
     );
   }
 
@@ -190,57 +252,41 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                   : _error != null
                       ? Center(child: Text('Error: $_error'))
                       : _isInitialized
-                          ? GestureDetector(
-                              onPanStart: (details) => _isCropping
-                                  ? _handleCropPanStart(
-                                      details,
-                                      Size(
-                                        _controller.value.size.width,
-                                        _controller.value.size.height,
-                                      ),
-                                    )
-                                  : null,
-                              onPanUpdate: (details) => _isCropping
-                                  ? _handleCropPanUpdate(
-                                      details,
-                                      Size(
-                                        _controller.value.size.width,
-                                        _controller.value.size.height,
-                                      ),
-                                    )
-                                  : null,
-                              onPanEnd: (details) =>
-                                  _isCropping ? _handleCropPanEnd(details) : null,
-                              child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                  AspectRatio(
-                                    aspectRatio: _controller.value.aspectRatio,
-                                    child: VideoPlayer(_controller),
-                                  ),
-                                  if (_isCropping)
-                                    AspectRatio(
-                                      aspectRatio: _controller.value.aspectRatio,
-                                      child: _buildCropOverlay(
-                                        Size(
-                                          _controller.value.size.width,
-                                          _controller.value.size.height,
-                                        ),
-                                      ),
+                          ? AspectRatio(
+                              aspectRatio: _controller.value.aspectRatio,
+                              child: LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
+                                  _viewSize = viewSize;
+                                  return GestureDetector(
+                                    onPanStart: _isCropping
+                                        ? (details) => _handleCropPanStart(details, viewSize)
+                                        : null,
+                                    onPanUpdate: _isCropping
+                                        ? (details) => _handleCropPanUpdate(details, viewSize)
+                                        : null,
+                                    onPanEnd: _isCropping ? _handleCropPanEnd : null,
+                                    child: Stack(
+                                      fit: StackFit.expand,
+                                      children: [
+                                        VideoPlayer(_controller),
+                                        if (_isCropping)
+                                          _buildCropOverlay(viewSize),
+                                        if (!_controller.value.isPlaying && !_isCropping)
+                                          Center(
+                                            child: IconButton(
+                                              icon: const Icon(
+                                                Icons.play_circle_outline,
+                                                size: 64,
+                                                color: Colors.white,
+                                              ),
+                                              onPressed: _togglePlayPause,
+                                            ),
+                                          ),
+                                      ],
                                     ),
-                                  // Play/Pause overlay
-                                  if (!_controller.value.isPlaying && !_isCropping)
-                                    Center(
-                                      child: IconButton(
-                                        icon: const Icon(
-                                          Icons.play_circle_outline,
-                                          size: 64,
-                                          color: Colors.white,
-                                        ),
-                                        onPressed: _togglePlayPause,
-                                      ),
-                                    ),
-                                ],
+                                  );
+                                },
                               ),
                             )
                           : const Center(child: Text('Failed to load video')),

@@ -221,6 +221,126 @@ def delete_video(filename):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/videos/<filename>/meta', methods=['GET'])
+def get_video_metadata(filename):
+    """Return basic metadata for a rendered video (.npz)."""
+    try:
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': 'Video not found'}), 404
+
+        # Load minimal metadata
+        data = np.load(file_path)
+        frames = data['frames']
+        fps = float(data['fps']) if 'fps' in data else 20.0
+        height, width = frames.shape[1], frames.shape[2]
+        duration = len(frames) / fps if fps > 0 else 0
+
+        return jsonify({
+            'width': int(width),
+            'height': int(height),
+            'fps': fps,
+            'frames': int(len(frames)),
+            'duration': duration,
+        })
+    except Exception as e:
+        log(f"Metadata error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/videos/<filename>/trim', methods=['POST'])
+def trim_rendered_video(filename):
+    """Trim an existing rendered video (.npz) and save as a new file."""
+    try:
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': 'Video not found'}), 404
+
+        data = request.json or {}
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+        output_name = data.get('output_name')
+
+        if start_time is None or end_time is None:
+            return jsonify({'error': 'start_time and end_time are required'}), 400
+
+        arr = np.load(file_path)
+        frames = arr['frames']
+        fps = float(arr['fps']) if 'fps' in arr else 20.0
+
+        total_frames = len(frames)
+        start_frame = max(0, min(int(start_time * fps), total_frames - 1))
+        end_frame = max(start_frame + 1, min(int(end_time * fps), total_frames))
+
+        trimmed = frames[start_frame:end_frame]
+
+        if output_name:
+            if not output_name.endswith('.npz'):
+                output_name += '.npz'
+        else:
+            stem = Path(filename).stem
+            output_name = f"{stem}_trim_{start_frame}-{end_frame}.npz"
+
+        output_path = rendered_videos_dir / output_name
+        np.savez_compressed(
+            output_path,
+            frames=trimmed,
+            fps=fps,
+            width=arr['width'] if 'width' in arr else trimmed.shape[2],
+            height=arr['height'] if 'height' in arr else trimmed.shape[1],
+            source_video=arr['source_video'] if 'source_video' in arr else filename,
+        )
+
+        log(f"Trimmed {filename} -> {output_name} ({len(trimmed)} frames)", module="API")
+
+        return jsonify({
+            'status': 'trimmed',
+            'filename': output_name,
+            'frames': len(trimmed),
+        })
+    except Exception as e:
+        log(f"Trim error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/videos/<filename>/rename', methods=['POST'])
+def rename_rendered_video(filename):
+    """Rename an existing rendered video (.npz)."""
+    try:
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': 'Video not found'}), 404
+
+        data = request.json or {}
+        new_name = data.get('new_name')
+        if not new_name:
+            return jsonify({'error': 'new_name is required'}), 400
+
+        if not new_name.endswith('.npz'):
+            new_name += '.npz'
+
+        new_path = rendered_videos_dir / new_name
+        if new_path.exists():
+            return jsonify({'error': 'Target filename already exists'}), 400
+
+        file_path.rename(new_path)
+        log(f"Renamed {filename} -> {new_name}", module="API")
+
+        return jsonify({'status': 'renamed', 'filename': new_name})
+    except Exception as e:
+        log(f"Rename error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
 def allowed_file(filename):
     """Check if file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS

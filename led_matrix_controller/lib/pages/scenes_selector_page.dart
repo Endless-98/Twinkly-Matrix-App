@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io' as IO;
+import 'dart:ui';
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
 import '../widgets/video_editor_dialog.dart';
@@ -26,6 +27,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   // Upload progress tracking
   final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
   final Set<String> _uploadingFiles = {};
+  final Set<String> _renderingFiles = {};
 
   @override
   void initState() {
@@ -46,6 +48,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       setState(() {
         _scenes = scenes;
         _isLoading = false;
+        // Drop rendering placeholders that have finished
+        _renderingFiles.removeWhere((name) => _scenes.contains(name));
       });
     } catch (e) {
       setState(() {
@@ -245,12 +249,20 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               _uploadProgress[uploadFileName] = progress;
             });
           },
-          onUploadComplete: (uploadFileName) {
+          onRenderQueued: (uploadFileName) {
             setState(() {
               _uploadingFiles.remove(uploadFileName);
               _uploadProgress.remove(uploadFileName);
+              _renderingFiles.add(uploadFileName);
             });
             _loadScenes(); // Refresh the scenes list
+          },
+          onUploadFailed: (uploadFileName) {
+            setState(() {
+              _uploadingFiles.remove(uploadFileName);
+              _uploadProgress.remove(uploadFileName);
+              _renderingFiles.remove(uploadFileName);
+            });
           },
         );
       },
@@ -347,76 +359,106 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                   ),
                                 ],
                               )
-                            : _scenes.isEmpty && _uploadingFiles.isEmpty
+                            : _scenes.isEmpty && _uploadingFiles.isEmpty && _renderingFiles.isEmpty
                                 ? const Center(child: Text('No scenes found'))
-                                : ListView.builder(
-                                    shrinkWrap: true,
-                                    physics: const NeverScrollableScrollPhysics(),
-                                    itemCount: _uploadingFiles.length + _scenes.length,
-                                    itemBuilder: (context, index) {
-                                      // Show uploading files first
-                                      if (index < _uploadingFiles.length) {
-                                        final uploadingFile = _uploadingFiles.elementAt(index);
-                                        final progress = _uploadProgress[uploadingFile] ?? 0.0;
-                                        return Card(
-                                          margin: const EdgeInsets.symmetric(
-                                            horizontal: 8,
-                                            vertical: 6,
-                                          ),
-                                          color: Colors.orange[900],
-                                          child: ListTile(
-                                            leading: const CircularProgressIndicator(),
-                                            title: Text(uploadingFile),
-                                            subtitle: LinearProgressIndicator(value: progress),
-                                            trailing: Text('${(progress * 100).toInt()}%'),
-                                          ),
-                                        );
-                                      }
-                                      
-                                      // Show existing scenes
-                                      final sceneIndex = index - _uploadingFiles.length;
-                                      final scene = _scenes[sceneIndex];
-                                      final isPlaying = _currentlyPlaying == scene;
-                                      return Card(
-                                        margin: const EdgeInsets.symmetric(
-                                          horizontal: 8,
-                                          vertical: 6,
-                                        ),
-                                        color: isPlaying ? Colors.green[900] : null,
-                                        child: ListTile(
-                                          leading: Icon(
-                                            Icons.movie,
-                                            color: isPlaying ? Colors.green : Colors.blue,
-                                          ),
-                                          title: Text(scene),
-                                          trailing: Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                              IconButton(
-                                                icon: Icon(
-                                                  isPlaying ? Icons.stop : Icons.play_arrow,
-                                                  color: isPlaying ? Colors.red : Colors.green,
-                                                  size: 32,
-                                                ),
-                                                onPressed: () {
-                                                  if (isPlaying) {
-                                                    _stopPlayback();
-                                                  } else {
-                                                    _playScene(scene);
-                                                  }
-                                                },
+                                : Builder(
+                                    builder: (context) {
+                                      final uploadingList = _uploadingFiles.toList()..sort();
+                                      final renderingList = _renderingFiles.toList()..sort();
+                                      final totalCount = uploadingList.length + renderingList.length + _scenes.length;
+
+                                      return ListView.builder(
+                                        shrinkWrap: true,
+                                        physics: const NeverScrollableScrollPhysics(),
+                                        itemCount: totalCount,
+                                        itemBuilder: (context, index) {
+                                          // Show uploading files first
+                                          if (index < uploadingList.length) {
+                                            final uploadingFile = uploadingList[index];
+                                            final progress = _uploadProgress[uploadingFile] ?? 0.0;
+                                            return Card(
+                                              margin: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 6,
                                               ),
-                                              IconButton(
-                                                icon: const Icon(
-                                                  Icons.delete,
-                                                  color: Colors.red,
-                                                  size: 28,
-                                                ),
-                                                onPressed: () => _deleteVideo(scene),
+                                              color: Colors.orange[900],
+                                              child: ListTile(
+                                                leading: const CircularProgressIndicator(),
+                                                title: Text(uploadingFile),
+                                                subtitle: LinearProgressIndicator(value: progress),
+                                                trailing: Text('${(progress * 100).toInt()}%'),
                                               ),
-                                            ],
-                                          ),
-                                        ),
+                                            );
+                                          }
+                                          
+                                          // Rendering files next
+                                          if (index < uploadingList.length + renderingList.length) {
+                                            final renderIndex = index - uploadingList.length;
+                                            final renderingFile = renderingList[renderIndex];
+                                            return Card(
+                                              margin: const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 6,
+                                              ),
+                                              color: Colors.blueGrey[900],
+                                              child: ListTile(
+                                                leading: const SizedBox(
+                                                  width: 24,
+                                                  height: 24,
+                                                  child: CircularProgressIndicator(strokeWidth: 3),
+                                                ),
+                                                title: Text(renderingFile),
+                                                subtitle: const Text('Rendering...'),
+                                              ),
+                                            );
+                                          }
+                                          
+                                          // Show existing scenes
+                                          final sceneIndex = index - uploadingList.length - renderingList.length;
+                                          final scene = _scenes[sceneIndex];
+                                          final isPlaying = _currentlyPlaying == scene;
+                                          return Card(
+                                            margin: const EdgeInsets.symmetric(
+                                              horizontal: 8,
+                                              vertical: 6,
+                                            ),
+                                            color: isPlaying ? Colors.green[900] : null,
+                                            child: ListTile(
+                                              leading: Icon(
+                                                Icons.movie,
+                                                color: isPlaying ? Colors.green : Colors.blue,
+                                              ),
+                                              title: Text(scene),
+                                              trailing: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  IconButton(
+                                                    icon: Icon(
+                                                      isPlaying ? Icons.stop : Icons.play_arrow,
+                                                      color: isPlaying ? Colors.red : Colors.green,
+                                                      size: 32,
+                                                    ),
+                                                    onPressed: () {
+                                                      if (isPlaying) {
+                                                        _stopPlayback();
+                                                      } else {
+                                                        _playScene(scene);
+                                                      }
+                                                    },
+                                                  ),
+                                                  IconButton(
+                                                    icon: const Icon(
+                                                      Icons.delete,
+                                                      color: Colors.red,
+                                                      size: 28,
+                                                    ),
+                                                    onPressed: () => _deleteVideo(scene),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          );
+                                        },
                                       );
                                     },
                                   ),
@@ -442,7 +484,8 @@ class _UploadDialogContent extends StatefulWidget {
   final Function(int) onRenderFpsChanged;
   final Function(String) onUploadStarted;
   final Function(String, double) onUploadProgress;
-  final Function(String) onUploadComplete;
+  final Function(String) onRenderQueued;
+  final Function(String) onUploadFailed;
 
   const _UploadDialogContent({
     required this.filePath,
@@ -455,7 +498,8 @@ class _UploadDialogContent extends StatefulWidget {
     required this.onRenderFpsChanged,
     required this.onUploadStarted,
     required this.onUploadProgress,
-    required this.onUploadComplete,
+    required this.onRenderQueued,
+    required this.onUploadFailed,
   });
 
   @override
@@ -536,13 +580,13 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
             'Rendering in progress! Video will appear in the list when ready.';
       });
       widget.onUploadProgress(widget.fileName, 1.0);
+      widget.onRenderQueued(widget.fileName);
 
       // Wait a moment then close
       await Future.delayed(const Duration(seconds: 2));
 
       if (mounted) {
         Navigator.of(context).pop();
-        widget.onUploadComplete(widget.fileName);
         
         final duration = widget.endTime - widget.startTime;
         final cropInfo = widget.cropRect != null 
@@ -565,7 +609,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           _isUploading = false;
           _status = 'Error: $e';
         });
-        widget.onUploadComplete(widget.fileName); // Remove from uploading list
+        widget.onUploadFailed(widget.fileName);
       }
     }
   }

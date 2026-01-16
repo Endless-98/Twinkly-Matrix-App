@@ -255,4 +255,74 @@ class ApiService {
       throw Exception('Render error: $e');
     }
   }
+
+  /// Get metadata for a rendered video (.npz)
+  Future<Map<String, dynamic>> getRenderedVideoMeta(String fileName) async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/videos/$fileName/meta'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to load metadata: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Metadata error: $e');
+    }
+  }
+
+  /// Trim an already rendered video (.npz) and save as a new file
+  Future<Map<String, dynamic>> trimRenderedVideo(
+    String fileName, {
+    required double startTime,
+    required double endTime,
+    String? outputName,
+  }) async {
+    try {
+      final body = {
+        'start_time': startTime,
+        'end_time': endTime,
+        if (outputName != null) 'output_name': outputName,
+      };
+
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/videos/$fileName/trim'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(minutes: 2));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Trim failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Trim error: $e');
+    }
+  }
+
+  /// Rename an already rendered video (.npz)
+  Future<void> renameVideo(String fileName, String newName) async {
+    try {
+      final body = {'new_name': newName};
+
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/videos/$fileName/rename'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        throw Exception('Rename failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Rename error: $e');
+    }
+  }
 }
