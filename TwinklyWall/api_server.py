@@ -11,7 +11,7 @@ import traceback
 import subprocess
 from pathlib import Path
 from werkzeug.utils import secure_filename
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
@@ -173,7 +173,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
 
 @app.route('/api/videos', methods=['GET'])
 def get_videos():
-    """Get list of available rendered videos (.npz)."""
+    """Get list of available rendered videos (.npz) with thumbnail information."""
     try:
         # Ensure the rendered videos directory exists; create if missing
         if not rendered_videos_dir.exists():
@@ -186,9 +186,18 @@ def get_videos():
         videos = []
         for file in rendered_videos_dir.iterdir():
             if file.is_file() and file.suffix.lower() == '.npz':
-                videos.append(file.name)
+                # Check if thumbnail exists
+                thumbnail_path = file.with_suffix('.png')
+                thumbnail_exists = thumbnail_path.exists()
+                
+                videos.append({
+                    'filename': file.name,
+                    'has_thumbnail': thumbnail_exists,
+                    'thumbnail': f'/api/video/{file.stem}/thumbnail' if thumbnail_exists else None,
+                })
 
-        videos.sort()
+        # Sort by filename
+        videos.sort(key=lambda x: x['filename'])
         return jsonify({'videos': videos})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -230,6 +239,23 @@ def delete_video(filename):
         
     except Exception as e:
         log(f"Delete video error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/video/<video_stem>/thumbnail', methods=['GET'])
+def get_video_thumbnail(video_stem):
+    """Get thumbnail image for a video (PNG format)."""
+    try:
+        # Find the thumbnail file (should be .png with same stem as .npz)
+        thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
+        
+        if not thumbnail_path.exists():
+            return jsonify({'error': 'Thumbnail not found'}), 404
+        
+        # Return the image file
+        return send_file(thumbnail_path, mimetype='image/png')
+    except Exception as e:
+        log(f"Get thumbnail error: {e}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 

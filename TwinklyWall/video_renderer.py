@@ -193,6 +193,19 @@ class VideoRenderer:
         file_size_mb = output_path.stat().st_size / (1024 * 1024)
         print(f"  Saved: {output_path} ({file_size_mb:.2f} MB)")
         
+        # Save thumbnail image from first frame
+        if frames_to_render:
+            try:
+                thumbnail_path = output_path.with_suffix('.png')
+                # Get the first rendered frame
+                first_frame = frames_to_render[0]
+                # Convert from RGB to BGR for cv2.imwrite (which expects BGR)
+                bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
+                cv2.imwrite(str(thumbnail_path), bgr_frame)
+                print(f"  Thumbnail saved: {thumbnail_path}")
+            except Exception as e:
+                print(f"  Warning: Failed to save thumbnail: {e}")
+        
         return str(output_path)
     
     def load_rendered_video(self, render_path):

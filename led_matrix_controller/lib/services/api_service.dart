@@ -12,8 +12,8 @@ class ApiService {
 
   String get _baseUrl => 'http://$host:$port';
 
-  /// Get list of available videos from the server
-  Future<List<String>> getAvailableVideos() async {
+  /// Get list of available videos from the server with metadata
+  Future<List<Map<String, dynamic>>> getAvailableVideosWithMeta() async {
     try {
       final response = await http
           .get(Uri.parse('$_baseUrl/api/videos'))
@@ -21,12 +21,23 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return List<String>.from(data['videos']);
+        return List<Map<String, dynamic>>.from(data['videos']);
       } else {
         throw Exception('Failed to load videos: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Connection error: $e');
+    }
+  }
+
+  /// Get list of available videos from the server (for backward compatibility)
+  Future<List<String>> getAvailableVideos() async {
+    try {
+      final videosWithMeta = await getAvailableVideosWithMeta();
+      // Extract just the filenames
+      return videosWithMeta.map((v) => v['filename'] as String).toList();
+    } catch (e) {
+      throw Exception('Failed to load videos: $e');
     }
   }
 
@@ -225,6 +236,7 @@ class ApiService {
     double? startTime,
     double? endTime,
     Rect? cropRect,
+    String? outputName,
   }) async {
     try {
       final body = {
@@ -238,6 +250,7 @@ class ApiService {
           'crop_right': cropRect.right,
           'crop_bottom': cropRect.bottom,
         },
+        if (outputName != null) 'output_name': outputName,
       };
 
       final response = await http
@@ -351,8 +364,8 @@ class ApiService {
     }
   }
 
-  /// Download a video file from the server to local device storage
-  Future<String> downloadVideoLocally(String filename) async {
+  /// Download a video file from the server to local device storage with progress tracking
+  Future<String> downloadVideoLocally(String filename, {Function(int, int)? onProgress}) async {
     try {
       final encodedFileName = Uri.encodeComponent(filename);
       final url = '$_baseUrl/api/video/$encodedFileName';
@@ -361,12 +374,28 @@ class ApiService {
       final tempDir = await getTemporaryDirectory();
       final localFile = File('${tempDir.path}/$filename');
       
-      // Download the file
-      final response = await http.get(Uri.parse(url));
+      // Download the file with progress tracking
+      final request = http.StreamedRequest('GET', Uri.parse(url));
+      final response = await request.send();
       
       if (response.statusCode == 200) {
-        // Write file to device storage
-        await localFile.writeAsBytes(response.bodyBytes);
+        // Get total file size
+        final contentLength = response.contentLength ?? 0;
+        int received = 0;
+        
+        // Create a sink for writing to file
+        final sink = localFile.openWrite();
+        
+        // Stream the response and report progress
+        await response.stream.listen(
+          (List<int> chunk) {
+            received += chunk.length;
+            onProgress?.call(received, contentLength);
+            sink.add(chunk);
+          },
+        ).asFuture<void>();
+        
+        await sink.close();
         return localFile.path;
       } else {
         throw Exception('Failed to download video: ${response.statusCode}');

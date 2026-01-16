@@ -32,6 +32,15 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   final Set<String> _renderingFiles = {};
   Timer? _renderCheckTimer;
 
+  /// Remove file extensions from display names
+  String _displayName(String filename) {
+    final lastDot = filename.lastIndexOf('.');
+    if (lastDot != -1 && lastDot < filename.length - 1) {
+      return filename.substring(0, lastDot);
+    }
+    return filename;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -57,14 +66,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       setState(() {
         _scenes = scenes;
         _isLoading = false;
-        // Clear rendering status for videos that now exist in the list
-        // Check by matching against uploaded filename stems
-        _renderingFiles.removeWhere((renderingName) {
-          // If the rendering is done, a new .npz file appeared in the scenes
-          // We can't match exactly since names change, so just clear old ones
-          // after a render completes when videos list updates
-          return _scenes.isNotEmpty; // Simple heuristic: if we got new videos, maybe rendering finished
-        });
+        
+        // Don't automatically remove rendering files.
+        // They will be cleared by a periodic check or manually when the user
+        // removes the rendering status after seeing it complete.
+        // This ensures the progress card stays visible during rendering.
         
         // If still rendering, start periodic checks; otherwise stop timer
         if (_renderingFiles.isNotEmpty) {
@@ -145,7 +151,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Delete Video'),
-        content: Text('Are you sure you want to delete "$videoName"?\n\nThis action cannot be undone.'),
+        content: Text('Are you sure you want to delete "${_displayName(videoName)}"?\n\nThis action cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
@@ -299,7 +305,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   Future<void> _renameVideo(String videoName) async {
-    String newName = videoName;
+    String newName = _displayName(videoName);
     
     final confirmed = await showDialog<bool>(
       context: context,
@@ -312,10 +318,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                 newName = value;
               });
             },
-            controller: TextEditingController(text: videoName),
+            controller: TextEditingController(text: _displayName(videoName)),
             decoration: InputDecoration(
               labelText: 'New name',
-              hintText: videoName,
+              hintText: _displayName(videoName),
             ),
           ),
           actions: [
@@ -332,7 +338,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       ),
     );
     
-    if (confirmed != true || newName == videoName) return;
+    if (confirmed != true || newName == _displayName(videoName)) return;
     
     try {
       final fppIp = ref.read(fppIpProvider);
@@ -500,53 +506,77 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       Navigator.of(context).pop();
 
       // Show progress dialog while downloading to device
+      double downloadProgress = 0.0;
+      late StateSetter downloadStateSetter;
+      
       if (mounted) {
         showDialog(
           context: context,
           barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text('Downloading to Device'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: const [
-                CircularProgressIndicator(),
-                SizedBox(height: 16),
-                Text('Preparing video for editing...'),
-              ],
+          builder: (context) => StatefulBuilder(
+            builder: (context, setState) {
+              downloadStateSetter = setState;
+              return AlertDialog(
+                title: const Text('Downloading to Device'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const SizedBox(height: 8),
+                    LinearProgressIndicator(value: downloadProgress),
+                    const SizedBox(height: 16),
+                    Text('${(downloadProgress * 100).toStringAsFixed(1)}%'),
+                    const SizedBox(height: 8),
+                    const Text('Preparing video for editing...'),
+                  ],
+                ),
+              );
+            }
+          ),
+        );
+      }
+
+      // Download file to local device storage with progress tracking
+      try {
+        final localFilePath = await apiService.downloadVideoLocally(
+          fileName,
+          onProgress: (received, total) {
+            if (total > 0 && mounted) {
+              downloadProgress = received / total;
+              try {
+                downloadStateSetter(() {});
+              } catch (e) {
+                // State setter might fail if dialog was closed
+              }
+            }
+          },
+        );
+
+        if (!mounted) return;
+        Navigator.of(context).pop();
+
+        if (mounted) {
+          await showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => VideoEditorDialog(
+              videoPath: localFilePath,
+              fileName: fileName,
+              onConfirm: (startTime, endTime, cropRect) {
+                _showUploadDialog(localFilePath, fileName, startTime, endTime, cropRect);
+              },
             ),
+          );
+        }
+      } catch (e) {
+        if (!mounted) return;
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to download video: $e'),
+            backgroundColor: Colors.red,
           ),
         );
       }
-
-      // Download file to local device storage
-      final localFilePath = await apiService.downloadVideoLocally(fileName);
-
-      if (!mounted) return;
-      Navigator.of(context).pop();
-
-      if (mounted) {
-        await showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => VideoEditorDialog(
-            videoPath: localFilePath,
-            fileName: fileName,
-            onConfirm: (startTime, endTime, cropRect) {
-              _showUploadDialog(localFilePath, fileName, startTime, endTime, cropRect);
-            },
-          ),
-        );
-      }
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Failed to download video: $e'),
-          backgroundColor: Colors.red,
-        ),
-      );
-    }
   }
 
   void _showUploadDialog(
@@ -566,13 +596,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           startTime: startTime,
           endTime: endTime,
           cropRect: cropRect,
-          selectedRenderFps: _selectedRenderFps,
           fppIp: ref.read(fppIpProvider),
-          onRenderFpsChanged: (fps) {
-            setState(() {
-              _selectedRenderFps = fps;
-            });
-          },
           onUploadStarted: (uploadFileName) {
             setState(() {
               _uploadingFiles.add(uploadFileName);
@@ -705,134 +729,35 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                     builder: (context) {
                                       final uploadingList = _uploadingFiles.toList()..sort();
                                       final renderingList = _renderingFiles.toList()..sort();
-                                      final totalCount = uploadingList.length + renderingList.length + _scenes.length;
+                                      
+                                      // Combine all items for grid display
+                                      final allItems = <({String name, String type, double? progress})>[
+                                        ...uploadingList.map((f) => (name: f, type: 'uploading', progress: _uploadProgress[f] ?? 0.0)),
+                                        ...renderingList.map((f) => (name: f, type: 'rendering', progress: null)),
+                                        ..._scenes.map((s) => (name: s, type: 'scene', progress: null)),
+                                      ];
 
-                                      return ListView.builder(
+                                      return GridView.builder(
                                         shrinkWrap: true,
                                         physics: const NeverScrollableScrollPhysics(),
-                                        itemCount: totalCount,
+                                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: 2,
+                                          crossAxisSpacing: 12,
+                                          mainAxisSpacing: 12,
+                                          childAspectRatio: 1.0,
+                                        ),
+                                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                                        itemCount: allItems.length,
                                         itemBuilder: (context, index) {
-                                          // Show uploading files first
-                                          if (index < uploadingList.length) {
-                                            final uploadingFile = uploadingList[index];
-                                            final progress = _uploadProgress[uploadingFile] ?? 0.0;
-                                            return Card(
-                                              margin: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 6,
-                                              ),
-                                              color: Colors.orange[900],
-                                              child: ListTile(
-                                                leading: const CircularProgressIndicator(),
-                                                title: Text(uploadingFile),
-                                                subtitle: LinearProgressIndicator(value: progress),
-                                                trailing: Text('${(progress * 100).toInt()}%'),
-                                              ),
-                                            );
-                                          }
+                                          final item = allItems[index];
                                           
-                                          // Rendering files next
-                                          if (index < uploadingList.length + renderingList.length) {
-                                            final renderIndex = index - uploadingList.length;
-                                            final renderingFile = renderingList[renderIndex];
-                                            return Card(
-                                              margin: const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 6,
-                                              ),
-                                              color: Colors.blueGrey[900],
-                                              child: ListTile(
-                                                leading: const SizedBox(
-                                                  width: 24,
-                                                  height: 24,
-                                                  child: CircularProgressIndicator(strokeWidth: 3),
-                                                ),
-                                                title: Text(renderingFile),
-                                                subtitle: const Text('Rendering...'),
-                                              ),
-                                            );
+                                          if (item.type == 'uploading') {
+                                            return _buildUploadingCard(item.name, item.progress!);
+                                          } else if (item.type == 'rendering') {
+                                            return _buildRenderingCard(item.name);
+                                          } else {
+                                            return _buildSceneCard(item.name);
                                           }
-                                          
-                                          // Show existing scenes
-                                          final sceneIndex = index - uploadingList.length - renderingList.length;
-                                          final scene = _scenes[sceneIndex];
-                                          final isPlaying = _currentlyPlaying == scene;
-                                          return Card(
-                                            margin: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 6,
-                                            ),
-                                            color: isPlaying ? Colors.green[900] : null,
-                                            child: ListTile(
-                                              leading: Icon(
-                                                Icons.movie,
-                                                color: isPlaying ? Colors.green : Colors.blue,
-                                              ),
-                                              title: Text(scene),
-                                              trailing: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  IconButton(
-                                                    icon: Icon(
-                                                      isPlaying ? Icons.stop : Icons.play_arrow,
-                                                      color: isPlaying ? Colors.red : Colors.green,
-                                                      size: 32,
-                                                    ),
-                                                    onPressed: () {
-                                                      if (isPlaying) {
-                                                        _stopPlayback();
-                                                      } else {
-                                                        _playScene(scene);
-                                                      }
-                                                    },
-                                                  ),
-                                                  PopupMenuButton<String>(
-                                                    onSelected: (value) {
-                                                      if (value == 'trim') {
-                                                        _trimVideo(scene);
-                                                      } else if (value == 'rename') {
-                                                        _renameVideo(scene);
-                                                      } else if (value == 'delete') {
-                                                        _deleteVideo(scene);
-                                                      }
-                                                    },
-                                                    itemBuilder: (BuildContext context) => [
-                                                      const PopupMenuItem(
-                                                        value: 'trim',
-                                                        child: Row(
-                                                          children: [
-                                                            Icon(Icons.cut, size: 20),
-                                                            SizedBox(width: 8),
-                                                            Text('Trim'),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                      const PopupMenuItem(
-                                                        value: 'rename',
-                                                        child: Row(
-                                                          children: [
-                                                            Icon(Icons.edit, size: 20),
-                                                            SizedBox(width: 8),
-                                                            Text('Rename'),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                      const PopupMenuItem(
-                                                        value: 'delete',
-                                                        child: Row(
-                                                          children: [
-                                                            Icon(Icons.delete, size: 20, color: Colors.red),
-                                                            SizedBox(width: 8),
-                                                            Text('Delete', style: TextStyle(color: Colors.red)),
-                                                          ],
-                                                        ),
-                                                      ),
-                                                    ],
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          );
                                         },
                                       );
                                     },
@@ -846,7 +771,327 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       ),
     );
   }
-}
+
+  /// Build a square card for an uploading video
+  Widget _buildUploadingCard(String fileName, double progress) {
+    return Card(
+      color: Colors.orange[900],
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Background placeholder
+          Container(
+            color: Colors.orange[800],
+            child: const Center(
+              child: Icon(Icons.cloud_upload, size: 48, color: Colors.white30),
+            ),
+          ),
+          // Progress overlay
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const CircularProgressIndicator(color: Colors.white),
+                      const SizedBox(height: 12),
+                      Text(
+                        _displayName(fileName),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                ),
+                LinearProgressIndicator(
+                  value: progress,
+                  backgroundColor: Colors.white24,
+                  minHeight: 4,
+                ),
+                const SizedBox(height: 4),
+                Center(
+                  child: Text(
+                    '${(progress * 100).toInt()}%',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build a square card for a rendering video
+  Widget _buildRenderingCard(String fileName) {
+    return Card(
+      color: Colors.blueGrey[900],
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Darker background with rendering icon
+          Container(
+            color: Colors.blueGrey[900],
+            child: const Center(
+              child: Icon(Icons.hourglass_bottom, size: 48, color: Colors.white30),
+            ),
+          ),
+          // Rendering progress overlay
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                const Spacer(),
+                const SizedBox(
+                  width: 40,
+                  height: 40,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 3,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  _displayName(fileName),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Rendering...',
+                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const Spacer(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Build a square card for a completed scene
+  Widget _buildSceneCard(String sceneName) {
+    final isPlaying = _currentlyPlaying == sceneName;
+    
+    return Card(
+      color: isPlaying ? Colors.green[900] : Colors.grey[800],
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          // Placeholder for thumbnail or default background
+          Container(
+            color: Colors.grey[700],
+            child: Center(
+              child: Icon(
+                Icons.movie,
+                size: 48,
+                color: Colors.grey[500],
+              ),
+            ),
+          ),
+          // Overlay with title and controls
+          Padding(
+            padding: const EdgeInsets.all(8),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                // Title at top
+                Text(
+                  _displayName(sceneName),
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                // Controls at bottom
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // Play/Stop button
+                    Material(
+                      color: isPlaying ? Colors.red : Colors.green,
+                      shape: const CircleBorder(),
+                      child: InkWell(
+                        onTap: () {
+                          if (isPlaying) {
+                            _stopPlayback();
+                          } else {
+                            _playScene(sceneName);
+                          }
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(8),
+                          child: Icon(
+                            isPlaying ? Icons.stop : Icons.play_arrow,
+                            color: Colors.white,
+                            size: 24,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // Menu button
+                    PopupMenuButton<String>(
+                      onSelected: (value) {
+                        if (value == 'trim') {
+                          _trimVideo(sceneName);
+                        } else if (value == 'rename') {
+                          _renameVideo(sceneName);
+                        } else if (value == 'delete') {
+                          _deleteVideo(sceneName);
+                        }
+                      },
+                      itemBuilder: (BuildContext context) => [
+                        const PopupMenuItem(
+                          value: 'trim',
+                          child: Row(
+                            children: [
+                              Icon(Icons.cut, size: 18),
+                              SizedBox(width: 8),
+                              Text('Trim'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'rename',
+                          child: Row(
+                            children: [
+                              Icon(Icons.edit, size: 18),
+                              SizedBox(width: 8),
+                              Text('Rename'),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: 'delete',
+                          child: Row(
+                            children: [
+                              Icon(Icons.delete, size: 18, color: Colors.red),
+                              SizedBox(width: 8),
+                              Text('Delete', style: TextStyle(color: Colors.red)),
+                            ],
+                          ),
+                        ),
+                      ],
+                      color: Colors.grey[900],
+                      child: const Padding(
+                        padding: EdgeInsets.all(8),
+                        child: Icon(Icons.more_vert, color: Colors.white, size: 20),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          // Green playing indicator
+          if (isPlaying)
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: const BoxDecoration(
+                  color: Colors.green,
+                  shape: BoxShape.circle,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final fppIp = ref.watch(fppIpProvider);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scenes'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Upload new video',
+            onPressed: _uploadAndRenderVideo,
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadScenes,
+          ),
+        ],
+      ),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          return SingleChildScrollView(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: ConstrainedBox(
+              constraints: BoxConstraints(minHeight: constraints.maxHeight),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    color: Colors.grey[800],
+                    child: Text(
+                      'Connected to: $fppIp:5000',
+                      style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    color: Colors.grey[850],
+                    child: Row(
+                      children: [
+                        Checkbox(
+                          value: _isLooping,
+                          onChanged: (value) {
+                            setState(() {
+                              _isLooping = value ?? true;
+                            });
+                          },
+                        ),
+                        const Text('Loop'),
+                        const SizedBox(width: 24),
+                        const Text('Brightness:'),
+                        Expanded(
+                          child: Slider(
+                            value: _brightness,
+                            min: 0.1,
+                            max: 1.5,
+                            divisions: 14,
+                            label: '${(_brightness * 100).round()}%',
+                            onChanged: (value) {
+                              setState(() {
+                                _brightness = value;
+                              });
+                            },
+                          ),
+                        ),
+                        Text('${(_brightness * 100).round()}%'),
+                      ],
+                    ),
+                  ),
 
 class _UploadDialogContent extends StatefulWidget {
   final String filePath;
@@ -854,9 +1099,7 @@ class _UploadDialogContent extends StatefulWidget {
   final double startTime;
   final double endTime;
   final Rect? cropRect;
-  final int selectedRenderFps;
   final String fppIp;
-  final Function(int) onRenderFpsChanged;
   final Function(String) onUploadStarted;
   final Function(String, double) onUploadProgress;
   final Function(String) onRenderQueued;
@@ -868,9 +1111,7 @@ class _UploadDialogContent extends StatefulWidget {
     required this.startTime,
     required this.endTime,
     required this.cropRect,
-    required this.selectedRenderFps,
     required this.fppIp,
-    required this.onRenderFpsChanged,
     required this.onUploadStarted,
     required this.onUploadProgress,
     required this.onRenderQueued,
@@ -882,15 +1123,25 @@ class _UploadDialogContent extends StatefulWidget {
 }
 
 class _UploadDialogContentState extends State<_UploadDialogContent> {
-  late int _renderFps;
+  late String _videoName;
   bool _isUploading = false;
   String? _status;
   double _uploadProgress = 0;
+  static const int _defaultRenderFps = 20; // Default FPS for all renders
 
   @override
   void initState() {
     super.initState();
-    _renderFps = widget.selectedRenderFps;
+    // Initialize video name from filename without extension
+    _videoName = _removeExtension(widget.fileName);
+  }
+
+  String _removeExtension(String filename) {
+    final lastDot = filename.lastIndexOf('.');
+    if (lastDot != -1) {
+      return filename.substring(0, lastDot);
+    }
+    return filename;
   }
 
   Future<void> _performUpload() async {
@@ -922,7 +1173,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
       final uploadResponse = await apiService.uploadVideoWithParams(
         fileBytes,
         widget.fileName,
-        renderFps: _renderFps,
+        renderFps: _defaultRenderFps,
         startTime: widget.startTime,
         endTime: widget.endTime,
         cropRect: widget.cropRect,
@@ -941,10 +1192,11 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
       // Request rendering with trim/crop parameters
       await apiService.renderVideoWithParams(
         uploadedFileName,
-        renderFps: _renderFps,
+        renderFps: _defaultRenderFps,
         startTime: widget.startTime,
         endTime: widget.endTime,
         cropRect: widget.cropRect,
+        outputName: _videoName,
       );
 
       if (!mounted) return;
@@ -971,7 +1223,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Video "${widget.fileName}" is rendering at $_renderFps FPS (${duration.toStringAsFixed(1)}s$cropInfo)',
+              'Video "$_videoName" is rendering (${duration.toStringAsFixed(1)}s$cropInfo)',
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
@@ -1003,38 +1255,27 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('File: ${widget.fileName}'),
+            Text('File: ${_removeExtension(widget.fileName)}'),
+            const SizedBox(height: 16),
+            const Text('Video Name:'),
             const SizedBox(height: 8),
+            TextField(
+              onChanged: (value) {
+                setState(() {
+                  _videoName = value;
+                });
+              },
+              controller: TextEditingController(text: _videoName),
+              decoration: const InputDecoration(
+                labelText: 'Enter a name for this video',
+                border: OutlineInputBorder(),
+                hintText: 'e.g., "Christmas 2025"',
+              ),
+            ),
+            const SizedBox(height: 16),
             Text('Trim: ${widget.startTime.toStringAsFixed(1)}s - ${widget.endTime.toStringAsFixed(1)}s (${duration.toStringAsFixed(1)}s)'),
             const SizedBox(height: 8),
             Text('Crop: $cropInfo'),
-            const SizedBox(height: 16),
-            const Text('Render FPS:'),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: SegmentedButton<int>(
-                    segments: const <ButtonSegment<int>>[
-                      ButtonSegment<int>(
-                        value: 20,
-                        label: Text('20 FPS'),
-                      ),
-                      ButtonSegment<int>(
-                        value: 40,
-                        label: Text('40 FPS'),
-                      ),
-                    ],
-                    selected: <int>{_renderFps},
-                    onSelectionChanged: (Set<int> newSelection) {
-                      setState(() {
-                        _renderFps = newSelection.first;
-                      });
-                    },
-                  ),
-                ),
-              ],
-            ),
             if (_isUploading) ...[
               const SizedBox(height: 16),
               LinearProgressIndicator(value: _uploadProgress),
@@ -1058,7 +1299,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           ),
         if (!_isUploading)
           ElevatedButton(
-            onPressed: _performUpload,
+            onPressed: _videoName.isEmpty ? null : _performUpload,
             child: const Text('Upload & Render'),
           ),
       ],
