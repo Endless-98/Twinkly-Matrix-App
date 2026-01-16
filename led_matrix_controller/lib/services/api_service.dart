@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:ui';
+import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 class ApiService {
   final String host;
@@ -346,6 +348,31 @@ class ApiService {
       }
     } catch (e) {
       throw Exception('YouTube download error: $e');
+    }
+  }
+
+  /// Download a video file from the server to local device storage
+  Future<String> downloadVideoLocally(String filename) async {
+    try {
+      final encodedFileName = Uri.encodeComponent(filename);
+      final url = '$_baseUrl/api/video/$encodedFileName';
+      
+      // Get temporary directory on device
+      final tempDir = await getTemporaryDirectory();
+      final localFile = File('${tempDir.path}/$filename');
+      
+      // Download the file
+      final response = await http.get(Uri.parse(url));
+      
+      if (response.statusCode == 200) {
+        // Write file to device storage
+        await localFile.writeAsBytes(response.bodyBytes);
+        return localFile.path;
+      } else {
+        throw Exception('Failed to download video: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Video download error: $e');
     }
   }
 }

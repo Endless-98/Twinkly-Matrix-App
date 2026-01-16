@@ -495,10 +495,31 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final apiService = ApiService(host: fppIp);
       final result = await apiService.downloadYouTubeVideo(youtubeUrl);
       final fileName = result['filename'];
-      
-      // Construct proper HTTP URL with port and URL encoding
-      final encodedFileName = Uri.encodeComponent(fileName);
-      final videoUrl = 'http://$fppIp:5000/api/video/$encodedFileName';
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // Show progress dialog while downloading to device
+      if (mounted) {
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text('Downloading to Device'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: const [
+                CircularProgressIndicator(),
+                SizedBox(height: 16),
+                Text('Preparing video for editing...'),
+              ],
+            ),
+          ),
+        );
+      }
+
+      // Download file to local device storage
+      final localFilePath = await apiService.downloadVideoLocally(fileName);
 
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -508,10 +529,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           context: context,
           barrierDismissible: false,
           builder: (context) => VideoEditorDialog(
-            videoPath: videoUrl,
+            videoPath: localFilePath,
             fileName: fileName,
             onConfirm: (startTime, endTime, cropRect) {
-              _showUploadDialog(videoUrl, fileName, startTime, endTime, cropRect);
+              _showUploadDialog(localFilePath, fileName, startTime, endTime, cropRect);
             },
           ),
         );
