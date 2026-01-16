@@ -855,6 +855,17 @@ def download_youtube_video():
             info = ydl.extract_info(url, download=True)
             filename = ydl.prepare_filename(info)
             filepath = Path(filename)
+            
+            # Sanitize filename by replacing problematic Unicode chars
+            # Some YouTube titles use fancy Unicode quotes and slashes that cause issues
+            safe_name = filepath.name.replace('＂', '"').replace('⧸', '-').replace('"', "'")
+            safe_name = secure_filename(safe_name)
+            safe_filepath = filepath.parent / safe_name
+            
+            # Rename if needed
+            if filepath != safe_filepath and filepath.exists():
+                filepath.rename(safe_filepath)
+                filepath = safe_filepath
         
         log(f"Downloaded from YouTube: {filepath.name}", module="API")
         
@@ -874,11 +885,16 @@ def download_youtube_video():
 def serve_video(filename):
     """Serve a video file from the uploads directory."""
     try:
+        # The filename is already sanitized on upload, just validate it's safe
         filename = secure_filename(filename)
         filepath = uploaded_videos_dir / filename
         
-        if not filepath.exists():
+        # Check file exists and is actually a video
+        if not filepath.exists() or not filepath.is_file():
+            log(f"Video not found: {filename}", level='WARNING', module="API")
             return jsonify({'error': 'Video not found'}), 404
+        
+        log(f"Serving video: {filename}", module="API")
         
         # Use send_file with streaming for large videos
         from flask import send_file
