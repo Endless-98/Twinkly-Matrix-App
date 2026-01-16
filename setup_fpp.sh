@@ -54,25 +54,27 @@ cd TwinklyWall_Project
 
 # Setup Python environment
 cd TwinklyWall
-if [ ! -d ".venv" ]; then
-    echo '🐍 Creating Python virtual environment...'
-    python3 -m venv .venv
+
+# Use .pyenv Python if available (preferred), fallback to system python3
+PYTHON_BIN="python3"
+if command -v /home/fpp/.pyenv/versions/3.12.12/bin/python &> /dev/null; then
+    PYTHON_BIN="/home/fpp/.pyenv/versions/3.12.12/bin/python"
+    echo '✅ Using .pyenv Python 3.12.12'
 else
-    echo '✅ Python virtual environment already exists'
+    echo '⚠️  .pyenv Python 3.12.12 not found, using system python3'
 fi
 
-echo '📦 Activating virtual environment and checking dependencies...'
-source .venv/bin/activate
+echo '📦 Checking Python dependencies...'
+# Install dependencies globally to the selected Python environment
+"$PYTHON_BIN" -m pip install -q -r requirements.txt
 
-# Check if requirements are installed and up to date
-if pip check > /dev/null 2>&1; then
-    echo '✅ Python dependencies are satisfied'
+# Verify yt-dlp is installed for YouTube downloads
+if "$PYTHON_BIN" -c "import yt_dlp" 2>/dev/null; then
+    echo '✅ Python dependencies satisfied (yt-dlp found)'
 else
-    echo '🔄 Installing/updating Python dependencies...'
-    pip install -r requirements.txt
+    echo '🔄 Installing yt-dlp...'
+    "$PYTHON_BIN" -m pip install -q yt-dlp
 fi
-
-deactivate
 
 # Install/update systemd services (skip in --debug mode)
 cd ~/TwinklyWall_Project/TwinklyWall
@@ -143,7 +145,7 @@ if [ $DEBUG_MODE -eq 1 ]; then
     sudo systemctl stop ddp_bridge || true
     echo '▶️ Launching DDP debug runner (Ctrl+C to exit)...'
     export TWINKLYWALL_DEBUG=1
-    /home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin/python /home/fpp/TwinklyWall_Project/TwinklyWall/debug_ddp.py --port 4049 --width "$WIDTH" --height "$HEIGHT" --model "$MODEL"
+    "$PYTHON_BIN" /home/fpp/TwinklyWall_Project/TwinklyWall/debug_ddp.py --port 4049 --width "$WIDTH" --height "$HEIGHT" --model "$MODEL"
     exit 0
 fi
 
