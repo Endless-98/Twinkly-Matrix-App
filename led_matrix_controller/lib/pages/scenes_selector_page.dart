@@ -446,7 +446,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           title: const Text('Download from YouTube'),
           content: TextField(
             onChanged: (value) {
-              youtubeUrl = value;
+              setState(() {
+                youtubeUrl = value.trim();
+              });
             },
             decoration: const InputDecoration(
               labelText: 'YouTube URL',
