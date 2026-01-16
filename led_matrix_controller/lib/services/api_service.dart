@@ -428,15 +428,23 @@ class ApiService {
         final sink = localFile.openWrite();
         
         // Stream the response and report progress
-        await response.stream.listen(
+        response.stream.listen(
           (List<int> chunk) {
             received += chunk.length;
             onProgress?.call(received, contentLength);
             sink.add(chunk);
           },
-        ).asFuture<void>();
+          onError: (error) {
+            sink.addError(error);
+          },
+          onDone: () {
+            sink.close();
+          },
+          cancelOnError: true,
+        );
         
-        await sink.close();
+        // Wait for the sink to be done writing
+        await sink.done;
         return localFile.path;
       } else {
         throw Exception('Failed to download video: ${response.statusCode}');

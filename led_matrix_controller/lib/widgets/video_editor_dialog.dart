@@ -19,8 +19,10 @@ class VideoEditorDialog extends StatefulWidget {
 }
 
 class _VideoEditorDialogState extends State<VideoEditorDialog> {
-  static const double _ledAspectRatio = 90 / 50; // Curtain width / height (landscape)
+  static const double _ledAspectRatioLandscape = 90 / 50; // Curtain width / height (landscape)
+  static const double _ledAspectRatioPortrait = 50 / 90;  // Curtain height / width (portrait, flipped)
   late VideoPlayerController _controller;
+  late double _ledAspectRatio;
   bool _isInitialized = false;
   bool _isLoading = true;
   String? _error;
@@ -49,6 +51,12 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     try {
       _controller = VideoPlayerController.file(File(widget.videoPath));
       await _controller.initialize();
+      
+      // Detect if video is portrait or landscape
+      final videoAspectRatio = _controller.value.aspectRatio;
+      _ledAspectRatio = videoAspectRatio < 1.0
+          ? _ledAspectRatioPortrait  // Portrait video: use 50/90 aspect ratio
+          : _ledAspectRatioLandscape; // Landscape video: use 90/50 aspect ratio
       
       setState(() {
         _isInitialized = true;
