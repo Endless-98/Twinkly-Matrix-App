@@ -178,11 +178,6 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
       targetHeight = targetWidth / _ledAspectRatio;
     }
 
-    // Ensure a small minimum size to avoid zero-area rects
-    const double minSize = 0.02; // 2% of the view
-    targetWidth = targetWidth.clamp(minSize, 1.0);
-    targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
-
     // Maintain aspect ratio when clamping to viewport bounds
     // If width exceeds bounds, scale both down proportionally
     if (targetWidth > 1.0) {
@@ -197,9 +192,19 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
       targetWidth *= scale;
     }
 
-    // Ensure minimum size is still met
+    // Ensure minimum size
+    const double minSize = 0.02; // 2% of the view
     targetWidth = targetWidth.clamp(minSize, 1.0);
+    
+    // CRITICAL: Always recalculate height from width to maintain exact aspect ratio
+    // This prevents the independent height clamp from breaking the 90:50 ratio
+    targetHeight = targetWidth / _ledAspectRatio;
     targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
+    
+    // If height was clamped, adjust width to match
+    if (targetHeight < targetWidth / _ledAspectRatio) {
+      targetWidth = targetHeight * _ledAspectRatio;
+    }
 
     // Determine orientation (drag direction)
     final left = dx >= 0 ? start.dx : start.dx - targetWidth;
