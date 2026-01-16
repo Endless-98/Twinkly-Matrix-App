@@ -325,4 +325,27 @@ class ApiService {
       throw Exception('Rename error: $e');
     }
   }
+
+  /// Download a video from YouTube to the device
+  Future<Map<String, dynamic>> downloadYouTubeVideo(String youtubeUrl) async {
+    try {
+      final body = {'url': youtubeUrl};
+
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/youtube/download'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(minutes: 10));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Download failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('YouTube download error: $e');
+    }
+  }
 }

@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import traceback
+import subprocess
 from pathlib import Path
 from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request
@@ -803,6 +804,59 @@ def test_black():
             return jsonify({'status': 'ok', 'ms': ms})
         return jsonify({'error': 'FPP output not enabled'}), 400
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/youtube/download', methods=['POST'])
+def download_youtube_video():
+    """Download a video from YouTube using yt-dlp.
+    
+    JSON body:
+    - url: YouTube video URL
+    """
+    try:
+        data = request.json or {}
+        url = data.get('url')
+        
+        if not url:
+            return jsonify({'error': 'No URL provided'}), 400
+        
+        # Validate it's a YouTube URL
+        if 'youtube.com' not in url and 'youtu.be' not in url:
+            return jsonify({'error': 'Invalid YouTube URL'}), 400
+        
+        # Use yt-dlp to download the video
+        try:
+            import yt_dlp
+        except ImportError:
+            return jsonify({'error': 'yt-dlp not installed. Install with: pip install yt-dlp'}), 500
+        
+        # Download to uploaded_videos directory
+        output_template = str(uploaded_videos_dir / '%(title)s.%(ext)s')
+        
+        ydl_opts = {
+            'format': 'best[ext=mp4]/best',
+            'outtmpl': output_template,
+            'quiet': False,
+            'no_warnings': False,
+        }
+        
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            filename = ydl.prepare_filename(info)
+            filepath = Path(filename)
+        
+        log(f"Downloaded from YouTube: {filepath.name}", module="API")
+        
+        return jsonify({
+            'status': 'downloaded',
+            'filename': filepath.name,
+            'path': str(filepath),
+            'size_mb': filepath.stat().st_size / (1024*1024),
+        }), 200
+        
+    except Exception as e:
+        log(f"YouTube download error: {e}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 

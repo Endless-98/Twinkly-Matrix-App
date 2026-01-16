@@ -361,16 +361,40 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   Future<void> _uploadAndRenderVideo() async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Add Video'),
+        content: const Text('How would you like to add a video?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop('local'),
+            child: const Text('Upload from Device'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop('youtube'),
+            child: const Text('Download from YouTube'),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == null) return;
+    if (choice == 'local') {
+      await _pickLocalVideo();
+    } else if (choice == 'youtube') {
+      await _downloadYouTubeVideo();
+    }
+  }
+
+  Future<void> _pickLocalVideo() async {
     try {
-      // Pick a video file
       final result = await FilePicker.platform.pickFiles(
         type: FileType.video,
         allowMultiple: false,
       );
 
-      if (result == null) {
-        return; // User cancelled
-      }
+      if (result == null) return;
 
       final file = result.files.single;
       final fileName = file.name;
@@ -389,7 +413,6 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       }
 
       if (mounted) {
-        // Show video editor dialog
         await showDialog(
           context: context,
           barrierDismissible: false,
@@ -411,6 +434,92 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _downloadYouTubeVideo() async {
+    String youtubeUrl = '';
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Download from YouTube'),
+          content: TextField(
+            onChanged: (value) {
+              youtubeUrl = value;
+            },
+            decoration: const InputDecoration(
+              labelText: 'YouTube URL',
+              hintText: 'https://www.youtube.com/watch?v=...',
+              border: OutlineInputBorder(),
+            ),
+            maxLines: 2,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: youtubeUrl.isNotEmpty ? () => Navigator.of(context).pop(true) : null,
+              child: const Text('Download'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || youtubeUrl.isEmpty) return;
+    if (!mounted) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Downloading Video'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('This may take a few minutes...'),
+          ],
+        ),
+      ),
+    );
+
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final apiService = ApiService(host: fppIp);
+      final result = await apiService.downloadYouTubeVideo(youtubeUrl);
+      final fileName = result['filename'];
+      final filePath = result['path'];
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => VideoEditorDialog(
+            videoPath: filePath,
+            fileName: fileName,
+            onConfirm: (startTime, endTime, cropRect) {
+              _showUploadDialog(filePath, fileName, startTime, endTime, cropRect);
+            },
+          ),
+        );
+      }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to download video: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 
