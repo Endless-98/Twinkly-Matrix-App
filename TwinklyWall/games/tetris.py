@@ -2,11 +2,8 @@
 
 # TODO
     # Save piece
-    # Tidy piece preview
-    # BUG: Piece stopping in wall (possibly when pressing down?)
+    # Piece not locking when it should if rapidly rotating and moving
     # Scoring
-        # Soft drop score
-        # Scoring system, including Back-to-Back recognition rules
         # Combo recognition
         # Perfect clear recognition (for later games)
 
@@ -15,63 +12,81 @@ import os
 import pygame
 from pathlib import Path
 import numpy
-import random
-from .tetromino import Tetromino, Random_Bag
+from .tetromino import Tetromino, RandomBag
 from logger import log
 from game_players import set_player_score_data,get_active_players_for_game, get_game_for_player
 from players import set_input_handler
+from enum import IntEnum
 import copy
 import time
 
 class Tetris:
+    class Gamemode(IntEnum):
+        CLASSIC = 0 # Same rules as the classic NES version
+        MODERN = 1 # Follows the rules of Tetris Worlds Marathon. More forgiving. Uses 7-Bag and resetable down-timer
+
     def __init__(self, canvas, HEADLESS, level):
         ### Settings ###
+        self.gamemode = self.Gamemode.MODERN
         self.headless = HEADLESS
         self.blocks_width = 10
         self.blocks_height = 25 
         self.block_size = 3
+        self.screen = canvas 
+        self.play_ceiling = self.screen.get_height() / self.block_size # Only ~ 16.667 visible on matrix with current setup
         self.border_thickness = 2
         self.border_color = (105,105,105)
-        self.screen = canvas
         self.ghost_opacity = 65
-        
+        self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
+        self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
+        self.colors = [(0,0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
+        self.randomizer = RandomBag(random_style_index=self.gamemode)
+        self.dead_grid  = [[0 for element in range(self.blocks_width)] for row in range(self.blocks_height)]
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        img_path = os.path.join(current_dir, 'game_over_screen.png')
+        self.game_over_image = pygame.image.load(str(img_path)).convert_alpha()
+
         ### Leveling ###
         self.level = 1
         self.score = 0 # For the scoreboard
         self.points = 0 # Progresses towards goal
-        self.base_goal = 5
         self.total_lines_cleared = 0
-        self.next_level_goal = self.base_goal * self.level
-        self.play_ceiling = self.screen.get_height() / self.block_size # Only ~ 16.667 visible on matrix with current setup
-        self.speed_increment = 0.007
-        self.base_speed = 0.8
         self.combo = 0
-        self.points_reward = [0,1,3,5,8] # Index: num lines cleared at once
-        self.was_last_score_tetris = False
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        img_path = os.path.join(current_dir, 'game_over.png')
-        self.game_over_image = pygame.image.load(str(img_path)).convert_alpha()
-
-        self.players = get_active_players_for_game('tetris')
-        self.live_tetromino = None
-        self.is_playing = True
-        self.hard_drop_cooldown = 0.0
-        self.hard_drop_time_elapsed = 0.0
         self.drop_interval = 0.0
         self.drop_time_elapsed = 0.0
-        self.max_lock_down_time = 0.500
-        self.down_time_elapsed = 0.0
-        self.gravity = 0
-        self.calc_gravity() # Also called each time we level up
+        self.next_level_goal = 0
+        
+        match self.gamemode:
+            case self.Gamemode.CLASSIC:
+                self.level -= 1 # Level 0 is the first level
+                self.max_lock_down_time = 0 # Locks the next frame after being down
+                self.base_clear_goal = 10
+                self.next_level_goal = numpy.min((self.level * self.base_clear_goal + self.base_clear_goal, numpy.max((100, self.level * self.base_clear_goal - 50))))
+                self.lines_cleared = 0
+                print(f"Next level goal: {self.next_level_goal}")
+                self.NES_fps = 60.0988 # Used to calculate drop interval to match up with exact NES speeds
+                self.score_reward = [0,40,100,300,1200] # Index: num lines cleared at once
+                self.soft_drop_streak = 0 # Every cell that is soft-dropped adds a point as long as you don't release before the piece locks
+                self.is_soft_dropping = False
+                
+            case self.Gamemode.MODERN:
+                self.base_goal = 5
+                self.base_speed = 0.8
+                self.speed_increment = 0.007
+                self.points_reward = [0,1,3,5,8] # Index: num lines cleared at once
+                self.gravity = 0
+                self.max_moves_while_down = 15
+                self.moves_while_down = 0
+                self.down_time_elapsed = 0.0
+                self.next_level_goal = self.base_goal * self.level
+                self.max_lock_down_time = 0.500
+       
+        self.calc_drop_speed() # Also called each time we level up
+        self.players = get_active_players_for_game('tetris')
+        self.live_tetromino = None
         self.is_down = False
-        self.max_moves_while_down = 15
-        self.moves_while_down = 0
-        self.colors = [(0,0,0,0), (0, 230, 254), (24, 1, 255), (255, 115, 8), (255, 222, 0), (102, 253, 0), (254, 16, 60), (184, 2, 253)]
-        self.bag = Random_Bag()
+        self.is_playing = True
 
-        self.game_x_offset = self.screen.get_width() / self.block_size - self.blocks_width -1
-        self.game_y_offset = self.screen.get_height() / self.block_size - self.blocks_height - 1
-        self.dead_grid  = [[0 for element in range(self.blocks_width)] for row in range(self.blocks_height)]
         self.spawn_tetromino()
 
     def get_size(self, type_index) -> int:
@@ -93,7 +108,7 @@ class Tetris:
         pygame.draw.rect(self.screen, self.border_color, (x_right, 0, self.border_thickness, 1000,))
 
     def draw_next_piece_preview(self):
-        type_index = self.bag.next_piece
+        type_index = self.randomizer.next_piece
         thickness = self.block_size + 9
         x_left = int(self.game_x_offset * self.block_size) - thickness - self.border_thickness + 1 
         pygame.draw.rect(self.screen, self.border_color, (x_left, 0, thickness, thickness,))
@@ -156,16 +171,27 @@ class Tetris:
         if not self.move_tetromino(offset=(0, -1)):
             self.is_down = True
             move_succeeded = False
-        elif is_soft_drop:
+        elif is_soft_drop and self.gamemode == self.Gamemode.MODERN:
             self.award_score(1)
+        
+        
+        if move_succeeded and self.gamemode == self.Gamemode.CLASSIC:
+            if self.is_soft_dropping:
+                self.soft_drop_streak += 1
+            else:
+                self.soft_drop_streak = 0
 
+
+        # Require two blocks air to reset down
+        if self.is_down and self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -2)):
+            self.is_down = False
+            self.reset_down() 
+        # One block air is enough to pause
         if self.check_move_validity(test_postion=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)):
             self.is_down = False
 
-        if not self.is_down:
-            self.reset_down()
-
         return move_succeeded
+        
 
     def hard_drop_tetromino(self, was_player_called = False):
         for _ in range(self.blocks_height):
@@ -174,11 +200,10 @@ class Tetris:
         self.lock_piece()
 
     def spawn_tetromino(self):
-        piece_type = self.bag.pull_piece()
+        piece_type = self.randomizer.pull_piece()
         size = self.get_size(piece_type)
 
         self.live_tetromino = Tetromino(piece_type, grid_position=((self.blocks_width - size) // 2, self.blocks_height - size))
-        # self.live_tetromino = Tetromino(piece_type, grid_position=(0, self.blocks_height - size))
    
     def move_tetromino(self, offset:()) -> bool:
         new_position = (self.live_tetromino.grid_position[0] + offset[0], self.live_tetromino.grid_position[1] + offset[1])
@@ -233,6 +258,7 @@ class Tetris:
         self.live_tetromino.shape = [list(reversed(element)) for element in zip(*self.live_tetromino.shape)]
 
     def lock_piece(self):
+        print("Lock piece")
         self.move_tetromino(offset=(0, -1))
         pos = self.live_tetromino.grid_position
         size = self.get_size(self.live_tetromino.type_index)
@@ -246,25 +272,72 @@ class Tetris:
                     if grid_y >= self.play_ceiling:
                         self.game_over()
 
+        if self.gamemode == self.Gamemode.CLASSIC:
+            self.award_score(self.soft_drop_streak)
+            self.soft_drop_streak = 0
+            
         self.spawn_tetromino()
         self.is_down = False
         self.clear_lines()
+
 
     def reset_down(self):
         self.down_time_elapsed = 0
         self.moves_while_down = 0
         self.is_down = False
+        print("Reset down!")
 
     def moved(self, wants_to_lock = False):
         if self.is_down:
             if self.moves_while_down < self.max_moves_while_down:
                 self.moves_while_down += 1
                 self.down_time_elapsed = 0
+                print(f"Down moves left: {self.moves_while_down}")
             else:
                 self.lock_piece()
 
-    def calc_gravity(self): # TODO: Call every level change
-        self.drop_interval = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+    def calc_drop_speed(self): # TODO: Call every level change
+        match self.gamemode:
+            case self.Gamemode.MODERN:
+                self.drop_interval = numpy.power((self.base_speed - ((self.level - 1) * self.speed_increment)), self.level - 1)
+                
+            case self.Gamemode.CLASSIC:
+                frames_per_drop = 48
+                match self.level: # Values match NES Marathon mode
+                    case 0:
+                        frames_per_drop = 48 
+                    case 1:
+                        frames_per_drop = 43 
+                    case 2:
+                        frames_per_drop = 38  
+                    case 3: 
+                        frames_per_drop = 33
+                    case 4: 
+                        frames_per_drop = 28
+                    case 5: 
+                        frames_per_drop = 23
+                    case 6: 
+                        frames_per_drop = 18
+                    case 7: 
+                        frames_per_drop = 13
+                    case 8: 
+                        frames_per_drop = 8
+                    case 9: 
+                        frames_per_drop = 6
+                    case level if 10 <= level < 13: 
+                        frames_per_drop = 5
+                    case level if 13 <= level < 16: 
+                        frames_per_drop = 4
+                    case level if 16 <= level < 19: 
+                        frames_per_drop = 3
+                    case level if 19 <= level < 28: 
+                        frames_per_drop = 2
+                    case level if 29 <= level: 
+                        frames_per_drop = 1
+
+                self.drop_interval = frames_per_drop / self.NES_fps
+                if self.is_soft_dropping:
+                    self.drop_interval /= 2
 
     def clear_lines(self):
         keep_clearing = True
@@ -276,7 +349,7 @@ class Tetris:
                     self.dead_grid.pop(y)
                     self.dead_grid.insert(self.blocks_height, [0 for element in range(self.blocks_width)])
                     lines_cleared += 1
-                    print("Line clear")
+                    # print("Line clear")
                     pygame.display.flip()
 
             self.total_lines_cleared += lines_cleared
@@ -288,31 +361,51 @@ class Tetris:
     def award_score(self, score_amount):
         if score_amount <= 0:
             return
+        
+        print(f"Scored {score_amount} points. Total: {self.score}")
 
         self.score += score_amount
         self.update_scoreboard()
 
-        print(f"Score: {self.score}")
+        # print(f"Score: {self.score}")
 
     def score_lines(self, lines_cleared):
-        points_award = self.points_reward[lines_cleared] 
-        self.points += points_award
-        score_award = (points_award * 100) * self.level
-        if score_award > 0:
-            self.award_score(score_award)
+        if lines_cleared <= 0:
+            return
+        
+        match self.gamemode:
+            case self.Gamemode.MODERN:
+                points_award = self.points_reward[lines_cleared] 
+                self.points += points_award
+                score_award = (points_award * 100) * self.level
+                if score_award > 0:
+                    self.award_score(score_award)
+                if points_award > 0:
+                    print(f"Points: {self.points}: Goal: {self.next_level_goal}")
+                if self.points >= self.next_level_goal:
+                    self.level_up()
 
-        if points_award > 0:
-            print(f"Points: {self.points}: Goal: {self.next_level_goal}")
-        if self.points >= self.next_level_goal:
-            self.level_up()
+            case self.Gamemode.CLASSIC:
+                score_award = self.score_reward[lines_cleared] * self.level + 1
+                self.award_score(score_award)
+                self.lines_cleared += lines_cleared
+                if self.lines_cleared >= self.next_level_goal:
+                    self.level_up()
+                    self.lines_cleared = 0
+
 
     def level_up(self):
         self.level += 1
-        self.points -= self.next_level_goal
-        self.next_level_goal = self.base_goal * self.level
-        self.update_scoreboard()
-        self.calc_gravity()
+        
+        match self.gamemode:
+            case self.Gamemode.MODERN:
+                self.points -= self.next_level_goal
+                self.next_level_goal = self.base_goal * self.level
+            case self.Gamemode.CLASSIC:
+                self.next_level_goal = 10
 
+        self.update_scoreboard()
+        self.calc_drop_speed()
         log(f"Level up: {self.level}")
         print(f"Level up: {self.level}")
 
@@ -336,26 +429,35 @@ class Tetris:
         if not self.is_playing:
             self.draw_game_over_frame()
             return
-        
+
+        match self.gamemode:
+            case self.Gamemode.MODERN:
+                if self.is_down:
+                    self.down_time_elapsed += delta_time
+                    print(f"Down time elapsed: {self.down_time_elapsed}")
+
+                if self.down_time_elapsed >= self.max_lock_down_time:
+                    self.hard_drop_tetromino()
+                    self.down_time_elapsed = 0
+                    self.is_down = False
+            case self.Gamemode.CLASSIC:
+                if self.is_down:
+                    self.lock_piece()
+
         self.drop_time_elapsed += delta_time
         if self.drop_time_elapsed >= self.drop_interval:
             self.drop_tetromino()
-            self.clear_lines()
             self.drop_time_elapsed = 0
-            
-        if self.is_down:
-            self.down_time_elapsed += delta_time
-        if self.down_time_elapsed >= self.max_lock_down_time:
-            self.down_time_elapsed = 0
-            self.hard_drop_tetromino()
-            self.is_down = False
-
+    
         self.draw_grid()
         self.draw_ghost_piece()
         self.draw_border()
         self.draw_tetromino()
         self.draw_next_piece_preview()
-                
+
+        if self.gamemode == self.Gamemode.CLASSIC:
+            return
+
     def begin_play(self): # Called in main
         self.bind_input(self)   
 
@@ -405,12 +507,24 @@ class Tetris:
         self.rotate_tetromino(clockwise=False)
         self.moved()
 
-    def drop_piece(self):
-        log("MOVE_DOWN", module="Tetris")
-        self.drop_tetromino()
-        self.moved(wants_to_lock=True)
+    def drop_piece(self, is_pressed):
+        match self.gamemode:
+            case self.Gamemode.MODERN:
+                if not is_pressed:
+                    return
+                
+                self.drop_tetromino()       
+                self.moved(wants_to_lock=True)
+            case self.Gamemode.CLASSIC:
+                self.is_soft_dropping = is_pressed
+                # print(f"Is soft dropping: {is_pressed}")
+                self.calc_drop_speed()
+                if not is_pressed:
+                    self.soft_drop_streak = 0
 
     def hard_drop_piece(self):
-        log("HARD_DROP", module="Tetris")
+        if self.gamemode == self.Gamemode.CLASSIC:
+            return
+
         self.hard_drop_tetromino(was_player_called=True)
         self.moved(wants_to_lock=True)

@@ -43,6 +43,11 @@ source_videos/
 !source_videos/.gitkeep
 /dev/shm/
 
+# User-uploaded and dynamically rendered videos (git should not track these)
+uploaded_videos/
+dotmatrix/rendered_videos/*.npz
+!dotmatrix/rendered_videos/.gitkeep
+
 # Keep documentation
 !README.md
 !*.md

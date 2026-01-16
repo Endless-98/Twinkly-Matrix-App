@@ -141,15 +141,24 @@ def run_tetris(matrix, stop_event=None, level=1):
                                 key_press_time[key] = current_time
                                 key_repeating[key] = False
                             elif key == pygame.K_DOWN:
-                                tetris.drop_piece()
+                                tetris.drop_piece(is_pressed=True)
                             elif key == pygame.K_SPACE:
                                 tetris.hard_drop_piece()
                         except Exception as e:
                             log(f"Error handling key: {e}", level='ERROR', module="Tetris")
                             
                     elif event.type == pygame.KEYUP:
-                        # Clear tracking
+                        input_triggered_render = True
                         key = event.key
+                        
+                        # Handle drop piece release
+                        try:
+                            if key == pygame.K_DOWN:
+                                tetris.drop_piece(is_pressed=False)
+                        except Exception as e:
+                            log(f"Error handling key release: {e}", level='ERROR', module="Tetris")
+                        
+                        # Clear tracking
                         key_press_time.pop(key, None)
                         key_repeating.pop(key, None)
                         key_last_repeat.pop(key, None)

@@ -89,4 +89,68 @@ class ApiService {
       throw Exception('Connection error: $e');
     }
   }
+
+  /// Upload a video file
+  Future<Map<String, dynamic>> uploadVideo(
+    List<int> fileBytes,
+    String fileName, {
+    int renderFps = 20,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/api/upload'),
+      );
+
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName,
+        ),
+      );
+
+      request.fields['render_fps'] = renderFps.toString();
+
+      final streamResponse = await request.send().timeout(const Duration(minutes: 5));
+      final response = await http.Response.fromStream(streamResponse);
+
+      if (response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Upload failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Upload error: $e');
+    }
+  }
+
+  /// Render an uploaded video
+  Future<Map<String, dynamic>> renderVideo(
+    String fileName, {
+    int renderFps = 20,
+  }) async {
+    try {
+      final body = {
+        'filename': fileName,
+        'render_fps': renderFps,
+      };
+
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/render'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(minutes: 10));
+
+      if (response.statusCode == 202) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Render request failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Render error: $e');
+    }
+  }
 }

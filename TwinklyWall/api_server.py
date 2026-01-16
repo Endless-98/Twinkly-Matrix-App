@@ -8,10 +8,12 @@ import threading
 import time
 import traceback
 from pathlib import Path
+from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
+from video_renderer import VideoRenderer
 from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full, get_game_for_player, player_count_for_game
 from logger import log
 
@@ -26,6 +28,12 @@ playback_active = False
 current_video_name = None
 rendered_videos_dir = Path("dotmatrix/rendered_videos")
 source_videos_dir = Path("assets/source_videos")
+uploaded_videos_dir = Path("uploaded_videos")
+uploaded_videos_dir.mkdir(parents=True, exist_ok=True)
+
+# Upload configuration
+ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv'}
+MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # Cleanup thread for idle players
 cleanup_thread = None
@@ -170,6 +178,137 @@ def get_videos():
 
         videos.sort()
         return jsonify({'videos': videos})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def allowed_file(filename):
+    """Check if file has an allowed extension."""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+@app.route('/api/upload', methods=['POST'])
+def upload_video():
+    """Upload a video file from mobile app.
+    
+    Form data:
+    - file: video file
+    - render_fps: (optional) target FPS for rendering (20 or 40, default 20)
+    """
+    try:
+        # Check if file is present
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({'error': 'Empty filename'}), 400
+        
+        if not allowed_file(file.filename):
+            return jsonify({'error': f'File type not allowed. Allowed: {", ".join(ALLOWED_EXTENSIONS)}'}), 400
+        
+        # Secure the filename
+        filename = secure_filename(file.filename)
+        upload_path = uploaded_videos_dir / filename
+        
+        # Check file size
+        file.seek(0, os.SEEK_END)
+        file_size = file.tell()
+        file.seek(0)
+        
+        if file_size > MAX_UPLOAD_SIZE:
+            return jsonify({'error': f'File too large. Max size: {MAX_UPLOAD_SIZE / (1024*1024):.0f} MB'}), 413
+        
+        # Save uploaded file
+        file.save(str(upload_path))
+        log(f"Video uploaded: {filename} ({file_size / (1024*1024):.2f} MB)", module="API")
+        
+        # Get render FPS from request (default 20)
+        render_fps = request.form.get('render_fps', 20, type=int)
+        if render_fps not in [20, 40]:
+            render_fps = 20
+        
+        return jsonify({
+            'status': 'uploaded',
+            'filename': filename,
+            'size_mb': round(file_size / (1024*1024), 2),
+            'render_fps': render_fps,
+            'next_step': 'Call /api/render to process the video'
+        }), 201
+        
+    except Exception as e:
+        log(f"Upload error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+def render_video_thread(video_path, render_fps):
+    """Thread function to render an uploaded video."""
+    try:
+        renderer = VideoRenderer()
+        log(f"Starting render: {video_path} at {render_fps} FPS", module="API")
+        
+        # Render the video
+        output_path = renderer.render_video(video_path, output_fps=render_fps)
+        
+        if output_path:
+            log(f"Render complete: {output_path}", module="API")
+            # Delete the original uploaded video
+            try:
+                os.remove(video_path)
+                log(f"Deleted uploaded video: {video_path}", module="API")
+            except Exception as e:
+                log(f"Failed to delete uploaded video {video_path}: {e}", level='WARNING', module="API")
+        else:
+            log(f"Render failed for: {video_path}", level='ERROR', module="API")
+            
+    except Exception as e:
+        log(f"Render thread error: {e}", level='ERROR', module="API")
+
+
+@app.route('/api/render', methods=['POST'])
+def render_uploaded_video():
+    """Render an uploaded video asynchronously.
+    
+    JSON body:
+    - filename: name of uploaded file
+    - render_fps: target FPS (20 or 40, default 20)
+    """
+    try:
+        data = request.json
+        filename = data.get('filename')
+        render_fps = data.get('render_fps', 20)
+        
+        if not filename:
+            return jsonify({'error': 'No filename specified'}), 400
+        
+        if render_fps not in [20, 40]:
+            render_fps = 20
+        
+        # Verify file exists
+        video_path = uploaded_videos_dir / filename
+        if not video_path.exists():
+            return jsonify({'error': f'Uploaded video not found: {filename}'}), 404
+        
+        # Start rendering in background thread
+        render_thread = threading.Thread(
+            target=render_video_thread,
+            args=(str(video_path), render_fps),
+            daemon=True
+        )
+        render_thread.start()
+        
+        log(f"Render job queued: {filename} at {render_fps} FPS", module="API")
+        
+        return jsonify({
+            'status': 'rendering',
+            'filename': filename,
+            'render_fps': render_fps,
+            'message': 'Video is being rendered in the background. It will appear in /api/videos once complete.'
+        }), 202
+        
+    except Exception as e:
+        log(f"Render request error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
