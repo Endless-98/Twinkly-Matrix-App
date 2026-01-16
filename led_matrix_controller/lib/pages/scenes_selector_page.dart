@@ -237,7 +237,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       
       if (confirmed != true) return;
       
-      final outputName = '${Path(videoName).basenameWithoutExtension}_trim.npz';
+      final outputName = '${Path.basenameWithoutExtension(videoName)}_trim.npz';
       await apiService.trimRenderedVideo(
         videoName,
         startTime: startTime,
