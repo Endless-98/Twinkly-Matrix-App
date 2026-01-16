@@ -19,7 +19,7 @@ class VideoEditorDialog extends StatefulWidget {
 }
 
 class _VideoEditorDialogState extends State<VideoEditorDialog> {
-  static const double _ledAspectRatio = 50 / 90; // Curtain height / width for portrait crop
+  static const double _ledAspectRatio = 90 / 50; // Curtain width / height (landscape)
   late VideoPlayerController _controller;
   bool _isInitialized = false;
   bool _isLoading = true;
