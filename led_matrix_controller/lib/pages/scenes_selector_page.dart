@@ -577,6 +577,16 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           ),
         );
       }
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to download YouTube video: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   void _showUploadDialog(
@@ -1018,80 +1028,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       ),
     );
   }
-
-  @override
-  Widget build(BuildContext context) {
-    final fppIp = ref.watch(fppIpProvider);
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Scenes'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Upload new video',
-            onPressed: _uploadAndRenderVideo,
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: _loadScenes,
-          ),
-        ],
-      ),
-      body: LayoutBuilder(
-        builder: (context, constraints) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.only(bottom: 16),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(16),
-                    color: Colors.grey[800],
-                    child: Text(
-                      'Connected to: $fppIp:5000',
-                      style: TextStyle(fontSize: 12, color: Colors.grey[400]),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    color: Colors.grey[850],
-                    child: Row(
-                      children: [
-                        Checkbox(
-                          value: _isLooping,
-                          onChanged: (value) {
-                            setState(() {
-                              _isLooping = value ?? true;
-                            });
-                          },
-                        ),
-                        const Text('Loop'),
-                        const SizedBox(width: 24),
-                        const Text('Brightness:'),
-                        Expanded(
-                          child: Slider(
-                            value: _brightness,
-                            min: 0.1,
-                            max: 1.5,
-                            divisions: 14,
-                            label: '${(_brightness * 100).round()}%',
-                            onChanged: (value) {
-                              setState(() {
-                                _brightness = value;
-                              });
-                            },
-                          ),
-                        ),
-                        Text('${(_brightness * 100).round()}%'),
-                      ],
-                    ),
-                  ),
+}
 
 class _UploadDialogContent extends StatefulWidget {
   final String filePath;
