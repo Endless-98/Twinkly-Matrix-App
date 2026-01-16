@@ -19,7 +19,7 @@ class VideoEditorDialog extends StatefulWidget {
 }
 
 class _VideoEditorDialogState extends State<VideoEditorDialog> {
-  static const double _ledAspectRatio = 90 / 50; // Keep crop locked to curtain aspect
+  static const double _ledAspectRatio = 50 / 90; // Curtain height / width for portrait crop
   late VideoPlayerController _controller;
   bool _isInitialized = false;
   bool _isLoading = true;
@@ -269,8 +269,8 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        // Show video with crop applied (or full video if no crop)
-                                        if (_cropRect != null)
+                                        // Show video with crop applied only after cropping is confirmed (not during drag)
+                                        if (_cropRect != null && !_isCropping)
                                           ClipRect(
                                             child: Transform.translate(
                                               offset: Offset(
@@ -286,6 +286,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                                           )
                                         else
                                           VideoPlayer(_controller),
+                                        // Show overlay and selection only while actively cropping
                                         if (_isCropping)
                                           _buildCropOverlay(viewSize),
                                         if (!_controller.value.isPlaying && !_isCropping)
