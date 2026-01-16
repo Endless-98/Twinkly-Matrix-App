@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
+import 'dart:io' as IO;
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
 
@@ -112,9 +113,27 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
       final file = result.files.single;
       final fileName = file.name;
-      final fileBytes = file.bytes;
+      List<int>? fileBytes = file.bytes;
 
-      if (fileBytes == null) {
+      // If bytes is null, try to read from path
+      if (fileBytes == null && file.path != null) {
+        try {
+          final ioFile = IO.File(file.path!);
+          fileBytes = await ioFile.readAsBytes();
+        } catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Could not read file: $e'),
+                backgroundColor: Colors.red,
+              ),
+            );
+          }
+          return;
+        }
+      }
+
+      if (fileBytes == null || fileBytes.isEmpty) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
