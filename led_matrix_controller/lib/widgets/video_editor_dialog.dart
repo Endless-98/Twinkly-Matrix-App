@@ -269,7 +269,23 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        VideoPlayer(_controller),
+                                        // Show video with crop applied (or full video if no crop)
+                                        if (_cropRect != null)
+                                          ClipRect(
+                                            child: Transform.translate(
+                                              offset: Offset(
+                                                -_cropRect!.left * viewSize.width,
+                                                -_cropRect!.top * viewSize.height,
+                                              ),
+                                              child: SizedBox(
+                                                width: viewSize.width / _cropRect!.width,
+                                                height: viewSize.height / _cropRect!.height,
+                                                child: VideoPlayer(_controller),
+                                              ),
+                                            ),
+                                          )
+                                        else
+                                          VideoPlayer(_controller),
                                         if (_isCropping)
                                           _buildCropOverlay(viewSize),
                                         if (!_controller.value.isPlaying && !_isCropping)

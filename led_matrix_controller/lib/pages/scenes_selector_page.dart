@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io' as IO;
 import 'dart:ui';
+import 'package:path/path.dart' as Path;
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
 import '../widgets/video_editor_dialog.dart';
@@ -109,7 +110,6 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   Future<void> _deleteVideo(String videoName) async {
-    // Show confirmation dialog
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -136,8 +136,6 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final apiService = ApiService(host: fppIp);
       
       await apiService.deleteVideo(videoName);
-      
-      // Reload the scenes list
       await _loadScenes();
       
       if (mounted) {
@@ -153,6 +151,177 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Failed to delete video: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _trimVideo(String videoName) async {
+    final fppIp = ref.read(fppIpProvider);
+    final apiService = ApiService(host: fppIp);
+    
+    try {
+      // Get video metadata
+      final metadata = await apiService.getRenderedVideoMeta(videoName);
+      final duration = metadata['duration'] as double;
+      
+      double startTime = 0.0;
+      double endTime = duration;
+      
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: const Text('Trim Video'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('Duration: ${endTime.toStringAsFixed(1)}s'),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    const Text('Start:'),
+                    Expanded(
+                      child: Slider(
+                        value: startTime,
+                        min: 0,
+                        max: endTime,
+                        onChanged: (value) {
+                          setState(() {
+                            startTime = value;
+                            if (startTime >= endTime) {
+                              endTime = startTime + 0.1;
+                            }
+                          });
+                        },
+                      ),
+                    ),
+                    Text(startTime.toStringAsFixed(1)),
+                  ],
+                ),
+                Row(
+                  children: [
+                    const Text('End:'),
+                    Expanded(
+                      child: Slider(
+                        value: endTime,
+                        min: startTime,
+                        max: duration,
+                        onChanged: (value) {
+                          setState(() {
+                            endTime = value;
+                          });
+                        },
+                      ),
+                    ),
+                    Text(endTime.toStringAsFixed(1)),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('Trim'),
+              ),
+            ],
+          ),
+        ),
+      );
+      
+      if (confirmed != true) return;
+      
+      final outputName = '${Path(videoName).basenameWithoutExtension}_trim.npz';
+      await apiService.trimRenderedVideo(
+        videoName,
+        startTime: startTime,
+        endTime: endTime,
+        outputName: outputName,
+      );
+      
+      await _loadScenes();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Trimmed $videoName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to trim video: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _renameVideo(String videoName) async {
+    String newName = videoName;
+    
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: const Text('Rename Video'),
+          content: TextField(
+            onChanged: (value) {
+              setState(() {
+                newName = value;
+              });
+            },
+            controller: TextEditingController(text: videoName),
+            decoration: InputDecoration(
+              labelText: 'New name',
+              hintText: videoName,
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Rename'),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    if (confirmed != true || newName == videoName) return;
+    
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final apiService = ApiService(host: fppIp);
+      await apiService.renameVideo(videoName, newName);
+      await _loadScenes();
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Renamed to $newName'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to rename video: $e'),
             backgroundColor: Colors.red,
           ),
         );
@@ -446,13 +615,48 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                                       }
                                                     },
                                                   ),
-                                                  IconButton(
-                                                    icon: const Icon(
-                                                      Icons.delete,
-                                                      color: Colors.red,
-                                                      size: 28,
-                                                    ),
-                                                    onPressed: () => _deleteVideo(scene),
+                                                  PopupMenuButton<String>(
+                                                    onSelected: (value) {
+                                                      if (value == 'trim') {
+                                                        _trimVideo(scene);
+                                                      } else if (value == 'rename') {
+                                                        _renameVideo(scene);
+                                                      } else if (value == 'delete') {
+                                                        _deleteVideo(scene);
+                                                      }
+                                                    },
+                                                    itemBuilder: (BuildContext context) => [
+                                                      const PopupMenuItem(
+                                                        value: 'trim',
+                                                        child: Row(
+                                                          children: [
+                                                            Icon(Icons.cut, size: 20),
+                                                            SizedBox(width: 8),
+                                                            Text('Trim'),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                      const PopupMenuItem(
+                                                        value: 'rename',
+                                                        child: Row(
+                                                          children: [
+                                                            Icon(Icons.edit, size: 20),
+                                                            SizedBox(width: 8),
+                                                            Text('Rename'),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                      const PopupMenuItem(
+                                                        value: 'delete',
+                                                        child: Row(
+                                                          children: [
+                                                            Icon(Icons.delete, size: 20, color: Colors.red),
+                                                            SizedBox(width: 8),
+                                                            Text('Delete', style: TextStyle(color: Colors.red)),
+                                                          ],
+                                                        ),
+                                                      ),
+                                                    ],
                                                   ),
                                                 ],
                                               ),
