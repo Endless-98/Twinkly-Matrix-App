@@ -834,11 +834,21 @@ def download_youtube_video():
         # Download to uploaded_videos directory
         output_template = str(uploaded_videos_dir / '%(title)s.%(ext)s')
         
+        # Configure yt-dlp with fallbacks for various YouTube streaming methods
         ydl_opts = {
-            'format': 'best[ext=mp4]/best',
+            'format': 'best[ext=mp4][height<=720]/best[height<=720]/best',
             'outtmpl': output_template,
             'quiet': False,
             'no_warnings': False,
+            'socket_timeout': 30,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            },
+            'extractor_args': {
+                'youtube': {
+                    'skip': ['dash', 'hls'],  # Skip DASH/HLS formats that require JS extraction
+                }
+            }
         }
         
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
