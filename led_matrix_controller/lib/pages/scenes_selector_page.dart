@@ -454,8 +454,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               _uploadingFiles.remove(uploadFileName);
               _uploadProgress.remove(uploadFileName);
               _renderingFiles.add(uploadFileName);
+              // Start polling timer if not already running
+              if (_renderCheckTimer == null || !(_renderCheckTimer?.isActive ?? false)) {
+                _startRenderCheckTimer();
+              }
             });
-            _loadScenes(); // Refresh the scenes list
+            // Don't call _loadScenes() here - let the timer handle refresh
+            // This prevents premature removal of rendering status
           },
           onUploadFailed: (uploadFileName) {
             setState(() {
