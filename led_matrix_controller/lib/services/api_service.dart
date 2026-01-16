@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:ui';
 import 'package:http/http.dart' as http;
 
 class ApiService {
@@ -166,6 +167,92 @@ class ApiService {
       }
     } catch (e) {
       throw Exception('Delete error: $e');
+    }
+  }
+
+  /// Upload a video file with trim and crop parameters
+  Future<Map<String, dynamic>> uploadVideoWithParams(
+    List<int> fileBytes,
+    String fileName, {
+    int renderFps = 20,
+    double? startTime,
+    double? endTime,
+    Rect? cropRect,
+  }) async {
+    try {
+      final request = http.MultipartRequest(
+        'POST',
+        Uri.parse('$_baseUrl/api/upload'),
+      );
+
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          fileBytes,
+          filename: fileName,
+        ),
+      );
+
+      request.fields['render_fps'] = renderFps.toString();
+      if (startTime != null) request.fields['start_time'] = startTime.toString();
+      if (endTime != null) request.fields['end_time'] = endTime.toString();
+      if (cropRect != null) {
+        request.fields['crop_left'] = cropRect.left.toString();
+        request.fields['crop_top'] = cropRect.top.toString();
+        request.fields['crop_right'] = cropRect.right.toString();
+        request.fields['crop_bottom'] = cropRect.bottom.toString();
+      }
+
+      final streamResponse = await request.send().timeout(const Duration(minutes: 5));
+      final response = await http.Response.fromStream(streamResponse);
+
+      if (response.statusCode == 201) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Upload failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Upload error: $e');
+    }
+  }
+
+  /// Render an uploaded video with trim and crop parameters
+  Future<Map<String, dynamic>> renderVideoWithParams(
+    String fileName, {
+    int renderFps = 20,
+    double? startTime,
+    double? endTime,
+    Rect? cropRect,
+  }) async {
+    try {
+      final body = {
+        'filename': fileName,
+        'render_fps': renderFps,
+        if (startTime != null) 'start_time': startTime,
+        if (endTime != null) 'end_time': endTime,
+        if (cropRect != null) ...{
+          'crop_left': cropRect.left,
+          'crop_top': cropRect.top,
+          'crop_right': cropRect.right,
+          'crop_bottom': cropRect.bottom,
+        },
+      };
+
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/render'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(minutes: 10));
+
+      if (response.statusCode == 202) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Render request failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Render error: $e');
     }
   }
 }

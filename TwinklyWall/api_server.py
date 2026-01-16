@@ -280,14 +280,24 @@ def upload_video():
         return jsonify({'error': str(e)}), 500
 
 
-def render_video_thread(video_path, render_fps):
+def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None):
     """Thread function to render an uploaded video."""
     try:
         renderer = VideoRenderer()
         log(f"Starting render: {video_path} at {render_fps} FPS", module="API")
+        if start_time or end_time:
+            log(f"  Trim: {start_time}s to {end_time}s", module="API")
+        if crop_rect:
+            log(f"  Crop: {crop_rect}", module="API")
         
-        # Render the video
-        output_path = renderer.render_video(video_path, output_fps=render_fps)
+        # Render the video with trim/crop parameters
+        output_path = renderer.render_video(
+            video_path, 
+            output_fps=render_fps,
+            start_time=start_time,
+            end_time=end_time,
+            crop_rect=crop_rect
+        )
         
         if output_path:
             log(f"Render complete: {output_path}", module="API")
@@ -311,11 +321,26 @@ def render_uploaded_video():
     JSON body:
     - filename: name of uploaded file
     - render_fps: target FPS (20 or 40, default 20)
+    - start_time: (optional) start time in seconds
+    - end_time: (optional) end time in seconds
+    - crop_left, crop_top, crop_right, crop_bottom: (optional) crop rectangle in normalized 0-1 coordinates
     """
     try:
         data = request.json
         filename = data.get('filename')
         render_fps = data.get('render_fps', 20)
+        start_time = data.get('start_time')
+        end_time = data.get('end_time')
+        
+        # Extract crop parameters if provided
+        crop_rect = None
+        if all(k in data for k in ['crop_left', 'crop_top', 'crop_right', 'crop_bottom']):
+            crop_rect = (
+                float(data['crop_left']),
+                float(data['crop_top']),
+                float(data['crop_right']),
+                float(data['crop_bottom'])
+            )
         
         if not filename:
             return jsonify({'error': 'No filename specified'}), 400
@@ -331,7 +356,7 @@ def render_uploaded_video():
         # Start rendering in background thread
         render_thread = threading.Thread(
             target=render_video_thread,
-            args=(str(video_path), render_fps),
+            args=(str(video_path), render_fps, start_time, end_time, crop_rect),
             daemon=True
         )
         render_thread.start()

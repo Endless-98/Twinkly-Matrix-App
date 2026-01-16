@@ -47,7 +47,7 @@ class VideoRenderer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
-    def render_video(self, video_path, output_fps=None, output_name=None):
+    def render_video(self, video_path, output_fps=None, output_name=None, start_time=None, end_time=None, crop_rect=None):
         """
         Render a video file to optimized color data.
         
@@ -55,6 +55,9 @@ class VideoRenderer:
             video_path: Path to input video file (mp4, avi, etc)
             output_fps: Target framerate (None = use source fps)
             output_name: Output filename (None = auto-generate from input)
+            start_time: Start time in seconds (None = from beginning)
+            end_time: End time in seconds (None = until end)
+            crop_rect: Tuple of (left, top, right, bottom) in normalized coordinates 0-1 (None = no crop)
         
         Returns:
             Path to saved render file, or None on error
@@ -74,35 +77,69 @@ class VideoRenderer:
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         source_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         source_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        video_duration = total_frames / source_fps if source_fps > 0 else 0
+        
+        # Calculate trim parameters
+        start_frame = int((start_time or 0) * source_fps)
+        end_frame = int((end_time or video_duration) * source_fps) if end_time else total_frames
+        start_frame = max(0, min(start_frame, total_frames))
+        end_frame = max(start_frame + 1, min(end_frame, total_frames))
+        
+        # Calculate crop parameters (normalized 0-1 to pixel coordinates)
+        if crop_rect:
+            crop_left = int(crop_rect[0] * source_width)
+            crop_top = int(crop_rect[1] * source_height)
+            crop_right = int(crop_rect[2] * source_width)
+            crop_bottom = int(crop_rect[3] * source_height)
+            # Ensure valid crop dimensions
+            crop_left = max(0, min(crop_left, source_width - 1))
+            crop_top = max(0, min(crop_top, source_height - 1))
+            crop_right = max(crop_left + 1, min(crop_right, source_width))
+            crop_bottom = max(crop_top + 1, min(crop_bottom, source_height))
+        else:
+            crop_left, crop_top = 0, 0
+            crop_right, crop_bottom = source_width, source_height
         
         target_fps = output_fps if output_fps else source_fps
         
         print(f"\nRendering video:")
         print(f"  Source: {video_path}")
         print(f"  Resolution: {source_width}x{source_height} -> {self.downscaled_width}x{self.downscaled_height} (downscale {self.downscale_factor:.2f}x)")
+        if crop_rect:
+            print(f"  Crop: ({crop_left},{crop_top}) to ({crop_right},{crop_bottom})")
+        if start_time or end_time:
+            print(f"  Trim: {start_time or 0:.2f}s to {end_time or video_duration:.2f}s (frames {start_frame}-{end_frame})")
         print(f"  Quantization: {self.quantize_bits}-bit per channel" if self.quantize_bits < 8 else "  Quantization: none (8-bit)")
         print(f"  FPS: {source_fps:.2f} -> {target_fps:.2f}")
-        print(f"  Total frames: {total_frames}")
+        print(f"  Total frames: {end_frame - start_frame}")
         print(f"  Payload reduction: {self._estimate_payload_reduction():.1f}%")
+        
+        # Seek to start frame
+        if start_frame > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         
         # Pre-allocate output array
         frames_to_render = []
         frame_interval = source_fps / target_fps if target_fps < source_fps else 1.0
         
-        start_time = time.time()
-        frame_idx = 0
+        start_processing_time = time.time()
+        frame_idx = start_frame
         rendered_count = 0
         
-        while True:
+        while frame_idx < end_frame:
             ret, frame = cap.read()
             if not ret:
                 break
             
             # Skip frames if downsampling FPS
             if output_fps and output_fps < source_fps:
-                if frame_idx % int(frame_interval) != 0:
+                if (frame_idx - start_frame) % int(frame_interval) != 0:
                     frame_idx += 1
                     continue
+            
+            # Apply crop if specified
+            if crop_rect:
+                frame = frame[crop_top:crop_bottom, crop_left:crop_right]
             
             # Convert BGR (OpenCV) to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -121,15 +158,15 @@ class VideoRenderer:
             
             rendered_count += 1
             if rendered_count % 100 == 0:
-                elapsed = time.time() - start_time
+                elapsed = time.time() - start_processing_time
                 fps_rate = rendered_count / elapsed if elapsed > 0 else 0
-                print(f"  Rendered {rendered_count}/{total_frames} frames ({fps_rate:.1f} fps)...", end='\r')
+                print(f"  Rendered {rendered_count}/{end_frame - start_frame} frames ({fps_rate:.1f} fps)...", end='\r')
             
             frame_idx += 1
         
         cap.release()
         
-        elapsed = time.time() - start_time
+        elapsed = time.time() - start_processing_time
         print(f"\n  Rendered {rendered_count} frames in {elapsed:.2f}s ({rendered_count/elapsed:.1f} fps)")
         
         # Save to file

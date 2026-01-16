@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io' as IO;
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
+import '../widgets/video_editor_dialog.dart';
 
 class ScenesSelectorPage extends ConsumerStatefulWidget {
   const ScenesSelectorPage({super.key});
@@ -21,6 +22,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   double _brightness = 1.0;
   final double _playbackFps = 20.0;
   int _selectedRenderFps = 20;
+  
+  // Upload progress tracking
+  final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
+  final Set<String> _uploadingFiles = {};
 
   @override
   void initState() {
@@ -165,31 +170,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
       final file = result.files.single;
       final fileName = file.name;
-      List<int>? fileBytes = file.bytes;
+      final filePath = file.path;
 
-      // If bytes is null, try to read from path
-      if (fileBytes == null && file.path != null) {
-        try {
-          final ioFile = IO.File(file.path!);
-          fileBytes = await ioFile.readAsBytes();
-        } catch (e) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Could not read file: $e'),
-                backgroundColor: Colors.red,
-              ),
-            );
-          }
-          return;
-        }
-      }
-
-      if (fileBytes == null || fileBytes.isEmpty) {
+      if (filePath == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Could not read file'),
+              content: Text('Could not access file path'),
               backgroundColor: Colors.red,
             ),
           );
@@ -198,8 +185,18 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       }
 
       if (mounted) {
-        // Show upload dialog
-        _showUploadDialog(fileName, fileBytes);
+        // Show video editor dialog
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => VideoEditorDialog(
+            videoPath: filePath,
+            fileName: fileName,
+            onConfirm: (startTime, endTime, cropRect) {
+              _showUploadDialog(filePath, fileName, startTime, endTime, cropRect);
+            },
+          ),
+        );
       }
     } catch (e) {
       if (mounted) {
@@ -213,14 +210,23 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     }
   }
 
-  void _showUploadDialog(String fileName, List<int> fileBytes) {
+  void _showUploadDialog(
+    String filePath,
+    String fileName,
+    double startTime,
+    double endTime,
+    Rect? cropRect,
+  ) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (BuildContext context) {
         return _UploadDialogContent(
+          filePath: filePath,
           fileName: fileName,
-          fileBytes: fileBytes,
+          startTime: startTime,
+          endTime: endTime,
+          cropRect: cropRect,
           selectedRenderFps: _selectedRenderFps,
           fppIp: ref.read(fppIpProvider),
           onRenderFpsChanged: (fps) {
@@ -228,7 +234,22 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               _selectedRenderFps = fps;
             });
           },
-          onUploadComplete: () {
+          onUploadStarted: (uploadFileName) {
+            setState(() {
+              _uploadingFiles.add(uploadFileName);
+              _uploadProgress[uploadFileName] = 0.0;
+            });
+          },
+          onUploadProgress: (uploadFileName, progress) {
+            setState(() {
+              _uploadProgress[uploadFileName] = progress;
+            });
+          },
+          onUploadComplete: (uploadFileName) {
+            setState(() {
+              _uploadingFiles.remove(uploadFileName);
+              _uploadProgress.remove(uploadFileName);
+            });
             _loadScenes(); // Refresh the scenes list
           },
         );
@@ -326,14 +347,35 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                   ),
                                 ],
                               )
-                            : _scenes.isEmpty
+                            : _scenes.isEmpty && _uploadingFiles.isEmpty
                                 ? const Center(child: Text('No scenes found'))
                                 : ListView.builder(
                                     shrinkWrap: true,
                                     physics: const NeverScrollableScrollPhysics(),
-                                    itemCount: _scenes.length,
+                                    itemCount: _uploadingFiles.length + _scenes.length,
                                     itemBuilder: (context, index) {
-                                      final scene = _scenes[index];
+                                      // Show uploading files first
+                                      if (index < _uploadingFiles.length) {
+                                        final uploadingFile = _uploadingFiles.elementAt(index);
+                                        final progress = _uploadProgress[uploadingFile] ?? 0.0;
+                                        return Card(
+                                          margin: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 6,
+                                          ),
+                                          color: Colors.orange[900],
+                                          child: ListTile(
+                                            leading: const CircularProgressIndicator(),
+                                            title: Text(uploadingFile),
+                                            subtitle: LinearProgressIndicator(value: progress),
+                                            trailing: Text('${(progress * 100).toInt()}%'),
+                                          ),
+                                        );
+                                      }
+                                      
+                                      // Show existing scenes
+                                      final sceneIndex = index - _uploadingFiles.length;
+                                      final scene = _scenes[sceneIndex];
                                       final isPlaying = _currentlyPlaying == scene;
                                       return Card(
                                         margin: const EdgeInsets.symmetric(
@@ -390,19 +432,29 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 }
 
 class _UploadDialogContent extends StatefulWidget {
+  final String filePath;
   final String fileName;
-  final List<int> fileBytes;
+  final double startTime;
+  final double endTime;
+  final Rect? cropRect;
   final int selectedRenderFps;
   final String fppIp;
   final Function(int) onRenderFpsChanged;
-  final VoidCallback onUploadComplete;
+  final Function(String) onUploadStarted;
+  final Function(String, double) onUploadProgress;
+  final Function(String) onUploadComplete;
 
   const _UploadDialogContent({
+    required this.filePath,
     required this.fileName,
-    required this.fileBytes,
+    required this.startTime,
+    required this.endTime,
+    required this.cropRect,
     required this.selectedRenderFps,
     required this.fppIp,
     required this.onRenderFpsChanged,
+    required this.onUploadStarted,
+    required this.onUploadProgress,
     required this.onUploadComplete,
   });
 
@@ -425,23 +477,36 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
   Future<void> _performUpload() async {
     setState(() {
       _isUploading = true;
-      _status = 'Uploading...';
-      _uploadProgress = 0.3;
+      _status = 'Reading file...';
+      _uploadProgress = 0.1;
     });
 
-    try {
-      final apiService = ApiService(host: widget.fppIp);
+    // Notify parent that upload started
+    widget.onUploadStarted(widget.fileName);
 
-      // Upload the video
+    try {
+      // Read file bytes
+      final file = IO.File(widget.filePath);
+      final fileBytes = await file.readAsBytes();
+
+      if (!mounted) return;
+
       setState(() {
         _uploadProgress = 0.3;
         _status = 'Uploading to device...';
       });
+      widget.onUploadProgress(widget.fileName, 0.3);
 
-      final uploadResponse = await apiService.uploadVideo(
-        widget.fileBytes,
+      final apiService = ApiService(host: widget.fppIp);
+
+      // Upload the video with trim/crop parameters
+      final uploadResponse = await apiService.uploadVideoWithParams(
+        fileBytes,
         widget.fileName,
         renderFps: _renderFps,
+        startTime: widget.startTime,
+        endTime: widget.endTime,
+        cropRect: widget.cropRect,
       );
 
       if (!mounted) return;
@@ -452,11 +517,15 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         _uploadProgress = 0.6;
         _status = 'Queuing render job...';
       });
+      widget.onUploadProgress(widget.fileName, 0.6);
 
-      // Request rendering
-      await apiService.renderVideo(
+      // Request rendering with trim/crop parameters
+      await apiService.renderVideoWithParams(
         uploadedFileName,
         renderFps: _renderFps,
+        startTime: widget.startTime,
+        endTime: widget.endTime,
+        cropRect: widget.cropRect,
       );
 
       if (!mounted) return;
@@ -466,17 +535,24 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         _status =
             'Rendering in progress! Video will appear in the list when ready.';
       });
+      widget.onUploadProgress(widget.fileName, 1.0);
 
       // Wait a moment then close
       await Future.delayed(const Duration(seconds: 2));
 
       if (mounted) {
         Navigator.of(context).pop();
-        widget.onUploadComplete();
+        widget.onUploadComplete(widget.fileName);
+        
+        final duration = widget.endTime - widget.startTime;
+        final cropInfo = widget.cropRect != null 
+            ? ' (cropped ${(widget.cropRect!.width * 100).toInt()}×${(widget.cropRect!.height * 100).toInt()}%)'
+            : '';
+        
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Video "${widget.fileName}" is rendering at $_renderFps FPS',
+              'Video "${widget.fileName}" is rendering at $_renderFps FPS (${duration.toStringAsFixed(1)}s$cropInfo)',
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
@@ -489,12 +565,18 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           _isUploading = false;
           _status = 'Error: $e';
         });
+        widget.onUploadComplete(widget.fileName); // Remove from uploading list
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final duration = widget.endTime - widget.startTime;
+    final cropInfo = widget.cropRect != null
+        ? '${(widget.cropRect!.width * 100).toInt()}% × ${(widget.cropRect!.height * 100).toInt()}%'
+        : 'None';
+
     return AlertDialog(
       title: const Text('Upload Video'),
       content: SingleChildScrollView(
@@ -503,8 +585,10 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('File: ${widget.fileName}'),
-            const SizedBox(height: 12),
-            Text('Size: ${(widget.fileBytes.length / (1024 * 1024)).toStringAsFixed(2)} MB'),
+            const SizedBox(height: 8),
+            Text('Trim: ${widget.startTime.toStringAsFixed(1)}s - ${widget.endTime.toStringAsFixed(1)}s (${duration.toStringAsFixed(1)}s)'),
+            const SizedBox(height: 8),
+            Text('Crop: $cropInfo'),
             const SizedBox(height: 16),
             const Text('Render FPS:'),
             const SizedBox(height: 8),
