@@ -287,26 +287,16 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                                     child: Stack(
                                       fit: StackFit.expand,
                                       children: [
-                                        // Show video with crop applied only after cropping is confirmed (not during drag)
-                                        if (_cropRect != null && !_isCropping)
-                                          ClipRect(
-                                            child: Transform.translate(
-                                              offset: Offset(
-                                                -_cropRect!.left * viewSize.width,
-                                                -_cropRect!.top * viewSize.height,
-                                              ),
-                                              child: SizedBox(
-                                                width: viewSize.width / _cropRect!.width,
-                                                height: viewSize.height / _cropRect!.height,
-                                                child: VideoPlayer(_controller),
-                                              ),
-                                            ),
-                                          )
-                                        else
-                                          VideoPlayer(_controller),
+                                        // Always show full video to avoid aspect ratio distortion
+                                        VideoPlayer(_controller),
                                         // Show overlay and selection only while actively cropping
                                         if (_isCropping)
                                           _buildCropOverlay(viewSize),
+                                        // After crop confirmed, show it as a permanent overlay
+                                        if (_cropRect != null && !_isCropping)
+                                          IgnorePointer(
+                                            child: _buildCropOverlay(viewSize),
+                                          ),
                                         if (!_controller.value.isPlaying && !_isCropping)
                                           Center(
                                             child: IconButton(
