@@ -26,10 +26,14 @@ current_matrix = None
 playback_thread = None
 playback_active = False
 current_video_name = None
-rendered_videos_dir = Path("dotmatrix/rendered_videos")
+MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
+rendered_videos_dir = MEDIA_ROOT / "rendered"
 source_videos_dir = Path("assets/source_videos")
-uploaded_videos_dir = Path("uploaded_videos")
-uploaded_videos_dir.mkdir(parents=True, exist_ok=True)
+uploaded_videos_dir = MEDIA_ROOT / "uploads"
+
+# Ensure media directories live on the large (219GB) partition, not /tmp
+os.makedirs(rendered_videos_dir, exist_ok=True)
+os.makedirs(uploaded_videos_dir, exist_ok=True)
 
 # Upload configuration
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'flv', 'wmv'}

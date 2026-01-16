@@ -22,7 +22,7 @@ except ImportError:
 class VideoRenderer:
     """Renders video files to pre-computed color data for FPP playback."""
     
-    def __init__(self, matrix_width=90, matrix_height=50, output_dir="dotmatrix/rendered_videos", 
+    def __init__(self, matrix_width=90, matrix_height=50, output_dir="/home/fpp/TwinklyWall_Project/media/rendered", 
                  downscale_factor=1.0, quantize_bits=8):
         """
         Initialize video renderer.
