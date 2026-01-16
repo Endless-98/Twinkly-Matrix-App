@@ -130,24 +130,24 @@ class VideoRenderer:
             ret, frame = cap.read()
             if not ret:
                 break
-            
+
             # Skip frames if downsampling FPS
             if output_fps and output_fps < source_fps:
                 if (frame_idx - start_frame) % int(frame_interval) != 0:
                     frame_idx += 1
                     continue
-            
+
             # Apply crop if specified
             if crop_rect:
                 frame = frame[crop_top:crop_bottom, crop_left:crop_right]
-            
+
             # Convert BGR (OpenCV) to RGB
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            
+
             # Resize to downscaled dimensions using high-quality downsampling
-            resized = cv2.resize(frame_rgb, (self.downscaled_width, self.downscaled_height), 
+            resized = cv2.resize(frame_rgb, (self.downscaled_width, self.downscaled_height),
                                interpolation=cv2.INTER_AREA)
-            
+
             # Apply quantization if needed (reduce to 6-bit, 4-bit, etc. per channel)
             if self.quantize_bits < 8:
                 quantized = self._quantize_frame(resized)
@@ -155,13 +155,14 @@ class VideoRenderer:
             else:
                 # Store as uint8 numpy array (height, width, 3)
                 frames_to_render.append(resized.astype(np.uint8))
-            
+
             rendered_count += 1
             if rendered_count % 100 == 0:
                 elapsed = time.time() - start_processing_time
                 fps_rate = rendered_count / elapsed if elapsed > 0 else 0
-                print(f"  Rendered {rendered_count}/{end_frame - start_frame} frames ({fps_rate:.1f} fps)...", end='\r')
-            
+                # Flush progress to journald/stdout so we can monitor on Pi
+                print(f"  Rendered {rendered_count}/{end_frame - start_frame} frames ({fps_rate:.1f} fps)...", flush=True)
+
             frame_idx += 1
         
         cap.release()
