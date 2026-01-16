@@ -861,7 +861,7 @@ def download_youtube_video():
         return jsonify({
             'status': 'downloaded',
             'filename': filepath.name,
-            'path': str(filepath),
+            'url': f'/api/video/{filepath.name}',  # Serve file via HTTP endpoint
             'size_mb': filepath.stat().st_size / (1024*1024),
         }), 200
         

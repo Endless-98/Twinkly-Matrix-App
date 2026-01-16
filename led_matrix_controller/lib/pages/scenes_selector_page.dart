@@ -495,7 +495,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final apiService = ApiService(host: fppIp);
       final result = await apiService.downloadYouTubeVideo(youtubeUrl);
       final fileName = result['filename'];
-      final filePath = result['path'];
+      final videoUrl = '$fppIp${result['url']}';  // Construct full HTTP URL
 
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -505,10 +505,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           context: context,
           barrierDismissible: false,
           builder: (context) => VideoEditorDialog(
-            videoPath: filePath,
+            videoPath: videoUrl,
             fileName: fileName,
             onConfirm: (startTime, endTime, cropRect) {
-              _showUploadDialog(filePath, fileName, startTime, endTime, cropRect);
+              _showUploadDialog(videoUrl, fileName, startTime, endTime, cropRect);
             },
           ),
         );
