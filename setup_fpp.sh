@@ -64,16 +64,22 @@ else
     echo '⚠️  .pyenv Python 3.12.12 not found, using system python3'
 fi
 
-echo '📦 Checking Python dependencies...'
-# Install dependencies globally to the selected Python environment
-"$PYTHON_BIN" -m pip install -q -r requirements.txt
+echo '📦 Installing Python dependencies...'
+# Install dependencies (remove -q flag to see any errors)
+"$PYTHON_BIN" -m pip install -r requirements.txt || {
+    echo "❌ Failed to install dependencies"
+    exit 1
+}
 
 # Verify yt-dlp is installed for YouTube downloads
 if "$PYTHON_BIN" -c "import yt_dlp" 2>/dev/null; then
     echo '✅ Python dependencies satisfied (yt-dlp found)'
 else
     echo '🔄 Installing yt-dlp...'
-    "$PYTHON_BIN" -m pip install -q yt-dlp
+    "$PYTHON_BIN" -m pip install yt-dlp || {
+        echo "❌ Failed to install yt-dlp"
+        exit 1
+    }
 fi
 
 # Install/update systemd services (skip in --debug mode)
