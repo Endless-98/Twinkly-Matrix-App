@@ -382,8 +382,14 @@ def upload_video():
         if file_size > MAX_UPLOAD_SIZE:
             return jsonify({'error': f'File too large. Max size: {MAX_UPLOAD_SIZE / (1024*1024):.0f} MB'}), 413
         
-        # Save uploaded file
-        file.save(str(upload_path))
+        # Save uploaded file directly to avoid /tmp buffering on large files
+        with open(upload_path, 'wb') as f:
+            while True:
+                chunk = file.read(8192)  # Read in 8KB chunks
+                if not chunk:
+                    break
+                f.write(chunk)
+        
         log(f"Video uploaded: {filename} ({file_size / (1024*1024):.2f} MB)", module="API")
         
         # Get render FPS from request (default 20)
