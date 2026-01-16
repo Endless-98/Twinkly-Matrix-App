@@ -183,6 +183,24 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     targetWidth = targetWidth.clamp(minSize, 1.0);
     targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
 
+    // Maintain aspect ratio when clamping to viewport bounds
+    // If width exceeds bounds, scale both down proportionally
+    if (targetWidth > 1.0) {
+      final scale = 1.0 / targetWidth;
+      targetWidth = 1.0;
+      targetHeight *= scale;
+    }
+    // If height exceeds bounds, scale both down proportionally
+    if (targetHeight > 1.0) {
+      final scale = 1.0 / targetHeight;
+      targetHeight = 1.0;
+      targetWidth *= scale;
+    }
+
+    // Ensure minimum size is still met
+    targetWidth = targetWidth.clamp(minSize, 1.0);
+    targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
+
     // Determine orientation (drag direction)
     final left = dx >= 0 ? start.dx : start.dx - targetWidth;
     final top = dy >= 0 ? start.dy : start.dy - targetHeight;
