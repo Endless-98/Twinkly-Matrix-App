@@ -495,7 +495,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final apiService = ApiService(host: fppIp);
       final result = await apiService.downloadYouTubeVideo(youtubeUrl);
       final fileName = result['filename'];
-      final videoUrl = '$fppIp${result['url']}';  // Construct full HTTP URL
+      
+      // Construct proper HTTP URL with port and URL encoding
+      final encodedFileName = Uri.encodeComponent(fileName);
+      final videoUrl = 'http://$fppIp:5000/api/video/$encodedFileName';
 
       if (!mounted) return;
       Navigator.of(context).pop();

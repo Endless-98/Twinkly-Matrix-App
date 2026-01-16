@@ -870,6 +870,28 @@ def download_youtube_video():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/video/<filename>', methods=['GET'])
+def serve_video(filename):
+    """Serve a video file from the uploads directory."""
+    try:
+        filename = secure_filename(filename)
+        filepath = uploaded_videos_dir / filename
+        
+        if not filepath.exists():
+            return jsonify({'error': 'Video not found'}), 404
+        
+        # Use send_file with streaming for large videos
+        from flask import send_file
+        return send_file(
+            str(filepath),
+            mimetype='video/mp4',
+            as_attachment=False,  # Display inline in browser/player
+        )
+    except Exception as e:
+        log(f"Video serving error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
 def cleanup():
     """Cleanup function to be called on shutdown."""
     global current_matrix, cleanup_active
