@@ -12,6 +12,39 @@ class ApiService {
 
   String get _baseUrl => 'http://$host:$port';
 
+  /// Get list of available videos from the server
+  Future<List<String>> getAvailableVideos() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/videos'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final videos = data['videos'];
+        
+        // Handle both old format (list of strings) and new format (list of maps)
+        if (videos.isEmpty) {
+          return [];
+        }
+        
+        if (videos.first is String) {
+          // Old format: list of filenames
+          return List<String>.from(videos);
+        } else if (videos.first is Map) {
+          // New format: list of video metadata objects
+          return (videos as List).map((v) => v['filename'] as String).toList();
+        } else {
+          throw Exception('Unexpected video list format');
+        }
+      } else {
+        throw Exception('Failed to load videos: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Connection error: $e');
+    }
+  }
+
   /// Get list of available videos from the server with metadata
   Future<List<Map<String, dynamic>>> getAvailableVideosWithMeta() async {
     try {
@@ -21,23 +54,31 @@ class ApiService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return List<Map<String, dynamic>>.from(data['videos']);
+        final videos = data['videos'];
+        
+        // Handle both old format and new format
+        if (videos.isEmpty) {
+          return [];
+        }
+        
+        if (videos.first is String) {
+          // Old format: convert strings to metadata objects
+          return (videos as List<String>)
+              .map((filename) => {
+                'filename': filename,
+                'has_thumbnail': false,
+                'thumbnail': null,
+              })
+              .toList();
+        } else {
+          // New format: already metadata objects
+          return List<Map<String, dynamic>>.from(videos);
+        }
       } else {
         throw Exception('Failed to load videos: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Connection error: $e');
-    }
-  }
-
-  /// Get list of available videos from the server (for backward compatibility)
-  Future<List<String>> getAvailableVideos() async {
-    try {
-      final videosWithMeta = await getAvailableVideosWithMeta();
-      // Extract just the filenames
-      return videosWithMeta.map((v) => v['filename'] as String).toList();
-    } catch (e) {
-      throw Exception('Failed to load videos: $e');
     }
   }
 
