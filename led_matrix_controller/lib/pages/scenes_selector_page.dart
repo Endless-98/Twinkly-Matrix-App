@@ -32,6 +32,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   final Map<String, int> _renderFramesCurrent = {}; // filename -> frames rendered
   final Map<String, int> _renderFramesTotal = {}; // filename -> total frames
   Timer? _renderCheckTimer;
+  final ScrollController _scrollController = ScrollController();
+  final Map<String, GlobalKey> _itemKeys = {};
+  String? _pendingHighlight;
+  String? _activeHighlight;
+  Timer? _highlightTimer;
 
   /// Remove file extensions from display names
   String _displayName(String filename) {
@@ -51,10 +56,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   @override
   void dispose() {
     _renderCheckTimer?.cancel();
+    _highlightTimer?.cancel();
+    _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadScenes() async {
+    final previousScenes = Set<String>.from(_scenes);
     setState(() {
       _isLoading = true;
       _error = null;
@@ -67,11 +75,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       setState(() {
         _scenes = scenes;
         _isLoading = false;
-        
-        // Don't automatically remove rendering files.
-        // They will be cleared by a periodic check or manually when the user
-        // removes the rendering status after seeing it complete.
-        // This ensures the progress card stays visible during rendering.
+
+        final newItems = scenes.where((s) => !previousScenes.contains(s)).toList();
+        if (newItems.isNotEmpty) {
+          _pendingHighlight ??= newItems.first;
+        }
         
         // If still rendering, start periodic checks; otherwise stop timer
         if (_renderingFiles.isNotEmpty) {
@@ -81,6 +89,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           _renderCheckTimer = null;
         }
       });
+      _scheduleHighlightScroll();
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -121,6 +130,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                   _renderFramesCurrent.remove(filename);
                   _renderFramesTotal.remove(filename);
                 });
+                if (status == 'complete' && _pendingHighlight == null) {
+                  _pendingHighlight = filename;
+                }
                 anyCompleted = true;
               }
             }
@@ -141,6 +153,42 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         }
       }
     });
+  }
+
+  void _scheduleHighlightScroll() {
+    if (!mounted || _pendingHighlight == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHighlight());
+  }
+
+  void _scrollToHighlight() {
+    final target = _pendingHighlight;
+    if (target == null) return;
+    final key = _itemKeys[target];
+    if (key?.currentContext == null) {
+      // Item not in view yet; try again on next frame
+      WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToHighlight());
+      return;
+    }
+
+    _pendingHighlight = null;
+    _activeHighlight = target;
+    _highlightTimer?.cancel();
+    _highlightTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _activeHighlight = null;
+        });
+      }
+    });
+
+    Scrollable.ensureVisible(
+      key!.currentContext!,
+      alignment: 0.2,
+      duration: const Duration(milliseconds: 500),
+      curve: Curves.easeInOut,
+    );
+
+    setState(() {});
   }
 
   Future<void> _playScene(String sceneName) async {
@@ -303,6 +351,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           ? videoName.substring(0, videoName.lastIndexOf('.'))
           : videoName;
       final outputName = '${baseName}_trim.npz';
+
+      _pendingHighlight = outputName;
 
       await apiService.trimRenderedVideo(
         videoName,
@@ -705,6 +755,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       body: LayoutBuilder(
         builder: (context, constraints) {
           return SingleChildScrollView(
+            controller: _scrollController,
             padding: const EdgeInsets.only(bottom: 16),
             child: ConstrainedBox(
               constraints: BoxConstraints(minHeight: constraints.maxHeight),
@@ -805,7 +856,12 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                           } else if (item.type == 'rendering') {
                                             return _buildRenderingCard(item.name);
                                           } else {
-                                            return _buildSceneCard(item.name);
+                                            final key = _itemKeys.putIfAbsent(item.name, () => GlobalKey());
+                                            final isHighlighted = _activeHighlight == item.name;
+                                            return KeyedSubtree(
+                                              key: key,
+                                              child: _buildSceneCard(item.name, isHighlighted: isHighlighted),
+                                            );
                                           }
                                         },
                                       );
@@ -974,14 +1030,34 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   /// Build a square card for a completed scene
-  Widget _buildSceneCard(String sceneName) {
+  Widget _buildSceneCard(String sceneName, {bool isHighlighted = false}) {
     final isPlaying = _currentlyPlaying == sceneName;
     final fppIp = ref.read(fppIpProvider);
     final apiService = ApiService(host: fppIp);
     final thumbnailUrl = apiService.getThumbnailUrl(sceneName);
-    
-    return Card(
-      color: isPlaying ? Colors.green[900] : Colors.grey[800],
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      decoration: BoxDecoration(
+        border: isHighlighted
+            ? Border.all(color: Colors.blueAccent, width: 3)
+            : null,
+        boxShadow: isHighlighted
+            ? [
+                BoxShadow(
+                  color: Colors.blueAccent.withOpacity(0.5),
+                  blurRadius: 12,
+                  spreadRadius: 2,
+                ),
+              ]
+            : null,
+      ),
+      child: Card(
+        color: isPlaying
+            ? Colors.green[900]
+            : isHighlighted
+                ? Colors.blueGrey[700]
+                : Colors.grey[800],
       child: Stack(
         fit: StackFit.expand,
         children: [

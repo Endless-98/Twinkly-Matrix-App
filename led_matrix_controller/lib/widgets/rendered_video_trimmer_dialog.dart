@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
+import 'dart:typed_data';
+import 'package:http/http.dart' as http;
 
 class RenderedVideoTrimmerDialog extends StatefulWidget {
   final String videoPath; // Kept for compatibility, not used
@@ -346,41 +348,182 @@ class _RenderedVideoFrameViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Calculate current frame index
-    final frameIndex = (currentPosition * fps).floor().clamp(0, totalFrames - 1);
-    
-    // Build frame URL
-    final frameUrl = 'http://$apiHost:$apiPort/api/videos/${Uri.encodeComponent(fileName)}/frame/$frameIndex';
+    return _RenderedVideoFrameViewerStateful(
+      fileName: fileName,
+      currentPosition: currentPosition,
+      fps: fps,
+      totalFrames: totalFrames,
+      apiHost: apiHost,
+      apiPort: apiPort,
+    );
+  }
+}
+
+class _RenderedVideoFrameViewerStateful extends StatefulWidget {
+  final String fileName;
+  final double currentPosition;
+  final double fps;
+  final int totalFrames;
+  final String apiHost;
+  final int apiPort;
+
+  const _RenderedVideoFrameViewerStateful({
+    required this.fileName,
+    required this.currentPosition,
+    required this.fps,
+    required this.totalFrames,
+    required this.apiHost,
+    required this.apiPort,
+  });
+
+  @override
+  State<_RenderedVideoFrameViewerStateful> createState() => _RenderedVideoFrameViewerStatefulState();
+}
+
+class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameViewerStateful> {
+  final Map<int, Uint8List> _frameCache = {};
+  final Set<int> _inFlight = {};
+  static const int _maxCache = 120;
+  static const int _prefetchAhead = 10;
+  static const int _prefetchBehind = 3;
+  int _lastFrameIndex = -1;
+  String? _error;
+
+  @override
+  void didUpdateWidget(covariant _RenderedVideoFrameViewerStateful oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _maybeFetchAndPrefetch();
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _maybeFetchAndPrefetch();
+  }
+
+  @override
+  void dispose() {
+    _frameCache.clear();
+    _inFlight.clear();
+    super.dispose();
+  }
+
+  void _maybeFetchAndPrefetch() {
+    final frameIndex = _currentFrameIndex;
+    if (frameIndex == _lastFrameIndex) return;
+    _lastFrameIndex = frameIndex;
+
+    _fetchFrame(frameIndex);
+    _prefetchAround(frameIndex);
+    _evictIfNeeded(frameIndex);
+  }
+
+  int get _currentFrameIndex {
+    return (widget.currentPosition * widget.fps).floor().clamp(0, widget.totalFrames - 1);
+  }
+
+  Future<void> _fetchFrame(int frameIndex) async {
+    if (_frameCache.containsKey(frameIndex) || _inFlight.contains(frameIndex)) return;
+    _inFlight.add(frameIndex);
+    try {
+      final url = 'http://${widget.apiHost}:${widget.apiPort}/api/videos/${Uri.encodeComponent(widget.fileName)}/frame/$frameIndex';
+      final response = await http.get(Uri.parse(url));
+      if (response.statusCode == 200) {
+        _frameCache[frameIndex] = response.bodyBytes;
+        if (mounted) {
+          setState(() {
+            _error = null;
+          });
+        }
+      } else {
+        if (mounted) {
+          setState(() {
+            _error = 'Frame $frameIndex unavailable (${response.statusCode})';
+          });
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _error = 'Frame $frameIndex error: $e';
+        });
+      }
+    } finally {
+      _inFlight.remove(frameIndex);
+    }
+  }
+
+  void _prefetchAround(int center) {
+    for (int i = 1; i <= _prefetchAhead; i++) {
+      final next = center + i;
+      if (next < widget.totalFrames) _fetchFrame(next);
+    }
+    for (int i = 1; i <= _prefetchBehind; i++) {
+      final prev = center - i;
+      if (prev >= 0) _fetchFrame(prev);
+    }
+  }
+
+  void _evictIfNeeded(int center) {
+    if (_frameCache.length <= _maxCache) return;
+    final keys = _frameCache.keys.toList()
+      ..sort((a, b) => (a - center).abs().compareTo((b - center).abs()));
+    // Keep closest _maxCache frames, remove the rest
+    for (int i = _maxCache; i < keys.length; i++) {
+      _frameCache.remove(keys[i]);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final frameIndex = _currentFrameIndex;
+    final bytes = _frameCache[frameIndex];
+
+    Widget content;
+    if (bytes != null) {
+      content = Image.memory(
+        bytes,
+        width: double.infinity,
+        height: double.infinity,
+        fit: BoxFit.contain,
+      );
+    } else if (_error != null) {
+      content = Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.error_outline, color: Colors.white54, size: 48),
+          const SizedBox(height: 8),
+          Text(
+            _error!,
+            style: const TextStyle(color: Colors.white54, fontSize: 12),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      );
+    } else {
+      content = const Center(
+        child: CircularProgressIndicator(color: Colors.white54),
+      );
+    }
 
     return Stack(
       children: [
-        // Frame image
-        Center(
-          child: Image.network(
-            frameUrl,
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.white54, size: 48),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Frame $frameIndex',
-                    style: const TextStyle(color: Colors.white54, fontSize: 12),
-                  ),
-                ],
-              );
-            },
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) return child;
-              return const Center(
-                child: CircularProgressIndicator(color: Colors.white54),
-              );
-            },
-          ),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return SizedBox(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
+              child: FittedBox(
+                fit: BoxFit.contain,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  child: content,
+                ),
+              ),
+            );
+          },
         ),
-        // Frame counter overlay
         Positioned(
           bottom: 8,
           right: 8,
@@ -391,7 +534,7 @@ class _RenderedVideoFrameViewer extends StatelessWidget {
               borderRadius: BorderRadius.circular(4),
             ),
             child: Text(
-              'Frame $frameIndex / $totalFrames',
+              'Frame $frameIndex / ${widget.totalFrames}',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 12,
