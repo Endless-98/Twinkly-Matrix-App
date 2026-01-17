@@ -449,6 +449,9 @@ def upload_video():
 def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None, output_name=None):
     """Thread function to render an uploaded video."""
     filename = Path(video_path).name
+    # Use output_name for progress tracking if provided, otherwise use input filename
+    progress_key = output_name if output_name else filename
+    
     try:
         renderer = VideoRenderer()
         log(f"Starting render: {video_path} at {render_fps} FPS", module="API")
@@ -461,8 +464,8 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
         
         # Define progress callback
         def progress_callback(current_frame, total_frames):
-            if filename in render_progress:
-                render_progress[filename]['progress'] = current_frame / total_frames if total_frames > 0 else 0.0
+            if progress_key in render_progress:
+                render_progress[progress_key]['progress'] = current_frame / total_frames if total_frames > 0 else 0.0
         
         # Render the video with trim/crop parameters
         output_path = renderer.render_video(
@@ -478,9 +481,9 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
         if output_path:
             log(f"Render complete: {output_path}", module="API")
             # Mark as complete
-            if filename in render_progress:
-                render_progress[filename]['progress'] = 1.0
-                render_progress[filename]['status'] = 'complete'
+            if progress_key in render_progress:
+                render_progress[progress_key]['progress'] = 1.0
+                render_progress[progress_key]['status'] = 'complete'
             # Delete the original uploaded video
             try:
                 os.remove(video_path)
@@ -489,13 +492,13 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
                 log(f"Failed to delete uploaded video {video_path}: {e}", level='WARNING', module="API")
         else:
             log(f"Render failed for: {video_path}", level='ERROR', module="API")
-            if filename in render_progress:
-                render_progress[filename]['status'] = 'error'
+            if progress_key in render_progress:
+                render_progress[progress_key]['status'] = 'error'
             
     except Exception as e:
         log(f"Render thread error: {e}", level='ERROR', module="API")
-        if filename in render_progress:
-            render_progress[filename]['status'] = 'error'
+        if progress_key in render_progress:
+            render_progress[progress_key]['status'] = 'error'
 
 
 @app.route('/api/render', methods=['POST'])
@@ -543,8 +546,9 @@ def render_uploaded_video():
         if output_name and not output_name.endswith('.npz'):
             output_name = f'{output_name}.npz'
         
-        # Initialize progress tracking
-        render_progress[filename] = {'progress': 0.0, 'status': 'rendering'}
+        # Initialize progress tracking using output_name if provided, otherwise use input filename
+        progress_key = output_name if output_name else filename
+        render_progress[progress_key] = {'progress': 0.0, 'status': 'rendering'}
         
         # Start rendering in background thread
         render_thread = threading.Thread(
@@ -555,6 +559,13 @@ def render_uploaded_video():
         render_thread.start()
         
         log(f"Render job queued: {filename} at {render_fps} FPS", module="API")
+        
+        return jsonify({
+            'status': 'rendering',
+            'filename': progress_key,
+            'render_fps': render_fps,
+            'message': 'Video is being rendered in the background. It will appear in /api/videos once complete.'
+        }), 202
         
         return jsonify({
             'status': 'rendering',
