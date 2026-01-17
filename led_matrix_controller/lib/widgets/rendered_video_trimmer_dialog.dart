@@ -129,14 +129,13 @@ class _RenderedVideoTrimmerDialogState
             Expanded(
               child: Column(
                 children: [
-                  // Frame viewer
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
+                  // Frame viewer with LED wall aspect ratio
+                  AspectRatio(
+                    aspectRatio: 90 / 50,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Container(
                         color: Colors.black,
-                        borderRadius: BorderRadius.circular(8),
-                      ),
-                      child: Center(
                         child: _RenderedVideoFrameViewer(
                           fileName: widget.fileName,
                           currentPosition: _currentPosition,
@@ -482,16 +481,34 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
   @override
   Widget build(BuildContext context) {
     final frameIndex = _currentFrameIndex;
-    final bytes = _frameCache[frameIndex];
+
+    // Choose the nearest cached frame at or before the current index
+    Uint8List? bytes = _frameCache[frameIndex];
+    if (bytes == null) {
+      const int backoff = 10; // search up to 10 frames back
+      for (int i = 1; i <= backoff; i++) {
+        final prev = frameIndex - i;
+        if (prev >= 0) {
+          final candidate = _frameCache[prev];
+          if (candidate != null) {
+            bytes = candidate;
+            break;
+          }
+        } else {
+          break;
+        }
+      }
+    }
+
     final displayBytes = bytes ?? _lastDisplayedBytes;
 
+    // Build content: never show black during playback; if we have ever displayed
+    // a frame, keep showing it while waiting for the next.
     Widget content;
     if (displayBytes != null) {
       content = Image.memory(
         displayBytes,
         fit: BoxFit.contain,
-        width: double.infinity,
-        height: double.infinity,
       );
     } else if (_error != null) {
       content = Center(
@@ -510,6 +527,7 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
         ),
       );
     } else {
+      // Only show a spinner before any frame has ever been received
       content = const Center(
         child: CircularProgressIndicator(color: Colors.white54),
       );
@@ -517,9 +535,7 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
 
     return Stack(
       children: [
-        Positioned.fill(
-          child: content,
-        ),
+        Positioned.fill(child: content),
         Positioned(
           bottom: 8,
           right: 8,
