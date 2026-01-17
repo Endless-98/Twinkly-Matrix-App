@@ -9,7 +9,10 @@ import threading
 import time
 import traceback
 import subprocess
+from collections import OrderedDict
 from pathlib import Path
+
+import numpy as np
 from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
@@ -52,6 +55,51 @@ MAX_UPLOAD_SIZE = 500 * 1024 * 1024  # 500 MB
 # Cleanup thread for idle players
 cleanup_thread = None
 cleanup_active = False
+
+# Small in-memory cache to avoid reloading .npz frames for every frame request
+RENDERED_CACHE_MAX = 2
+rendered_frames_cache: OrderedDict[str, dict] = OrderedDict()
+rendered_frames_cache_lock = threading.Lock()
+
+
+def _get_cached_rendered_frames(file_path: Path):
+    """Load frames from disk once and serve from a tiny LRU cache."""
+    cache_key = str(file_path.resolve())
+
+    with rendered_frames_cache_lock:
+        cached = rendered_frames_cache.get(cache_key)
+        if cached:
+            rendered_frames_cache.move_to_end(cache_key)
+            return cached["frames"]
+
+    data = None
+    try:
+        try:
+            data = np.load(file_path, mmap_mode='r')
+        except ValueError:
+            data = np.load(file_path)
+        frames = data['frames']
+    except Exception:
+        if data is not None and hasattr(data, 'close'):
+            try:
+                data.close()
+            except Exception:
+                pass
+        raise
+
+    with rendered_frames_cache_lock:
+        rendered_frames_cache[cache_key] = {"frames": frames, "data": data}
+        rendered_frames_cache.move_to_end(cache_key)
+        while len(rendered_frames_cache) > RENDERED_CACHE_MAX:
+            old_key, old_entry = rendered_frames_cache.popitem(last=False)
+            try:
+                old_data = old_entry.get("data")
+                if hasattr(old_data, 'close'):
+                    old_data.close()
+            except Exception as cache_err:
+                log(f"Frame cache close error for {old_key}: {cache_err}", level='WARNING', module="API")
+
+    return frames
 
 
 def _resolve_fpp_memory_file():
@@ -477,7 +525,6 @@ def get_rendered_video_frame(filename, frame_index):
     """Get a single frame from a rendered video (.npz) as a PNG image."""
     try:
         from urllib.parse import unquote
-        import numpy as np
         import cv2
         import io
         
@@ -498,9 +545,12 @@ def get_rendered_video_frame(filename, frame_index):
                 log(f"Frame request 404: {filename} not found in {rendered_videos_dir} or {fallback_path}", level='WARNING', module="API")
                 return jsonify({'error': f'Video not found: {filename}'}), 404
 
-        # Load the video data
-        data = np.load(file_path)
-        frames = data['frames']
+        # Load the video data once and reuse it (reduces repeated 90MB allocations)
+        try:
+            frames = _get_cached_rendered_frames(file_path)
+        except MemoryError as mem_err:
+            log(f"Frame load memory error for {filename}: {mem_err}", level='ERROR', module="API")
+            return jsonify({'error': 'Server is low on memory loading frames'}), 500
         
         # Validate frame index
         if frame_index < 0 or frame_index >= len(frames):
