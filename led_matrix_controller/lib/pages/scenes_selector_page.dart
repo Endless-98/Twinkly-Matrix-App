@@ -30,6 +30,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
   final Set<String> _uploadingFiles = {};
   final Set<String> _renderingFiles = {};
+  final Map<String, double> _renderProgress = {}; // filename -> render progress (0.0 to 1.0)
   Timer? _renderCheckTimer;
 
   /// Remove file extensions from display names
@@ -90,9 +91,48 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
   void _startRenderCheckTimer() {
     if (_renderCheckTimer?.isActive ?? false) return; // Already running
-    _renderCheckTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+    _renderCheckTimer = Timer.periodic(const Duration(seconds: 2), (_) async {
       if (_renderingFiles.isNotEmpty && mounted) {
-        _loadScenes(); // Refresh the video list
+        // Update progress for each rendering file
+        final fppIp = ref.read(fppIpProvider);
+        final apiService = ApiService(host: fppIp);
+        
+        bool anyCompleted = false;
+        for (final filename in _renderingFiles.toList()) {
+          try {
+            final progressData = await apiService.getRenderProgress(filename);
+            if (mounted) {
+              final progress = (progressData['progress'] as num?)?.toDouble() ?? 0.0;
+              final status = progressData['status'] as String?;
+              
+              setState(() {
+                _renderProgress[filename] = progress;
+              });
+              
+              // If complete or error, remove from rendering and mark for refresh
+              if (status == 'complete' || status == 'error') {
+                setState(() {
+                  _renderingFiles.remove(filename);
+                  _renderProgress.remove(filename);
+                });
+                anyCompleted = true;
+              }
+            }
+          } catch (e) {
+            // Ignore progress fetch errors
+          }
+        }
+        
+        // Only refresh the video list if at least one render completed
+        if (anyCompleted) {
+          await _loadScenes();
+        }
+        
+        // Stop timer if no more rendering files
+        if (_renderingFiles.isEmpty) {
+          _renderCheckTimer?.cancel();
+          _renderCheckTimer = null;
+        }
       }
     });
   }
@@ -507,6 +547,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
       // Show progress dialog while downloading to device
       double downloadProgress = 0.0;
+      String downloadStatus = 'Starting download...';
       late StateSetter downloadStateSetter;
       
       if (mounted) {
@@ -524,9 +565,16 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                     const SizedBox(height: 8),
                     LinearProgressIndicator(value: downloadProgress),
                     const SizedBox(height: 16),
-                    Text('${(downloadProgress * 100).toStringAsFixed(1)}%'),
+                    Text(
+                      '${(downloadProgress * 100).toStringAsFixed(1)}%',
+                      style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                    ),
                     const SizedBox(height: 8),
-                    const Text('Preparing video for editing...'),
+                    Text(
+                      downloadStatus,
+                      style: const TextStyle(fontSize: 12),
+                      textAlign: TextAlign.center,
+                    ),
                   ],
                 ),
               );
@@ -542,6 +590,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           onProgress: (received, total) {
             if (total > 0 && mounted) {
               downloadProgress = received / total;
+              final receivedMB = (received / 1024 / 1024).toStringAsFixed(1);
+              final totalMB = (total / 1024 / 1024).toStringAsFixed(1);
+              downloadStatus = 'Downloading: $receivedMB MB / $totalMB MB';
               try {
                 downloadStateSetter(() {});
               } catch (e) {
@@ -841,6 +892,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
   /// Build a square card for a rendering video
   Widget _buildRenderingCard(String fileName) {
+    final progress = _renderProgress[fileName] ?? 0.0;
+    final percentage = (progress * 100).toStringAsFixed(0);
+    
     return Card(
       color: Colors.blueGrey[900],
       child: Stack(
@@ -861,12 +915,32 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
                 const Spacer(),
-                const SizedBox(
-                  width: 40,
-                  height: 40,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 3,
-                    color: Colors.white,
+                // Progress indicator
+                SizedBox(
+                  width: 60,
+                  height: 60,
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 60,
+                        height: 60,
+                        child: CircularProgressIndicator(
+                          value: progress > 0 ? progress : null,
+                          strokeWidth: 4,
+                          color: Colors.white,
+                          backgroundColor: Colors.white24,
+                        ),
+                      ),
+                      Text(
+                        '$percentage%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -878,9 +952,17 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                   textAlign: TextAlign.center,
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Rendering...',
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
+                Text(
+                  progress > 0 ? 'Rendering $percentage%...' : 'Starting render...',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+                const SizedBox(height: 4),
+                // Progress bar at bottom
+                LinearProgressIndicator(
+                  value: progress > 0 ? progress : null,
+                  backgroundColor: Colors.white24,
+                  valueColor: const AlwaysStoppedAnimation<Color>(Colors.blue),
+                  minHeight: 4,
                 ),
                 const Spacer(),
               ],
@@ -894,20 +976,59 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   /// Build a square card for a completed scene
   Widget _buildSceneCard(String sceneName) {
     final isPlaying = _currentlyPlaying == sceneName;
+    final fppIp = ref.read(fppIpProvider);
+    final apiService = ApiService(host: fppIp);
+    final thumbnailUrl = apiService.getThumbnailUrl(sceneName);
     
     return Card(
       color: isPlaying ? Colors.green[900] : Colors.grey[800],
       child: Stack(
         fit: StackFit.expand,
         children: [
-          // Placeholder for thumbnail or default background
+          // Thumbnail or default background
+          Image.network(
+            thumbnailUrl,
+            fit: BoxFit.cover,
+            errorBuilder: (context, error, stackTrace) {
+              // Fallback to default icon if thumbnail doesn't exist or fails to load
+              return Container(
+                color: Colors.grey[700],
+                child: Center(
+                  child: Icon(
+                    Icons.movie,
+                    size: 48,
+                    color: Colors.grey[500],
+                  ),
+                ),
+              );
+            },
+            loadingBuilder: (context, child, loadingProgress) {
+              if (loadingProgress == null) {
+                return child;
+              }
+              return Container(
+                color: Colors.grey[700],
+                child: Center(
+                  child: CircularProgressIndicator(
+                    value: loadingProgress.expectedTotalBytes != null
+                        ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
+                        : null,
+                  ),
+                ),
+              );
+            },
+          ),
+          // Dark overlay for better text visibility
           Container(
-            color: Colors.grey[700],
-            child: Center(
-              child: Icon(
-                Icons.movie,
-                size: 48,
-                color: Colors.grey[500],
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Colors.black.withOpacity(0.6),
+                  Colors.black.withOpacity(0.3),
+                  Colors.black.withOpacity(0.6),
+                ],
               ),
             ),
           ),
@@ -926,6 +1047,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                     color: Colors.white,
                     fontWeight: FontWeight.bold,
                     fontSize: 13,
+                    shadows: [
+                      Shadow(
+                        offset: Offset(1, 1),
+                        blurRadius: 3,
+                        color: Colors.black,
+                      ),
+                    ],
                   ),
                   textAlign: TextAlign.center,
                 ),
@@ -1000,9 +1128,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                         ),
                       ],
                       color: Colors.grey[900],
-                      child: const Padding(
-                        padding: EdgeInsets.all(8),
-                        child: Icon(Icons.more_vert, color: Colors.white, size: 20),
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: Colors.black.withOpacity(0.5),
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(Icons.more_vert, color: Colors.white, size: 20),
                       ),
                     ),
                   ],
@@ -1060,7 +1192,7 @@ class _UploadDialogContent extends StatefulWidget {
 }
 
 class _UploadDialogContentState extends State<_UploadDialogContent> {
-  late String _videoName;
+  late TextEditingController _nameController;
   bool _isUploading = false;
   String? _status;
   double _uploadProgress = 0;
@@ -1070,7 +1202,13 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
   void initState() {
     super.initState();
     // Initialize video name from filename without extension
-    _videoName = _removeExtension(widget.fileName);
+    _nameController = TextEditingController(text: _removeExtension(widget.fileName));
+  }
+
+  @override
+  void dispose() {
+    _nameController.dispose();
+    super.dispose();
   }
 
   String _removeExtension(String filename) {
@@ -1133,7 +1271,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         startTime: widget.startTime,
         endTime: widget.endTime,
         cropRect: widget.cropRect,
-        outputName: _videoName,
+        outputName: _nameController.text,
       );
 
       if (!mounted) return;
@@ -1160,7 +1298,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              'Video "$_videoName" is rendering (${duration.toStringAsFixed(1)}s$cropInfo)',
+              'Video "${_nameController.text}" is rendering (${duration.toStringAsFixed(1)}s$cropInfo)',
             ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 3),
@@ -1197,12 +1335,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
             const Text('Video Name:'),
             const SizedBox(height: 8),
             TextField(
-              onChanged: (value) {
-                setState(() {
-                  _videoName = value;
-                });
-              },
-              controller: TextEditingController(text: _videoName),
+              controller: _nameController,
               decoration: const InputDecoration(
                 labelText: 'Enter a name for this video',
                 border: OutlineInputBorder(),
@@ -1236,7 +1369,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
           ),
         if (!_isUploading)
           ElevatedButton(
-            onPressed: _videoName.isEmpty ? null : _performUpload,
+            onPressed: _nameController.text.isEmpty ? null : _performUpload,
             child: const Text('Upload & Render'),
           ),
       ],

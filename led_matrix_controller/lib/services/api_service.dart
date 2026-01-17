@@ -209,6 +209,27 @@ class ApiService {
     }
   }
 
+  /// Get render progress for a specific file
+  Future<Map<String, dynamic>> getRenderProgress(String fileName) async {
+    try {
+      final encodedFileName = Uri.encodeComponent(fileName);
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/render/progress/$encodedFileName'))
+          .timeout(const Duration(seconds: 3));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else if (response.statusCode == 404) {
+        return {'progress': 0.0, 'status': 'not_found'};
+      } else {
+        throw Exception('Failed to get render progress: ${response.statusCode}');
+      }
+    } catch (e) {
+      // Return default on error to prevent crashes
+      return {'progress': 0.0, 'status': 'error'};
+    }
+  }
+
   /// Delete a video file
   Future<void> deleteVideo(String videoName) async {
     try {
@@ -405,6 +426,13 @@ class ApiService {
     }
   }
 
+  /// Get thumbnail URL for a video
+  String getThumbnailUrl(String videoName) {
+    // Remove .npz extension if present
+    final stem = videoName.endsWith('.npz') ? videoName.substring(0, videoName.length - 4) : videoName;
+    return '$_baseUrl/api/video/$stem/thumbnail';
+  }
+
   /// Download a video file from the server to local device storage with progress tracking
   Future<String> downloadVideoLocally(String filename, {Function(int, int)? onProgress}) async {
     try {
@@ -415,36 +443,41 @@ class ApiService {
       final tempDir = await getTemporaryDirectory();
       final localFile = File('${tempDir.path}/$filename');
       
-      // Download the file with progress tracking
-      final request = http.StreamedRequest('GET', Uri.parse(url));
-      final response = await request.send();
+      // Download the file with progress tracking using standard GET request
+      final response = await http.get(
+        Uri.parse(url),
+      ).timeout(
+        const Duration(minutes: 5),
+        onTimeout: () {
+          throw Exception('Download timeout - file may be too large or network is slow');
+        },
+      );
       
       if (response.statusCode == 200) {
         // Get total file size
-        final contentLength = response.contentLength ?? 0;
-        int received = 0;
+        final contentLength = response.bodyBytes.length;
         
-        // Create a sink for writing to file
+        // Write to file in chunks with progress updates
         final sink = localFile.openWrite();
+        const chunkSize = 8192; // 8KB chunks for smooth progress
+        int written = 0;
         
-        // Stream the response and report progress
-        response.stream.listen(
-          (List<int> chunk) {
-            received += chunk.length;
-            onProgress?.call(received, contentLength);
-            sink.add(chunk);
-          },
-          onError: (error) {
-            sink.addError(error);
-          },
-          onDone: () {
-            sink.close();
-          },
-          cancelOnError: true,
-        );
+        for (int i = 0; i < contentLength; i += chunkSize) {
+          final end = (i + chunkSize < contentLength) ? i + chunkSize : contentLength;
+          final chunk = response.bodyBytes.sublist(i, end);
+          sink.add(chunk);
+          written = end;
+          onProgress?.call(written, contentLength);
+          
+          // Small delay to allow UI to update
+          if (i % (chunkSize * 10) == 0) {
+            await Future.delayed(const Duration(milliseconds: 1));
+          }
+        }
         
-        // Wait for the sink to be done writing
-        await sink.done;
+        await sink.flush();
+        await sink.close();
+        
         return localFile.path;
       } else {
         throw Exception('Failed to download video: ${response.statusCode}');

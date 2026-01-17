@@ -28,6 +28,8 @@ current_matrix = None
 playback_thread = None
 playback_active = False
 current_video_name = None
+# Global render progress tracking: {filename: {'progress': 0.0-1.0, 'status': 'rendering'/'complete'/'error'}}
+render_progress = {}
 MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
 TMP_UPLOAD_DIR = MEDIA_ROOT / "tmp_uploads"
 rendered_videos_dir = MEDIA_ROOT / "rendered"
@@ -446,6 +448,7 @@ def upload_video():
 
 def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None):
     """Thread function to render an uploaded video."""
+    filename = Path(video_path).name
     try:
         renderer = VideoRenderer()
         log(f"Starting render: {video_path} at {render_fps} FPS", module="API")
@@ -454,17 +457,27 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
         if crop_rect:
             log(f"  Crop: {crop_rect}", module="API")
         
+        # Define progress callback
+        def progress_callback(current_frame, total_frames):
+            if filename in render_progress:
+                render_progress[filename]['progress'] = current_frame / total_frames if total_frames > 0 else 0.0
+        
         # Render the video with trim/crop parameters
         output_path = renderer.render_video(
             video_path, 
             output_fps=render_fps,
             start_time=start_time,
             end_time=end_time,
-            crop_rect=crop_rect
+            crop_rect=crop_rect,
+            progress_callback=progress_callback
         )
         
         if output_path:
             log(f"Render complete: {output_path}", module="API")
+            # Mark as complete
+            if filename in render_progress:
+                render_progress[filename]['progress'] = 1.0
+                render_progress[filename]['status'] = 'complete'
             # Delete the original uploaded video
             try:
                 os.remove(video_path)
@@ -473,9 +486,13 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
                 log(f"Failed to delete uploaded video {video_path}: {e}", level='WARNING', module="API")
         else:
             log(f"Render failed for: {video_path}", level='ERROR', module="API")
+            if filename in render_progress:
+                render_progress[filename]['status'] = 'error'
             
     except Exception as e:
         log(f"Render thread error: {e}", level='ERROR', module="API")
+        if filename in render_progress:
+            render_progress[filename]['status'] = 'error'
 
 
 @app.route('/api/render', methods=['POST'])
@@ -517,6 +534,9 @@ def render_uploaded_video():
         if not video_path.exists():
             return jsonify({'error': f'Uploaded video not found: {filename}'}), 404
         
+        # Initialize progress tracking
+        render_progress[filename] = {'progress': 0.0, 'status': 'rendering'}
+        
         # Start rendering in background thread
         render_thread = threading.Thread(
             target=render_video_thread,
@@ -539,6 +559,19 @@ def render_uploaded_video():
         return jsonify({'error': str(e)}), 500
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/render/progress/<filename>', methods=['GET'])
+def get_render_progress(filename):
+    """Get rendering progress for a specific file.
+    
+    Returns:
+        JSON with 'progress' (0.0-1.0), 'status' ('rendering'/'complete'/'error'/'not_found')
+    """
+    if filename in render_progress:
+        return jsonify(render_progress[filename]), 200
+    else:
+        return jsonify({'progress': 0.0, 'status': 'not_found'}), 404
 
 
 @app.route('/api/play', methods=['POST'])

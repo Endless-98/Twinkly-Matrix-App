@@ -47,7 +47,7 @@ class VideoRenderer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
-    def render_video(self, video_path, output_fps=None, output_name=None, start_time=None, end_time=None, crop_rect=None):
+    def render_video(self, video_path, output_fps=None, output_name=None, start_time=None, end_time=None, crop_rect=None, progress_callback=None):
         """
         Render a video file to optimized color data.
         
@@ -58,6 +58,7 @@ class VideoRenderer:
             start_time: Start time in seconds (None = from beginning)
             end_time: End time in seconds (None = until end)
             crop_rect: Tuple of (left, top, right, bottom) in normalized coordinates 0-1 (None = no crop)
+            progress_callback: Optional callback function(current_frame, total_frames) called during rendering
         
         Returns:
             Path to saved render file, or None on error
@@ -162,6 +163,10 @@ class VideoRenderer:
                 fps_rate = rendered_count / elapsed if elapsed > 0 else 0
                 # Flush progress to journald/stdout so we can monitor on Pi
                 print(f"  Rendered {rendered_count}/{end_frame - start_frame} frames ({fps_rate:.1f} fps)...", flush=True)
+            
+            # Call progress callback if provided
+            if progress_callback:
+                progress_callback(rendered_count, end_frame - start_frame)
 
             frame_idx += 1
         
