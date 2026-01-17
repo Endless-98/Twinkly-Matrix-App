@@ -1035,13 +1035,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     final fppIp = ref.read(fppIpProvider);
     final apiService = ApiService(host: fppIp);
     final thumbnailUrl = apiService.getThumbnailUrl(sceneName);
-
     return AnimatedContainer(
       duration: const Duration(milliseconds: 200),
       decoration: BoxDecoration(
-        border: isHighlighted
-            ? Border.all(color: Colors.blueAccent, width: 3)
-            : null,
+        border: isHighlighted ? Border.all(color: Colors.blueAccent, width: 3) : null,
         boxShadow: isHighlighted
             ? [
                 BoxShadow(
@@ -1059,180 +1056,181 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                 ? Colors.blueGrey[700]
                 : Colors.grey[800],
         child: Stack(
-        fit: StackFit.expand,
-        children: [
-          // Thumbnail or default background
-          Image.network(
-            thumbnailUrl,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) {
-              // Fallback to default icon if thumbnail doesn't exist or fails to load
-              return Container(
-                color: Colors.grey[700],
-                child: Center(
-                  child: Icon(
-                    Icons.movie,
-                    size: 48,
-                    color: Colors.grey[500],
+          fit: StackFit.expand,
+          children: [
+            // Thumbnail or default background
+            Image.network(
+              thumbnailUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return Container(
+                  color: Colors.grey[700],
+                  child: Center(
+                    child: Icon(
+                      Icons.movie,
+                      size: 48,
+                      color: Colors.grey[500],
+                    ),
                   ),
-                ),
-              );
-            },
-            loadingBuilder: (context, child, loadingProgress) {
-              if (loadingProgress == null) {
-                return child;
-              }
-              return Container(
-                color: Colors.grey[700],
-                child: Center(
-                  child: CircularProgressIndicator(
-                    value: loadingProgress.expectedTotalBytes != null
-                        ? loadingProgress.cumulativeBytesLoaded / loadingProgress.expectedTotalBytes!
-                        : null,
+                );
+              },
+              loadingBuilder: (context, child, loadingProgress) {
+                if (loadingProgress == null) {
+                  return child;
+                }
+                return Container(
+                  color: Colors.grey[700],
+                  child: Center(
+                    child: CircularProgressIndicator(
+                      value: loadingProgress.expectedTotalBytes != null
+                          ? loadingProgress.cumulativeBytesLoaded /
+                              loadingProgress.expectedTotalBytes!
+                          : null,
+                    ),
                   ),
+                );
+              },
+            ),
+            // Dark overlay for better text visibility
+            Container(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    Colors.black.withOpacity(0.6),
+                    Colors.black.withOpacity(0.3),
+                    Colors.black.withOpacity(0.6),
+                  ],
                 ),
-              );
-            },
-          ),
-          // Dark overlay for better text visibility
-          Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-                colors: [
-                  Colors.black.withOpacity(0.6),
-                  Colors.black.withOpacity(0.3),
-                  Colors.black.withOpacity(0.6),
-                ],
               ),
             ),
-          ),
-          // Overlay with title and controls
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // Title at top
-                Text(
-                  _displayName(sceneName),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    shadows: [
-                      Shadow(
-                        offset: Offset(1, 1),
-                        blurRadius: 3,
-                        color: Colors.black,
+            // Overlay with title and controls
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  // Title at top
+                  Text(
+                    _displayName(sceneName),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      shadows: [
+                        Shadow(
+                          offset: Offset(1, 1),
+                          blurRadius: 3,
+                          color: Colors.black,
+                        ),
+                      ],
+                    ),
+                    textAlign: TextAlign.center,
+                  ),
+                  // Controls at bottom
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      // Play/Stop button
+                      Material(
+                        color: isPlaying ? Colors.red : Colors.green,
+                        shape: const CircleBorder(),
+                        child: InkWell(
+                          onTap: () {
+                            if (isPlaying) {
+                              _stopPlayback();
+                            } else {
+                              _playScene(sceneName);
+                            }
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.all(8),
+                            child: Icon(
+                              isPlaying ? Icons.stop : Icons.play_arrow,
+                              color: Colors.white,
+                              size: 24,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Menu button
+                      PopupMenuButton<String>(
+                        onSelected: (value) {
+                          if (value == 'trim') {
+                            _trimVideo(sceneName);
+                          } else if (value == 'rename') {
+                            _renameVideo(sceneName);
+                          } else if (value == 'delete') {
+                            _deleteVideo(sceneName);
+                          }
+                        },
+                        itemBuilder: (BuildContext context) => [
+                          const PopupMenuItem(
+                            value: 'trim',
+                            child: Row(
+                              children: [
+                                Icon(Icons.cut, size: 18),
+                                SizedBox(width: 8),
+                                Text('Trim'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'rename',
+                            child: Row(
+                              children: [
+                                Icon(Icons.edit, size: 18),
+                                SizedBox(width: 8),
+                                Text('Rename'),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'delete',
+                            child: Row(
+                              children: [
+                                Icon(Icons.delete, size: 18, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Delete', style: TextStyle(color: Colors.red)),
+                              ],
+                            ),
+                          ),
+                        ],
+                        color: Colors.grey[900],
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.5),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.more_vert, color: Colors.white, size: 20),
+                        ),
                       ),
                     ],
                   ),
-                  textAlign: TextAlign.center,
-                ),
-                // Controls at bottom
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // Play/Stop button
-                    Material(
-                      color: isPlaying ? Colors.red : Colors.green,
-                      shape: const CircleBorder(),
-                      child: InkWell(
-                        onTap: () {
-                          if (isPlaying) {
-                            _stopPlayback();
-                          } else {
-                            _playScene(sceneName);
-                          }
-                        },
-                        child: Padding(
-                          padding: const EdgeInsets.all(8),
-                          child: Icon(
-                            isPlaying ? Icons.stop : Icons.play_arrow,
-                            color: Colors.white,
-                            size: 24,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    // Menu button
-                    PopupMenuButton<String>(
-                      onSelected: (value) {
-                        if (value == 'trim') {
-                          _trimVideo(sceneName);
-                        } else if (value == 'rename') {
-                          _renameVideo(sceneName);
-                        } else if (value == 'delete') {
-                          _deleteVideo(sceneName);
-                        }
-                      },
-                      itemBuilder: (BuildContext context) => [
-                        const PopupMenuItem(
-                          value: 'trim',
-                          child: Row(
-                            children: [
-                              Icon(Icons.cut, size: 18),
-                              SizedBox(width: 8),
-                              Text('Trim'),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'rename',
-                          child: Row(
-                            children: [
-                              Icon(Icons.edit, size: 18),
-                              SizedBox(width: 8),
-                              Text('Rename'),
-                            ],
-                          ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Row(
-                            children: [
-                              Icon(Icons.delete, size: 18, color: Colors.red),
-                              SizedBox(width: 8),
-                              Text('Delete', style: TextStyle(color: Colors.red)),
-                            ],
-                          ),
-                        ),
-                      ],
-                      color: Colors.grey[900],
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withOpacity(0.5),
-                          shape: BoxShape.circle,
-                        ),
-                        child: const Icon(Icons.more_vert, color: Colors.white, size: 20),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          // Green playing indicator
-          if (isPlaying)
-            Positioned(
-              top: 4,
-              right: 4,
-              child: Container(
-                width: 12,
-                height: 12,
-                decoration: const BoxDecoration(
-                  color: Colors.green,
-                  shape: BoxShape.circle,
-                ),
+                ],
               ),
             ),
-        ],
+            // Green playing indicator
+            if (isPlaying)
+              Positioned(
+                top: 4,
+                right: 4,
+                child: Container(
+                  width: 12,
+                  height: 12,
+                  decoration: const BoxDecoration(
+                    color: Colors.green,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }
