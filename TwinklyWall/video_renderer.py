@@ -119,61 +119,73 @@ class VideoRenderer:
         if start_frame > 0:
             cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
         
-        # Pre-allocate output array
-        frames_to_render = []
-        frame_interval = source_fps / target_fps if target_fps < source_fps else 1.0
+        # Calculate frame selection for FPS downsampling
+        frames_to_process = end_frame - start_frame
+        if output_fps and output_fps < source_fps:
+            # Calculate which frames to keep (evenly spaced)
+            frame_interval = source_fps / target_fps
+            num_output_frames = int(frames_to_process / frame_interval)
+            keep_indices = set(int(i * frame_interval) for i in range(num_output_frames))
+        else:
+            num_output_frames = frames_to_process
+            keep_indices = None  # Keep all frames
+        
+        # Pre-allocate output array for better memory efficiency
+        output_frames = np.empty((num_output_frames, self.downscaled_height, self.downscaled_width, 3), dtype=np.uint8)
         
         start_processing_time = time.time()
-        frame_idx = start_frame
-        rendered_count = 0
+        frame_idx = 0  # Relative to start_frame
+        output_idx = 0
         
-        while frame_idx < end_frame:
+        while frame_idx < frames_to_process:
             ret, frame = cap.read()
             if not ret:
                 break
 
-            # Skip frames if downsampling FPS
-            if output_fps and output_fps < source_fps:
-                if (frame_idx - start_frame) % int(frame_interval) != 0:
-                    frame_idx += 1
-                    continue
+            # Skip frames if downsampling FPS (using pre-calculated indices)
+            if keep_indices is not None and frame_idx not in keep_indices:
+                frame_idx += 1
+                continue
 
-            # Apply crop if specified
+            # Apply crop first (reduces data to process in subsequent steps)
             if crop_rect:
                 frame = frame[crop_top:crop_bottom, crop_left:crop_right]
 
-            # Convert BGR (OpenCV) to RGB
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-            # Resize to downscaled dimensions using high-quality downsampling
-            resized = cv2.resize(frame_rgb, (self.downscaled_width, self.downscaled_height),
+            # Resize using INTER_AREA for downscaling (best quality) and convert BGR->RGB in one step
+            resized = cv2.resize(frame, (self.downscaled_width, self.downscaled_height),
                                interpolation=cv2.INTER_AREA)
+            
+            # Convert BGR to RGB
+            resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
 
-            # Apply quantization if needed (reduce to 6-bit, 4-bit, etc. per channel)
+            # Apply quantization if needed
             if self.quantize_bits < 8:
-                quantized = self._quantize_frame(resized)
-                frames_to_render.append(quantized.astype(np.uint8))
-            else:
-                # Store as uint8 numpy array (height, width, 3)
-                frames_to_render.append(resized.astype(np.uint8))
+                resized_rgb = self._quantize_frame(resized_rgb)
 
-            rendered_count += 1
-            if rendered_count % 100 == 0:
+            # Store directly in pre-allocated array
+            if output_idx < num_output_frames:
+                output_frames[output_idx] = resized_rgb
+                output_idx += 1
+
+            if output_idx % 100 == 0:
                 elapsed = time.time() - start_processing_time
-                fps_rate = rendered_count / elapsed if elapsed > 0 else 0
-                # Flush progress to journald/stdout so we can monitor on Pi
-                print(f"  Rendered {rendered_count}/{end_frame - start_frame} frames ({fps_rate:.1f} fps)...", flush=True)
+                fps_rate = output_idx / elapsed if elapsed > 0 else 0
+                print(f"  Rendered {output_idx}/{num_output_frames} frames ({fps_rate:.1f} fps)...", flush=True)
             
             # Call progress callback if provided
             if progress_callback:
-                progress_callback(rendered_count, end_frame - start_frame)
+                progress_callback(output_idx, num_output_frames)
 
             frame_idx += 1
         
         cap.release()
         
+        # Trim array if we got fewer frames than expected
+        if output_idx < num_output_frames:
+            output_frames = output_frames[:output_idx]
+        
         elapsed = time.time() - start_processing_time
-        print(f"\n  Rendered {rendered_count} frames in {elapsed:.2f}s ({rendered_count/elapsed:.1f} fps)")
+        print(f"\n  Rendered {output_idx} frames in {elapsed:.2f}s ({output_idx/elapsed:.1f} fps)")
         
         # Save to file
         if output_name is None:
@@ -183,10 +195,10 @@ class VideoRenderer:
         
         output_path = self.output_dir / output_name
         
-        # Save as compressed numpy archive
+        # Save as compressed numpy archive (output_frames is already a numpy array)
         np.savez_compressed(
             output_path,
-            frames=np.array(frames_to_render, dtype=np.uint8),
+            frames=output_frames,
             fps=target_fps,
             width=self.downscaled_width,
             height=self.downscaled_height,
@@ -199,11 +211,11 @@ class VideoRenderer:
         print(f"  Saved: {output_path} ({file_size_mb:.2f} MB)")
         
         # Save thumbnail image from first frame
-        if frames_to_render:
+        if len(output_frames) > 0:
             try:
                 thumbnail_path = output_path.with_suffix('.png')
-                # Get the first rendered frame
-                first_frame = frames_to_render[0]
+                # Get the first rendered frame (already RGB)
+                first_frame = output_frames[0]
                 # Convert from RGB to BGR for cv2.imwrite (which expects BGR)
                 bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(str(thumbnail_path), bgr_frame)

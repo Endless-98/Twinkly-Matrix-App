@@ -207,7 +207,7 @@ def get_videos():
 
 @app.route('/api/videos/<filename>', methods=['DELETE'])
 def delete_video(filename):
-    """Delete a specific video file.
+    """Delete a specific video file and its thumbnail.
     
     Args:
         filename: Name of the video file to delete (must end with .npz)
@@ -230,9 +230,15 @@ def delete_video(filename):
             stop_playback()
             log(f"Stopped playback of {filename} before deletion", module="API")
         
-        # Delete the file
+        # Delete the video file
         file_path.unlink()
         log(f"Deleted video: {filename}", module="API")
+        
+        # Also delete the thumbnail if it exists
+        thumbnail_path = file_path.with_suffix('.png')
+        if thumbnail_path.exists():
+            thumbnail_path.unlink()
+            log(f"Deleted thumbnail: {thumbnail_path.name}", module="API")
         
         return jsonify({
             'success': True,
@@ -337,6 +343,17 @@ def trim_rendered_video(filename):
             source_video=arr['source_video'] if 'source_video' in arr else filename,
         )
 
+        # Save thumbnail from first frame of trimmed video
+        try:
+            import cv2
+            thumbnail_path = output_path.with_suffix('.png')
+            first_frame = trimmed[0]  # RGB frame
+            bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(thumbnail_path), bgr_frame)
+            log(f"Thumbnail saved: {thumbnail_path}", module="API")
+        except Exception as thumb_e:
+            log(f"Warning: Failed to save thumbnail: {thumb_e}", level='WARNING', module="API")
+
         log(f"Trimmed {filename} -> {output_name} ({len(trimmed)} frames)", module="API")
 
         return jsonify({
@@ -351,7 +368,7 @@ def trim_rendered_video(filename):
 
 @app.route('/api/videos/<filename>/rename', methods=['POST'])
 def rename_rendered_video(filename):
-    """Rename an existing rendered video (.npz)."""
+    """Rename an existing rendered video (.npz) and its thumbnail."""
     try:
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
@@ -372,7 +389,16 @@ def rename_rendered_video(filename):
         if new_path.exists():
             return jsonify({'error': 'Target filename already exists'}), 400
 
+        # Rename the video file
         file_path.rename(new_path)
+        
+        # Also rename the thumbnail if it exists
+        old_thumbnail = file_path.with_suffix('.png')
+        if old_thumbnail.exists():
+            new_thumbnail = new_path.with_suffix('.png')
+            old_thumbnail.rename(new_thumbnail)
+            log(f"Renamed thumbnail {old_thumbnail.name} -> {new_thumbnail.name}", module="API")
+        
         log(f"Renamed {filename} -> {new_name}", module="API")
 
         return jsonify({'status': 'renamed', 'filename': new_name})
@@ -571,17 +597,8 @@ def render_uploaded_video():
             'message': 'Video is being rendered in the background. It will appear in /api/videos once complete.'
         }), 202
         
-        return jsonify({
-            'status': 'rendering',
-            'filename': filename,
-            'render_fps': render_fps,
-            'message': 'Video is being rendered in the background. It will appear in /api/videos once complete.'
-        }), 202
-        
     except Exception as e:
         log(f"Render request error: {e}", level='ERROR', module="API")
-        return jsonify({'error': str(e)}), 500
-    except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 
