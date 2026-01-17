@@ -304,9 +304,15 @@ def get_video_metadata(filename):
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
+        # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            return jsonify({'error': f'Video not found: {file_path}'}), 404
+            # Fallback to local dotmatrix/rendered_videos directory
+            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
+            if fallback_path.exists():
+                file_path = fallback_path
+            else:
+                return jsonify({'error': f'Video not found: {filename}'}), 404
 
         # Load minimal metadata
         data = np.load(file_path)
@@ -353,9 +359,15 @@ def trim_rendered_video(filename):
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
+        # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            return jsonify({'error': 'Video not found'}), 404
+            # Fallback to local dotmatrix/rendered_videos directory
+            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
+            if fallback_path.exists():
+                file_path = fallback_path
+            else:
+                return jsonify({'error': 'Video not found'}), 404
 
         data = request.json or {}
         start_time = data.get('start_time')
@@ -475,9 +487,16 @@ def get_rendered_video_frame(filename, frame_index):
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
+        # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            return jsonify({'error': 'Video not found'}), 404
+            # Fallback to local dotmatrix/rendered_videos directory
+            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
+            if fallback_path.exists():
+                file_path = fallback_path
+            else:
+                log(f"Frame request 404: {filename} not found in {rendered_videos_dir} or {fallback_path}", level='WARNING', module="API")
+                return jsonify({'error': f'Video not found: {filename}'}), 404
 
         # Load the video data
         data = np.load(file_path)
