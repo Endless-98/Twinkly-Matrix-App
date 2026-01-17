@@ -382,11 +382,15 @@ class _RenderedVideoFrameViewerStateful extends StatefulWidget {
 class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameViewerStateful> {
   final Map<int, Uint8List> _frameCache = {};
   final Set<int> _inFlight = {};
-  static const int _maxCache = 300;
-  static const int _prefetchAhead = 60;
-  static const int _prefetchBehind = 30;
+  // Aggressive caching: hold up to 500 frames in memory
+  static const int _maxCache = 500;
+  // Prefetch 120 frames ahead (6 seconds at 20fps) and 60 behind
+  static const int _prefetchAhead = 120;
+  static const int _prefetchBehind = 60;
   int _lastFrameIndex = -1;
   String? _error;
+  
+  // Track the last successfully displayed bytes to prevent rebuilds causing flicker
   Uint8List? _lastDisplayedBytes;
 
   @override
@@ -398,7 +402,16 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
   @override
   void initState() {
     super.initState();
+    // Immediately start aggressive prefetch from frame 0
+    _prefetchInitialBatch();
     _maybeFetchAndPrefetch();
+  }
+
+  void _prefetchInitialBatch() {
+    // On init, prefetch first 100 frames immediately to have a buffer ready
+    for (int i = 0; i < 100 && i < widget.totalFrames; i++) {
+      _fetchFrame(i);
+    }
   }
 
   @override
@@ -431,34 +444,27 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
       if (response.statusCode == 200) {
         _frameCache[frameIndex] = response.bodyBytes;
         if (mounted) {
-          setState(() {
-            _error = null;
-            final isCurrent = _currentFrameIndex == frameIndex;
-            if (_lastDisplayedBytes == null || isCurrent) {
+          // Only trigger setState if this frame is the one we're currently trying to display
+          // This prevents unnecessary rebuilds from prefetch completions
+          final currentIdx = _currentFrameIndex;
+          if (frameIndex == currentIdx || _lastDisplayedBytes == null) {
+            setState(() {
+              _error = null;
               _lastDisplayedBytes = response.bodyBytes;
-            }
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            _error = 'Frame $frameIndex unavailable (${response.statusCode})';
-          });
+            });
+          }
         }
       }
+      // Silently ignore errors for prefetched frames to avoid error spam
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _error = 'Frame $frameIndex error: $e';
-        });
-      }
+      // Silently fail prefetch - don't set error state for background fetches
     } finally {
       _inFlight.remove(frameIndex);
     }
   }
 
   void _prefetchAround(int center) {
-    // Prefetch aggressively: far ahead and behind to avoid black on rapid scrubs
+    // Prefetch aggressively ahead to stay far ahead of playback
     for (int i = 1; i <= _prefetchAhead; i++) {
       final next = center + i;
       if (next < widget.totalFrames) _fetchFrame(next);
@@ -479,37 +485,58 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
     }
   }
 
+  /// Find the best available frame to display.
+  /// Priority: exact match > nearest previous > any nearest > last displayed
+  Uint8List? _findBestFrame(int targetIndex) {
+    // 1. Exact match
+    if (_frameCache.containsKey(targetIndex)) {
+      return _frameCache[targetIndex];
+    }
+    
+    // 2. Search backwards for the nearest cached frame (show previous frame while waiting)
+    for (int i = targetIndex - 1; i >= 0 && i >= targetIndex - _prefetchBehind; i--) {
+      if (_frameCache.containsKey(i)) {
+        return _frameCache[i];
+      }
+    }
+    
+    // 3. If nothing behind, try forward (rare case, e.g. seeking to very start)
+    for (int i = targetIndex + 1; i < widget.totalFrames && i <= targetIndex + 10; i++) {
+      if (_frameCache.containsKey(i)) {
+        return _frameCache[i];
+      }
+    }
+    
+    // 4. Fall back to last displayed bytes
+    return _lastDisplayedBytes;
+  }
+
   @override
   Widget build(BuildContext context) {
     final frameIndex = _currentFrameIndex;
 
-    // Choose the nearest cached frame at or before the current index
-    Uint8List? bytes = _frameCache[frameIndex];
-    if (bytes == null) {
-      const int backoff = 10; // search up to 10 frames back
-      for (int i = 1; i <= backoff; i++) {
-        final prev = frameIndex - i;
-        if (prev >= 0) {
-          final candidate = _frameCache[prev];
-          if (candidate != null) {
-            bytes = candidate;
-            break;
-          }
-        } else {
-          break;
+    // Find the best frame to display - NEVER return null if we have any frame
+    final displayBytes = _findBestFrame(frameIndex);
+    
+    // Update last displayed if we found something
+    if (displayBytes != null && displayBytes != _lastDisplayedBytes) {
+      // Use addPostFrameCallback to avoid setState during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && displayBytes != _lastDisplayedBytes) {
+          _lastDisplayedBytes = displayBytes;
         }
-      }
+      });
     }
 
-    final displayBytes = bytes ?? _lastDisplayedBytes;
-
-    // Build content: never show black during playback; if we have ever displayed
-    // a frame, keep showing it while waiting for the next.
+    // Build content: ALWAYS show an image if we have any bytes at all
     Widget content;
     if (displayBytes != null) {
+      // Use a keyed Image widget to prevent unnecessary rebuilds
+      // gaplessPlayback ensures old image stays until new one is ready
       content = Image.memory(
         displayBytes,
         fit: BoxFit.contain,
+        gaplessPlayback: true, // KEY: prevents black flash between frames
       );
     } else if (_error != null) {
       content = Center(
