@@ -810,10 +810,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                               setState(() {
                                 _brightness = value;
                               });
-                              // Update brightness dynamically during playback
-                              if (_currentlyPlaying != null) {
-                                _updateBrightness(value);
-                              }
+                              // Always send brightness to API - backend handles whether playback is active
+                              _updateBrightness(value);
                             },
                           ),
                         ),
