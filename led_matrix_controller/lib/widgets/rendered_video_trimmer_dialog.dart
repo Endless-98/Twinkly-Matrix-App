@@ -388,6 +388,7 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
   static const int _prefetchBehind = 3;
   int _lastFrameIndex = -1;
   String? _error;
+  Uint8List? _lastDisplayedBytes;
 
   @override
   void didUpdateWidget(covariant _RenderedVideoFrameViewerStateful oldWidget) {
@@ -433,6 +434,10 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
         if (mounted) {
           setState(() {
             _error = null;
+            final isCurrent = _currentFrameIndex == frameIndex;
+            if (_lastDisplayedBytes == null || isCurrent) {
+              _lastDisplayedBytes = response.bodyBytes;
+            }
           });
         }
       } else {
@@ -478,27 +483,31 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
   Widget build(BuildContext context) {
     final frameIndex = _currentFrameIndex;
     final bytes = _frameCache[frameIndex];
+    final displayBytes = bytes ?? _lastDisplayedBytes;
 
     Widget content;
-    if (bytes != null) {
+    if (displayBytes != null) {
       content = Image.memory(
-        bytes,
+        displayBytes,
+        fit: BoxFit.contain,
         width: double.infinity,
         height: double.infinity,
-        fit: BoxFit.contain,
       );
     } else if (_error != null) {
-      content = Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.error_outline, color: Colors.white54, size: 48),
-          const SizedBox(height: 8),
-          Text(
-            _error!,
-            style: const TextStyle(color: Colors.white54, fontSize: 12),
-            textAlign: TextAlign.center,
-          ),
-        ],
+      content = Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white54, size: 48),
+            const SizedBox(height: 8),
+            Text(
+              _error!,
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       );
     } else {
       content = const Center(
@@ -508,21 +517,8 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
 
     return Stack(
       children: [
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return SizedBox(
-              width: constraints.maxWidth,
-              height: constraints.maxHeight,
-              child: FittedBox(
-                fit: BoxFit.contain,
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  child: content,
-                ),
-              ),
-            );
-          },
+        Positioned.fill(
+          child: content,
         ),
         Positioned(
           bottom: 8,
