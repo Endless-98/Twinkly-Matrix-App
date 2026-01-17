@@ -19,10 +19,9 @@ class VideoEditorDialog extends StatefulWidget {
 }
 
 class _VideoEditorDialogState extends State<VideoEditorDialog> {
-  static const double _ledAspectRatioLandscape = 90 / 50; // Curtain width / height (landscape)
-  static const double _ledAspectRatioPortrait = 50 / 90;  // Curtain height / width (portrait, flipped)
+  // LED curtain dimensions: 90 wide x 50 tall (always landscape orientation regardless of input video)
+  static const double _ledAspectRatio = 90 / 50;
   late VideoPlayerController _controller;
-  late double _ledAspectRatio;
   bool _isInitialized = false;
   bool _isLoading = true;
   String? _error;
@@ -51,12 +50,6 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     try {
       _controller = VideoPlayerController.file(File(widget.videoPath));
       await _controller.initialize();
-      
-      // Detect if video is portrait or landscape
-      final videoAspectRatio = _controller.value.aspectRatio;
-      _ledAspectRatio = videoAspectRatio < 1.0
-          ? _ledAspectRatioPortrait  // Portrait video: use 50/90 aspect ratio
-          : _ledAspectRatioLandscape; // Landscape video: use 90/50 aspect ratio
       
       setState(() {
         _isInitialized = true;
@@ -118,7 +111,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
       _isMovingCrop = false;
       _cropStart = normalized;
       _cropEnd = normalized;
-      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!);
+      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!, viewSize);
     });
   }
 
@@ -143,7 +136,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
 
     setState(() {
       _cropEnd = normalized;
-      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!);
+      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!, viewSize);
     });
   }
 
@@ -164,7 +157,11 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     );
   }
 
-  Rect _buildAspectLockedRect(Offset start, Offset current) {
+  Rect _buildAspectLockedRect(Offset start, Offset current, Size viewSize) {
+    // Adjust LED aspect ratio by viewport aspect ratio to account for normalized coordinates
+    final viewportAspectRatio = viewSize.width / viewSize.height;
+    final adjustedAspectRatio = _ledAspectRatio / viewportAspectRatio;
+    
     // Create a rect that respects the LED aspect ratio and stays within bounds
     final dx = current.dx - start.dx;
     final dy = current.dy - start.dy;
@@ -176,14 +173,14 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     double targetWidth;
     double targetHeight;
 
-    if (widthAbs / (heightAbs == 0 ? 0.0001 : heightAbs) > _ledAspectRatio) {
+    if (widthAbs / (heightAbs == 0 ? 0.0001 : heightAbs) > adjustedAspectRatio) {
       // Width is too large relative to height; limit by height
       targetHeight = heightAbs;
-      targetWidth = targetHeight * _ledAspectRatio;
+      targetWidth = targetHeight * adjustedAspectRatio;
     } else {
       // Height is too large; limit by width
       targetWidth = widthAbs;
-      targetHeight = targetWidth / _ledAspectRatio;
+      targetHeight = targetWidth / adjustedAspectRatio;
     }
 
     // Maintain aspect ratio when clamping to viewport bounds
@@ -206,12 +203,12 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     
     // CRITICAL: Always recalculate height from width to maintain exact aspect ratio
     // This prevents the independent height clamp from breaking the 90:50 ratio
-    targetHeight = targetWidth / _ledAspectRatio;
-    targetHeight = targetHeight.clamp(minSize / _ledAspectRatio, 1.0);
+    targetHeight = targetWidth / adjustedAspectRatio;
+    targetHeight = targetHeight.clamp(minSize / adjustedAspectRatio, 1.0);
     
     // If height was clamped, adjust width to match
-    if (targetHeight < targetWidth / _ledAspectRatio) {
-      targetWidth = targetHeight * _ledAspectRatio;
+    if (targetHeight < targetWidth / adjustedAspectRatio) {
+      targetWidth = targetHeight * adjustedAspectRatio;
     }
 
     // Determine orientation (drag direction)

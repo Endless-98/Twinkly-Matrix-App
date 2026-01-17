@@ -346,37 +346,36 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
 
   Future<void> _renameVideo(String videoName) async {
     String newName = _displayName(videoName);
+    final renameController = TextEditingController(text: _displayName(videoName));
     
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
-          title: const Text('Rename Video'),
-          content: TextField(
-            onChanged: (value) {
-              setState(() {
-                newName = value;
-              });
-            },
-            controller: TextEditingController(text: _displayName(videoName)),
-            decoration: InputDecoration(
-              labelText: 'New name',
-              hintText: _displayName(videoName),
-            ),
+      builder: (context) => AlertDialog(
+        title: const Text('Rename Video'),
+        content: TextField(
+          controller: renameController,
+          onChanged: (value) {
+            newName = value;
+          },
+          decoration: InputDecoration(
+            labelText: 'New name',
+            hintText: _displayName(videoName),
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Rename'),
-            ),
-          ],
         ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('Rename'),
+          ),
+        ],
       ),
     );
+
+    renameController.dispose();
     
     if (confirmed != true || newName == _displayName(videoName)) return;
     
@@ -1282,7 +1281,9 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
             'Rendering in progress! Video will appear in the list when ready.';
       });
       widget.onUploadProgress(widget.fileName, 1.0);
-      widget.onRenderQueued(widget.fileName);
+      // Track the rendering by the actual output name, not the original filename
+      final outputFileName = '${_nameController.text}.npz';
+      widget.onRenderQueued(outputFileName);
 
       // Wait a moment then close
       await Future.delayed(const Duration(seconds: 2));
