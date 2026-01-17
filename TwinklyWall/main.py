@@ -41,6 +41,7 @@ from games.tetris import Tetris
 from video_player import VideoPlayer
 from logger import log
 from event_poller import EventPoller
+from game_players import get_player_gamemode
 import players
 
 print(f"Platform: {'Raspberry Pi' if ON_PI else 'Desktop'}")
@@ -61,7 +62,15 @@ def run_tetris(matrix, stop_event=None, level=1):
     canvas_width = matrix.width * matrix.supersample
     canvas_height = (matrix.height) * matrix.supersample
     canvas = pygame.Surface((canvas_width, canvas_height), pygame.SRCALPHA)
-    tetris = Tetris(canvas, HEADLESS, level)
+    
+    # Get gamemode from the first active player (default to MODERN if no players)
+    active_players = players.active_players()
+    gamemode_selection = 0  # Default to CLASSIC
+    if active_players:
+        gamemode_selection = get_player_gamemode(active_players[0].player_id)
+        log(f"🎮 Starting Tetris with gamemode: {'CLASSIC' if gamemode_selection == 0 else 'MODERN'}", module="Tetris")
+    
+    tetris = Tetris(canvas, HEADLESS, level, gamemode_selection)
     tetris.begin_play()
 
     # Game timing constants

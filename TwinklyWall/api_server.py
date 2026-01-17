@@ -917,7 +917,7 @@ def health():
 def game_join():
     """
     Register a player for a game.
-    Request body: {"player_id": "uuid-123", "phone_id": "AlicePhone", "game": "tetris"}
+    Request body: {"player_id": "uuid-123", "phone_id": "AlicePhone", "game": "tetris", "gamemode_selection": 0}
     Response: {"status": "ok", "player_id": "...", "count": 1} or error if game is full.
     """
     try:
@@ -925,13 +925,14 @@ def game_join():
         player_id = data.get('player_id')
         phone_id = data.get('phone_id', player_id)
         game = data.get('game', 'tetris')
+        gamemode_selection = data.get('gamemode_selection', 0)
 
         if not player_id:
             return jsonify({'error': 'Missing player_id'}), 400
 
         # Attempt to join
-        log(f"Player {phone_id} ({player_id}) attempting to join {game}", module="API")
-        success = join_game(player_id, phone_id=phone_id, game=game)
+        log(f"Player {phone_id} ({player_id}) attempting to join {game} with gamemode {gamemode_selection}", module="API")
+        success = join_game(player_id, phone_id=phone_id, game=game, gamemode_selection=gamemode_selection)
         if not success:
             log(f"Failed: Game {game} is full", level='WARNING', module="API")
             return jsonify({'error': f'Game "{game}" is full'}), 403

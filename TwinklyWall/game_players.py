@@ -33,7 +33,7 @@ class GamePlayerManager:
         current_count = len(self._active_by_game.get(game, []))
         return current_count < limit
 
-    def join(self, player_id: str, phone_id: Optional[str] = None, game: str = "tetris") -> bool:
+    def join(self, player_id: str, phone_id: Optional[str] = None, game: str = "tetris", gamemode_selection: int = 0) -> bool:
         """
         Register a new player for a game if the limit allows.
         Returns True if successful, False if game is full.
@@ -56,6 +56,7 @@ class GamePlayerManager:
             "game": game,
             "joined_at": time.time(),
             "phone_id": phone_id,
+            "gamemode_selection": gamemode_selection,
         }
 
         log(f"Player {phone_id} ({player_id}) joined {game}. Total in game: {len(self._active_by_game[game])}", module="GamePlayers")
@@ -124,10 +125,10 @@ def get_game_manager() -> GamePlayerManager:
 
 
 def join_game(
-    player_id: str, phone_id: Optional[str] = None, game: str = "tetris"
+    player_id: str, phone_id: Optional[str] = None, game: str = "tetris", gamemode_selection: int = 0
 ) -> bool:
     """Attempt to join a player into a game. Returns True if successful."""
-    return _game_manager.join(player_id, phone_id=phone_id, game=game)
+    return _game_manager.join(player_id, phone_id=phone_id, game=game, gamemode_selection=gamemode_selection)
 
 
 def leave_game(player_id: str) -> None:
@@ -190,3 +191,7 @@ def set_player_score_data(player_id: str, score: int, level: int = 1, lines: int
         player.game_state['level'] = level
         player.game_state['lines'] = lines
 
+
+def get_player_gamemode(player_id: str) -> int:
+    """Get the gamemode_selection for a player."""
+    return _game_manager._player_metadata.get(player_id, {}).get("gamemode_selection", 0)

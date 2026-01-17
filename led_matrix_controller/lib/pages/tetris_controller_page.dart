@@ -12,7 +12,12 @@ import '../providers/game_state.dart';
 import '../widgets/score_counter.dart';
 
 class TetrisControllerPage extends ConsumerStatefulWidget {
-  const TetrisControllerPage({super.key});
+  final int gamemode;
+
+  const TetrisControllerPage({
+    super.key,
+    this.gamemode = 0,
+  });
 
   @override
   ConsumerState<TetrisControllerPage> createState() => _TetrisControllerPageState();
@@ -86,6 +91,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
           'player_id': _playerId,
           'phone_id': 'Phone',
           'game': 'tetris',
+          'gamemode_selection': widget.gamemode,
         }),
       );
       

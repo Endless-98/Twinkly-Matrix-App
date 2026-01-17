@@ -25,7 +25,7 @@ class Tetris:
         CLASSIC = 0 # Same rules as the classic NES version
         MODERN = 1 # Follows the rules of Tetris Worlds Marathon. More forgiving. Uses 7-Bag and resetable down-timer
 
-    def __init__(self, canvas, HEADLESS, level):
+    def __init__(self, canvas, HEADLESS, level, gamemode_selection):
         ### Settings ###
         self.gamemode = self.Gamemode.MODERN
         self.headless = HEADLESS
