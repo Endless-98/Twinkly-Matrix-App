@@ -446,7 +446,7 @@ def upload_video():
         return jsonify({'error': str(e)}), 500
 
 
-def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None):
+def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None, output_name=None):
     """Thread function to render an uploaded video."""
     filename = Path(video_path).name
     try:
@@ -456,6 +456,8 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
             log(f"  Trim: {start_time}s to {end_time}s", module="API")
         if crop_rect:
             log(f"  Crop: {crop_rect}", module="API")
+        if output_name:
+            log(f"  Output name: {output_name}", module="API")
         
         # Define progress callback
         def progress_callback(current_frame, total_frames):
@@ -469,6 +471,7 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
             start_time=start_time,
             end_time=end_time,
             crop_rect=crop_rect,
+            output_name=output_name,
             progress_callback=progress_callback
         )
         
@@ -505,6 +508,7 @@ def render_uploaded_video():
     - start_time: (optional) start time in seconds
     - end_time: (optional) end time in seconds
     - crop_left, crop_top, crop_right, crop_bottom: (optional) crop rectangle in normalized 0-1 coordinates
+    - output_name: (optional) custom name for the output file
     """
     try:
         data = request.json
@@ -512,6 +516,7 @@ def render_uploaded_video():
         render_fps = data.get('render_fps', 20)
         start_time = data.get('start_time')
         end_time = data.get('end_time')
+        output_name = data.get('output_name')
         
         # Extract crop parameters if provided
         crop_rect = None
@@ -534,13 +539,17 @@ def render_uploaded_video():
         if not video_path.exists():
             return jsonify({'error': f'Uploaded video not found: {filename}'}), 404
         
+        # Ensure output_name has .npz extension if provided
+        if output_name and not output_name.endswith('.npz'):
+            output_name = f'{output_name}.npz'
+        
         # Initialize progress tracking
         render_progress[filename] = {'progress': 0.0, 'status': 'rendering'}
         
         # Start rendering in background thread
         render_thread = threading.Thread(
             target=render_video_thread,
-            args=(str(video_path), render_fps, start_time, end_time, crop_rect),
+            args=(str(video_path), render_fps, start_time, end_time, crop_rect, output_name),
             daemon=True
         )
         render_thread.start()
