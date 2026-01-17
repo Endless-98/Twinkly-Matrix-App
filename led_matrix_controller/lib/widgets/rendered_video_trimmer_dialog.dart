@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'package:provider/provider.dart';
-import '../providers/api_provider.dart';
 
 class RenderedVideoTrimmerDialog extends StatefulWidget {
   final String videoPath; // Kept for compatibility, not used
@@ -10,6 +8,8 @@ class RenderedVideoTrimmerDialog extends StatefulWidget {
   final double? duration;
   final int? totalFrames;
   final double? fps;
+  final String apiHost;
+  final int apiPort;
 
   const RenderedVideoTrimmerDialog({
     super.key,
@@ -19,6 +19,8 @@ class RenderedVideoTrimmerDialog extends StatefulWidget {
     this.duration,
     this.totalFrames,
     this.fps,
+    required this.apiHost,
+    this.apiPort = 5000,
   });
 
   @override
@@ -138,6 +140,8 @@ class _RenderedVideoTrimmerDialogState
                           currentPosition: _currentPosition,
                           fps: _fps,
                           totalFrames: _totalFrames,
+                          apiHost: widget.apiHost,
+                          apiPort: widget.apiPort,
                         ),
                       ),
                     ),
@@ -328,23 +332,25 @@ class _RenderedVideoFrameViewer extends StatelessWidget {
   final double currentPosition;
   final double fps;
   final int totalFrames;
+  final String apiHost;
+  final int apiPort;
 
   const _RenderedVideoFrameViewer({
     required this.fileName,
     required this.currentPosition,
     required this.fps,
     required this.totalFrames,
+    required this.apiHost,
+    required this.apiPort,
   });
 
   @override
   Widget build(BuildContext context) {
-    final apiProvider = Provider.of<ApiProvider>(context, listen: false);
-    
     // Calculate current frame index
     final frameIndex = (currentPosition * fps).floor().clamp(0, totalFrames - 1);
     
     // Build frame URL
-    final frameUrl = '${apiProvider.baseUrl}/api/videos/${Uri.encodeComponent(fileName)}/frame/$frameIndex';
+    final frameUrl = 'http://$apiHost:$apiPort/api/videos/${Uri.encodeComponent(fileName)}/frame/$frameIndex';
 
     return Stack(
       children: [

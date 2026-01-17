@@ -269,6 +269,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             duration: duration,
             totalFrames: totalFrames,
             fps: fps,
+            apiHost: fppIp,
             onConfirm: (startTime, endTime) {
               Navigator.of(context).pop(true);
               _performTrim(videoName, startTime, endTime);
