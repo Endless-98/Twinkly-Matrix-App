@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../providers/app_state.dart';
-import '../services/command_sender.dart';
 import 'tetris_controller_page.dart';
 
 class GamesPage extends ConsumerWidget {

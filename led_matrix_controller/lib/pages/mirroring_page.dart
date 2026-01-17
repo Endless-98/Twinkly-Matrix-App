@@ -135,7 +135,6 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           sendMsAcc += sendMs;
 
           // Calculate how long to wait to hit the next frame target
-          final elapsed = stopwatch.elapsedMilliseconds - frameStart;
           final waitMs = nextFrameTargetMs - stopwatch.elapsedMilliseconds;
           
           if (waitMs > 0) {

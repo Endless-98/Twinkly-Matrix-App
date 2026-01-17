@@ -1,6 +1,5 @@
 import 'dart:io';
 import 'dart:typed_data';
-import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -10,11 +9,10 @@ class DDPSender {
   final int _port;
   static const int frameSize = 13500; // 90*50*3 RGB bytes
   static RawDatagramSocket? _staticSocket;
-  static bool _debugPackets = false;
   static int _debugLevel = 1; // 1: per-frame summary, 2: chunk details
   // Frame sequence number (applied per frame across all chunks to allow reassembly)
   static int _frameSequence = 0;
-  static Stopwatch _secondStopwatch = Stopwatch()..start();
+  static final Stopwatch _secondStopwatch = Stopwatch()..start();
   static int _framesThisSecond = 0;
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1050 bytes for 1060 total packet size (safe for 1500-byte MTU with headroom)
@@ -25,22 +23,7 @@ class DDPSender {
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
-  
-  // Ring buffer for prebuilt DDP headers (4 frames worth for pipelining)
-  static final List<Uint8List> _headerPool = [];
-  static int _headerPoolIndex = 0;
-  static const int _headerPoolSize = 256; // One per possible sequence number
-  
-  // Precompute DDP packet headers at init
-  static void _initHeaderPool() {
-    if (_headerPool.isNotEmpty) return;
-    for (int i = 0; i < _headerPoolSize; i++) {
-      final header = BytesBuilder();
-      header.addByte(0x41); // 'A'
-      // flags, seq, offset will be filled in per-packet
-      _headerPool.add(Uint8List(10)); // Placeholder; we build on-demand instead
-    }
-  }
+
 
   /// Initialize log file
   static Future<void> _initLogFile() async {
@@ -59,19 +42,21 @@ class DDPSender {
   }
 
   /// Log helper that writes to file
-  static void _log(String message) {
+  static void _log(String message, {int level = 1}) {
+    if (_debugLevel < level) return; // Skip if debug level is lower than message level
+    
     final timestamp = DateTime.now().toIso8601String();
     final logMsg = '[$timestamp] $message';
     
-    // Print to console if possible
-    print(logMsg);
+    // Print to console using debugPrint (respects production mode)
+    debugPrint(logMsg);
     
     // Write to file
     if (_logFile != null) {
       try {
         _logFile!.writeAsStringSync('$logMsg\n', mode: FileMode.append);
       } catch (e) {
-        print('Failed to write to log: $e');
+        debugPrint('Failed to write to log: $e');
       }
     }
   }
@@ -269,12 +254,11 @@ class DDPSender {
 
   /// Enable/disable packet debugging
   static void setDebug(bool enabled) {
-    _debugPackets = enabled;
+    _debugLevel = enabled ? 1 : 0;
   }
 
   static void setDebugLevel(int level) {
     _debugLevel = level.clamp(0, 2);
-    _debugPackets = _debugLevel > 0;
   }
 
   /// Clean up resources
@@ -290,56 +274,5 @@ class DDPSender {
   }
 }
 
-// Keep DdpSender as alias for backward compatibility
-class DdpSender {
-  late RawDatagramSocket _socket;
-  final String _host;
-  final int _port;
-  static const int frameSize = 13500; // 90*50*3 RGB bytes
-
-  DdpSender({required String host, int port = 4048})
-      : _host = host,
-        _port = port;
-
-  /// Initialize the socket connection
-  Future<bool> initialize() async {
-    try {
-      _socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-      debugPrint('DdpSender initialized for $_host:$_port');
-      return true;
-    } catch (e) {
-      debugPrint('Failed to initialize DdpSender: $e');
-      return false;
-    }
-  }
-
-  /// Send a frame to the LED display
-  void sendFrame(Uint8List rgbData) {
-    if (rgbData.length != frameSize) {
-      debugPrint('Invalid frame size: ${rgbData.length}, expected $frameSize');
-      return;
-    }
-
-    try {
-      final addr = InternetAddress(_host);
-      final frameSeq = DDPSender._frameSequence;
-      int sent = 0;
-      while (sent < rgbData.length) {
-        final remaining = rgbData.length - sent;
-        final dataLen = remaining > DDPSender._maxChunkData ? DDPSender._maxChunkData : remaining;
-        final isLast = sent + dataLen >= rgbData.length;
-        final packet = DDPSender._buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
-        _socket.send(packet, addr, _port);
-        sent += dataLen;
-      }
-      DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame
-    } catch (e) {
-      debugPrint('Failed to send frame: $e');
-    }
-  }
-
-  /// Clean up resources
-  void dispose() {
-    _socket.close();
-  }
-}
+/// Alias for backward compatibility
+typedef DdpSender = DDPSender;

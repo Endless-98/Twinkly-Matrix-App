@@ -38,7 +38,6 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
   Offset? _cropEnd;
   bool _isMovingCrop = false;
   Offset? _dragOffset;
-  Size? _viewSize;
 
   @override
   void initState() {
@@ -285,7 +284,6 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                               child: LayoutBuilder(
                                 builder: (context, constraints) {
                                   final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
-                                  _viewSize = viewSize;
                                   return GestureDetector(
                                     onPanStart: _isCropping
                                         ? (details) => _handleCropPanStart(details, viewSize)

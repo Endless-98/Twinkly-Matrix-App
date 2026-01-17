@@ -151,15 +151,6 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
     super.dispose();
   }
 
-  // Synchronous wrapper to ensure leave completes before dispose
-  void _leaveGameSync() {
-    _leaveGame().then((_) {
-      debugPrint('✅ Leave game completed in dispose');
-    }).catchError((e) {
-      debugPrint('❌ Leave game failed in dispose: $e');
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
     final gameScore = ref.watch(gameScoreProvider);

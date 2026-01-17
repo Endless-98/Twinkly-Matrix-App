@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:file_picker/file_picker.dart';
 import 'dart:async';
-import 'dart:io' as IO;
-import 'dart:ui';
-import 'package:path/path.dart' as Path;
+import 'dart:io' as io;
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
 import '../widgets/video_editor_dialog.dart';
@@ -24,7 +22,6 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   bool _isLooping = true;
   double _brightness = 1.0;
   final double _playbackFps = 20.0;
-  int _selectedRenderFps = 20;
   
   // Upload progress tracking
   final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
@@ -314,7 +311,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       
       if (confirmed != true) return;
       
-      final outputName = '${Path.basenameWithoutExtension(videoName)}_trim.npz';
+      // Extract base name without extension
+      final baseName = videoName.contains('.') 
+          ? videoName.substring(0, videoName.lastIndexOf('.'))
+          : videoName;
+      final outputName = '${baseName}_trim.npz';
       await apiService.trimRenderedVideo(
         videoName,
         startTime: startTime,
@@ -1230,7 +1231,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
 
     try {
       // Read file bytes
-      final file = IO.File(widget.filePath);
+      final file = io.File(widget.filePath);
       final fileBytes = await file.readAsBytes();
 
       if (!mounted) return;

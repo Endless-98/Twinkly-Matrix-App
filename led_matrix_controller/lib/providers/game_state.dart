@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'dart:async';
 
 class GameScore {
   final int score;
