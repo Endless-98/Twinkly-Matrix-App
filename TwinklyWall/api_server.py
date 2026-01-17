@@ -213,6 +213,10 @@ def delete_video(filename):
         filename: Name of the video file to delete (must end with .npz)
     """
     try:
+        from urllib.parse import unquote
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
         # Security: Only allow .npz files to be deleted
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type. Only .npz files can be deleted.'}), 400
@@ -292,18 +296,35 @@ def get_video_thumbnail(video_stem):
 def get_video_metadata(filename):
     """Return basic metadata for a rendered video (.npz)."""
     try:
+        from urllib.parse import unquote
+        import numpy as np
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            return jsonify({'error': 'Video not found'}), 404
+            return jsonify({'error': f'Video not found: {file_path}'}), 404
 
         # Load minimal metadata
         data = np.load(file_path)
         frames = data['frames']
         fps = float(data['fps']) if 'fps' in data else 20.0
-        height, width = frames.shape[1], frames.shape[2]
+        
+        # Handle different frame array shapes (N, H, W, 3) or (H, W, 3, N)
+        if frames.ndim == 4:
+            if frames.shape[3] == 3:
+                # Shape is (N, H, W, 3)
+                height, width = frames.shape[1], frames.shape[2]
+            else:
+                # Shape is (H, W, 3, N) or similar - try to infer
+                height, width = frames.shape[0], frames.shape[1]
+        else:
+            # Unexpected shape, try to extract H, W
+            height, width = frames.shape[1], frames.shape[2]
+        
         duration = len(frames) / fps if fps > 0 else 0
 
         return jsonify({
@@ -314,7 +335,9 @@ def get_video_metadata(filename):
             'duration': duration,
         })
     except Exception as e:
-        log(f"Metadata error: {e}", level='ERROR', module="API")
+        log(f"Metadata error for {filename}: {e}", level='ERROR', module="API")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 
@@ -322,6 +345,11 @@ def get_video_metadata(filename):
 def trim_rendered_video(filename):
     """Trim an existing rendered video (.npz) and save as a new file."""
     try:
+        from urllib.parse import unquote
+        import numpy as np
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
@@ -391,6 +419,10 @@ def trim_rendered_video(filename):
 def rename_rendered_video(filename):
     """Rename an existing rendered video (.npz) and its thumbnail."""
     try:
+        from urllib.parse import unquote
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
@@ -638,6 +670,10 @@ def get_render_progress(filename):
     Returns:
         JSON with 'progress' (0.0-1.0), 'status' ('rendering'/'complete'/'error'/'not_found')
     """
+    from urllib.parse import unquote
+    # Decode URL-encoded filename
+    filename = unquote(filename)
+    
     if filename in render_progress:
         return jsonify(render_progress[filename]), 200
     else:
