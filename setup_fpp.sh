@@ -1,6 +1,23 @@
 #!/bin/bash
 set -e
 
+echo '🚀 Setting up/updating TwinklyWall on FPP...'
+echo '🔄 Syncing with GitHub first...'
+
+# Sync repository FIRST, before parsing args or doing anything else
+cd ~
+if [ ! -d "TwinklyWall_Project" ]; then
+    echo '📥 Cloning repository...'
+    git clone https://github.com/Endless-98/Twinkly-Matrix-App.git TwinklyWall_Project
+else
+    echo '📥 Pulling latest code from GitHub...'
+    cd TwinklyWall_Project
+    git pull origin dev
+    cd ~
+fi
+
+cd TwinklyWall_Project
+
 DEBUG_MODE=0
 WIDTH=90
 HEIGHT=50
@@ -35,22 +52,6 @@ done
 if [ $DEBUG_MODE -eq 1 ]; then
     set -x
 fi
-
-echo '🚀 Setting up/updating TwinklyWall on FPP...'
-
-# Sync repository
-cd ~
-if [ ! -d "TwinklyWall_Project" ]; then
-    echo '📥 Cloning repository...'
-    git clone https://github.com/Endless-98/Twinkly-Matrix-App.git TwinklyWall_Project
-else
-    echo '🔄 Updating repository...'
-    cd TwinklyWall_Project
-    git pull
-    cd ~
-fi
-
-cd TwinklyWall_Project
 
 # Setup Python environment
 cd TwinklyWall
