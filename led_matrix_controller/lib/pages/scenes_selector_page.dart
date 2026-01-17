@@ -28,6 +28,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   final Set<String> _uploadingFiles = {};
   final Set<String> _renderingFiles = {};
   final Map<String, double> _renderProgress = {}; // filename -> render progress (0.0 to 1.0)
+  final Map<String, int> _renderFramesCurrent = {}; // filename -> frames rendered
+  final Map<String, int> _renderFramesTotal = {}; // filename -> total frames
   Timer? _renderCheckTimer;
 
   /// Remove file extensions from display names
@@ -101,9 +103,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             if (mounted) {
               final progress = (progressData['progress'] as num?)?.toDouble() ?? 0.0;
               final status = progressData['status'] as String?;
+              final framesRendered = (progressData['frames_rendered'] as num?)?.toInt() ?? 0;
+              final totalFrames = (progressData['total_frames'] as num?)?.toInt() ?? 0;
               
               setState(() {
                 _renderProgress[filename] = progress;
+                _renderFramesCurrent[filename] = framesRendered;
+                _renderFramesTotal[filename] = totalFrames;
               });
               
               // If complete or error, remove from rendering and mark for refresh
@@ -111,6 +117,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                 setState(() {
                   _renderingFiles.remove(filename);
                   _renderProgress.remove(filename);
+                  _renderFramesCurrent.remove(filename);
+                  _renderFramesTotal.remove(filename);
                 });
                 anyCompleted = true;
               }
@@ -894,6 +902,18 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   Widget _buildRenderingCard(String fileName) {
     final progress = _renderProgress[fileName] ?? 0.0;
     final percentage = (progress * 100).toStringAsFixed(0);
+    final framesRendered = _renderFramesCurrent[fileName] ?? 0;
+    final totalFrames = _renderFramesTotal[fileName] ?? 0;
+    
+    // Build status text based on available data
+    String statusText;
+    if (totalFrames > 0) {
+      statusText = '$framesRendered / $totalFrames frames';
+    } else if (progress > 0) {
+      statusText = 'Rendering $percentage%...';
+    } else {
+      statusText = 'Starting render...';
+    }
     
     return Card(
       color: Colors.blueGrey[900],
@@ -953,7 +973,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  progress > 0 ? 'Rendering $percentage%...' : 'Starting render...',
+                  statusText,
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
                 const SizedBox(height: 4),

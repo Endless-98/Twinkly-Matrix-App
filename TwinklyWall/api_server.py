@@ -252,10 +252,31 @@ def delete_video(filename):
 
 @app.route('/api/video/<video_stem>/thumbnail', methods=['GET'])
 def get_video_thumbnail(video_stem):
-    """Get thumbnail image for a video (PNG format)."""
+    """Get thumbnail image for a video (PNG format).
+    
+    If thumbnail doesn't exist but the video does, generates it from the first frame.
+    """
     try:
+        import cv2
+        
         # Find the thumbnail file (should be .png with same stem as .npz)
         thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
+        video_path = rendered_videos_dir / f"{video_stem}.npz"
+        
+        # If thumbnail doesn't exist but video does, generate it
+        if not thumbnail_path.exists() and video_path.exists():
+            try:
+                import numpy as np
+                data = np.load(video_path)
+                frames = data['frames']
+                if len(frames) > 0:
+                    first_frame = frames[0]  # RGB format
+                    # Convert RGB to BGR for cv2.imwrite
+                    bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
+                    cv2.imwrite(str(thumbnail_path), bgr_frame)
+                    log(f"Generated missing thumbnail: {thumbnail_path.name}", module="API")
+            except Exception as gen_e:
+                log(f"Failed to generate thumbnail for {video_stem}: {gen_e}", level='WARNING', module="API")
         
         if not thumbnail_path.exists():
             return jsonify({'error': 'Thumbnail not found'}), 404
@@ -490,10 +511,12 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
         if output_name:
             log(f"  Output name: {output_name}", module="API")
         
-        # Define progress callback
+        # Define progress callback with frame counts for UI display
         def progress_callback(current_frame, total_frames):
             if progress_key in render_progress:
                 render_progress[progress_key]['progress'] = current_frame / total_frames if total_frames > 0 else 0.0
+                render_progress[progress_key]['frames_rendered'] = current_frame
+                render_progress[progress_key]['total_frames'] = total_frames
         
         # Render the video with trim/crop parameters
         output_path = renderer.render_video(
@@ -578,7 +601,13 @@ def render_uploaded_video():
         
         # Initialize progress tracking using output_name if provided, otherwise use input filename
         progress_key = output_name if output_name else filename
-        render_progress[progress_key] = {'progress': 0.0, 'status': 'rendering'}
+        render_progress[progress_key] = {
+            'progress': 0.0,
+            'status': 'rendering',
+            'frames_rendered': 0,
+            'total_frames': 0,
+            'output_name': output_name or filename
+        }
         
         # Start rendering in background thread
         render_thread = threading.Thread(
