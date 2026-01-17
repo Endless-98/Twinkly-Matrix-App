@@ -1058,7 +1058,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             : isHighlighted
                 ? Colors.blueGrey[700]
                 : Colors.grey[800],
-      child: Stack(
+        child: Stack(
         fit: StackFit.expand,
         children: [
           // Thumbnail or default background
