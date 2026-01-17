@@ -866,10 +866,45 @@ def stop_playback():
 @app.route('/api/status', methods=['GET'])
 def get_status():
     """Get current playback status."""
+    brightness = None
+    if current_player:
+        brightness = getattr(current_player, 'brightness', None)
     return jsonify({
         'playing': playback_active,
         'video': current_video_name,
+        'brightness': brightness,
     })
+
+
+@app.route('/api/brightness', methods=['POST'])
+def set_brightness():
+    """Set brightness dynamically during playback.
+    
+    Request body: {"brightness": 1.0}  # Range: 0.05 to 2.0 (5% to 200%)
+    """
+    global current_player
+    try:
+        data = request.json or {}
+        brightness = data.get('brightness')
+        
+        if brightness is None:
+            return jsonify({'error': 'Missing brightness value'}), 400
+        
+        brightness = float(brightness)
+        if brightness < 0.05 or brightness > 2.0:
+            return jsonify({'error': 'Brightness must be between 0.05 and 2.0 (5% to 200%)'}), 400
+        
+        if current_player:
+            current_player.brightness = brightness
+            print(f"[API] Brightness set to {brightness:.2f} ({brightness*100:.0f}%)")
+            return jsonify({'status': 'ok', 'brightness': brightness})
+        else:
+            return jsonify({'error': 'No active playback'}), 400
+            
+    except ValueError:
+        return jsonify({'error': 'Invalid brightness value'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/health', methods=['GET'])

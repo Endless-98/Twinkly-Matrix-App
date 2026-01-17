@@ -128,6 +128,29 @@ class ApiService {
     }
   }
 
+  /// Set brightness dynamically during playback (0.05 to 2.0 = 5% to 200%)
+  Future<void> setBrightness(double brightness) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/brightness'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'brightness': brightness}),
+          )
+          .timeout(const Duration(seconds: 2));
+
+      if (response.statusCode != 200) {
+        // Silently fail if no active playback - not an error
+        final data = jsonDecode(response.body);
+        if (data['error'] != 'No active playback') {
+          throw Exception('Failed to set brightness: ${response.statusCode}');
+        }
+      }
+    } catch (e) {
+      // Silently ignore brightness errors during scrubbing
+    }
+  }
+
   /// Get current playback status
   Future<Map<String, dynamic>> getStatus() async {
     try {

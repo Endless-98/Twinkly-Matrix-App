@@ -25,6 +25,19 @@ class VideoPlayer:
         self.matrix = matrix
         self.base_dir = Path(base_dir)
         self._stop = False
+        # Dynamic brightness: can be changed during playback (0.05 to 2.0 = 5% to 200%)
+        self._brightness: Optional[float] = None
+
+    @property
+    def brightness(self) -> Optional[float]:
+        return self._brightness
+    
+    @brightness.setter
+    def brightness(self, value: Optional[float]):
+        """Set brightness dynamically (0.05-2.0 range, or None for default)."""
+        if value is not None:
+            value = max(0.05, min(2.0, float(value)))
+        self._brightness = value
 
     def stop(self):
         """Request playback to stop after current frame."""
@@ -121,23 +134,23 @@ class VideoPlayer:
         print(f"  Speed multiplier: {speed:.3f}")
         print(f"  Frames: start={start_frame}, end={end_frame}, total={total}")
         print(f"  Loop: {loop}, Repeat: {repeat if repeat is not None else 1 if not loop else 'inf'}")
+        
+        # Set initial brightness (can be changed dynamically via self.brightness property)
         if brightness is not None:
-            print(f"  Brightness scale: {brightness}")
-
-        # Optional brightness scaling (numpy, in-place on a view copy per frame)
-        scale_0_255 = None
-        if brightness is not None:
-            scale_0_255 = float(brightness)
-            if scale_0_255 <= 1.0:
-                scale_0_255 *= 255.0
+            self._brightness = brightness
+            print(f"  Initial brightness: {brightness}")
 
         def render_frame(arr_uint8: np.ndarray):
-            if scale_0_255 is not None:
-                # Fast scalar multiply using float32 then clip/cast; avoid modifying original frames
-                scaled = np.minimum(255.0, (arr_uint8.astype(np.float32) * (scale_0_255 / 255.0))).astype(np.uint8)
-                self.matrix.render_colors(scaled)
-            else:
-                self.matrix.render_colors(arr_uint8)
+            # Use dynamic brightness - check current value each frame
+            br = self._brightness
+            if br is not None:
+                # Scale brightness: values 0.05-2.0 map to 5%-200%
+                scale = float(br)
+                if scale != 1.0:
+                    scaled = np.minimum(255.0, arr_uint8.astype(np.float32) * scale).astype(np.uint8)
+                    self.matrix.render_colors(scaled)
+                    return
+            self.matrix.render_colors(arr_uint8)
 
         frames_rendered = 0
 

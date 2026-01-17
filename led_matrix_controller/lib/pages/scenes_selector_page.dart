@@ -240,6 +240,17 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     }
   }
 
+  /// Update brightness dynamically during playback
+  Future<void> _updateBrightness(double brightness) async {
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final apiService = ApiService(host: fppIp);
+      await apiService.setBrightness(brightness);
+    } catch (e) {
+      // Silently ignore - brightness updates are best-effort
+    }
+  }
+
   Future<void> _deleteVideo(String videoName) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -791,14 +802,18 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                         Expanded(
                           child: Slider(
                             value: _brightness,
-                            min: 0.1,
-                            max: 1.5,
-                            divisions: 14,
+                            min: 0.05,
+                            max: 2.0,
+                            divisions: 39,
                             label: '${(_brightness * 100).round()}%',
                             onChanged: (value) {
                               setState(() {
                                 _brightness = value;
                               });
+                              // Update brightness dynamically during playback
+                              if (_currentlyPlaying != null) {
+                                _updateBrightness(value);
+                              }
                             },
                           ),
                         ),
