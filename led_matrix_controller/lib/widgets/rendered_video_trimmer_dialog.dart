@@ -382,9 +382,9 @@ class _RenderedVideoFrameViewerStateful extends StatefulWidget {
 class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameViewerStateful> {
   final Map<int, Uint8List> _frameCache = {};
   final Set<int> _inFlight = {};
-  static const int _maxCache = 120;
-  static const int _prefetchAhead = 10;
-  static const int _prefetchBehind = 3;
+  static const int _maxCache = 300;
+  static const int _prefetchAhead = 60;
+  static const int _prefetchBehind = 30;
   int _lastFrameIndex = -1;
   String? _error;
   Uint8List? _lastDisplayedBytes;
@@ -458,6 +458,7 @@ class _RenderedVideoFrameViewerStatefulState extends State<_RenderedVideoFrameVi
   }
 
   void _prefetchAround(int center) {
+    // Prefetch aggressively: far ahead and behind to avoid black on rapid scrubs
     for (int i = 1; i <= _prefetchAhead; i++) {
       final next = center + i;
       if (next < widget.totalFrames) _fetchFrame(next);
