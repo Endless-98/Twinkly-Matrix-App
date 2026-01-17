@@ -12,7 +12,7 @@ if [ ! -d "TwinklyWall_Project" ]; then
 else
     echo '📥 Pulling latest code from GitHub...'
     cd TwinklyWall_Project
-    git pull origin dev
+    git pull origin master
     cd ~
 fi
 
