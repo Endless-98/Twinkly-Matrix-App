@@ -668,11 +668,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               _uploadProgress[uploadFileName] = progress;
             });
           },
-          onRenderQueued: (uploadFileName) {
+          onRenderQueued: (originalFileName, outputFileName) {
             setState(() {
-              _uploadingFiles.remove(uploadFileName);
-              _uploadProgress.remove(uploadFileName);
-              _renderingFiles.add(uploadFileName);
+              _uploadingFiles.remove(originalFileName);
+              _uploadProgress.remove(originalFileName);
+              _renderingFiles.add(outputFileName);
               // Start polling timer if not already running
               if (_renderCheckTimer == null || !(_renderCheckTimer?.isActive ?? false)) {
                 _startRenderCheckTimer();
@@ -1170,7 +1170,7 @@ class _UploadDialogContent extends StatefulWidget {
   final String fppIp;
   final Function(String) onUploadStarted;
   final Function(String, double) onUploadProgress;
-  final Function(String) onRenderQueued;
+  final Function(String, String) onRenderQueued;  // (originalFileName, outputFileName)
   final Function(String) onUploadFailed;
 
   const _UploadDialogContent({
@@ -1283,7 +1283,7 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
       widget.onUploadProgress(widget.fileName, 1.0);
       // Track the rendering by the actual output name, not the original filename
       final outputFileName = '${_nameController.text}.npz';
-      widget.onRenderQueued(outputFileName);
+      widget.onRenderQueued(widget.fileName, outputFileName);
 
       // Wait a moment then close
       await Future.delayed(const Duration(seconds: 2));
