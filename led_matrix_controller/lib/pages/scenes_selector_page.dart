@@ -6,6 +6,7 @@ import 'dart:io' as io;
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
 import '../widgets/video_editor_dialog.dart';
+import '../widgets/rendered_video_trimmer_dialog.dart';
 
 class ScenesSelectorPage extends ConsumerStatefulWidget {
   const ScenesSelectorPage({super.key});
@@ -241,98 +242,76 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   Future<void> _trimVideo(String videoName) async {
+    // Check if this is a rendered video (.npz)
+    final isRenderedVideo = videoName.endsWith('.npz');
+    
+    if (isRenderedVideo) {
+      // Use the rendered video trimmer dialog
+      final fppIp = ref.read(fppIpProvider);
+      final apiService = ApiService(host: fppIp);
+      
+      try {
+        // Get video metadata
+        final metadata = await apiService.getRenderedVideoMeta(videoName);
+        final duration = (metadata['duration'] as num).toDouble();
+        final totalFrames = (metadata['frames'] as num).toInt();
+        final fps = (metadata['fps'] as num).toDouble();
+        
+        if (!mounted) return;
+        
+        // Show the rendered video trimmer dialog
+        final confirmed = await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => RenderedVideoTrimmerDialog(
+            videoPath: '', // Not used for rendered videos
+            fileName: videoName,
+            duration: duration,
+            totalFrames: totalFrames,
+            fps: fps,
+            onConfirm: (startTime, endTime) {
+              Navigator.of(context).pop(true);
+              _performTrim(videoName, startTime, endTime);
+            },
+          ),
+        );
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to load video metadata: $e'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _performTrim(
+    String videoName,
+    double startTime,
+    double endTime,
+  ) async {
     final fppIp = ref.read(fppIpProvider);
     final apiService = ApiService(host: fppIp);
     
     try {
-      // Get video metadata
-      final metadata = await apiService.getRenderedVideoMeta(videoName);
-      final duration = metadata['duration'] as double;
-      
-      double startTime = 0.0;
-      double endTime = duration;
-      
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => StatefulBuilder(
-          builder: (context, setState) => AlertDialog(
-            title: const Text('Trim Video'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text('Duration: ${endTime.toStringAsFixed(1)}s'),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    const Text('Start:'),
-                    Expanded(
-                      child: Slider(
-                        value: startTime,
-                        min: 0,
-                        max: endTime,
-                        onChanged: (value) {
-                          setState(() {
-                            startTime = value;
-                            if (startTime >= endTime) {
-                              endTime = startTime + 0.1;
-                            }
-                          });
-                        },
-                      ),
-                    ),
-                    Text(startTime.toStringAsFixed(1)),
-                  ],
-                ),
-                Row(
-                  children: [
-                    const Text('End:'),
-                    Expanded(
-                      child: Slider(
-                        value: endTime,
-                        min: startTime,
-                        max: duration,
-                        onChanged: (value) {
-                          setState(() {
-                            endTime = value;
-                          });
-                        },
-                      ),
-                    ),
-                    Text(endTime.toStringAsFixed(1)),
-                  ],
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: const Text('Trim'),
-              ),
-            ],
-          ),
-        ),
-      );
-      
-      if (confirmed != true) return;
-      
       // Extract base name without extension
-      final baseName = videoName.contains('.') 
+      final baseName = videoName.contains('.')
           ? videoName.substring(0, videoName.lastIndexOf('.'))
           : videoName;
       final outputName = '${baseName}_trim.npz';
+
       await apiService.trimRenderedVideo(
         videoName,
         startTime: startTime,
         endTime: endTime,
         outputName: outputName,
       );
-      
+
       await _loadScenes();
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
