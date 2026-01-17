@@ -27,7 +27,7 @@ class Tetris:
 
     def __init__(self, canvas, HEADLESS, level, gamemode_selection):
         ### Settings ###
-        self.gamemode = self.Gamemode.MODERN
+        self.gamemode = self.Gamemode(gamemode_selection)
         self.headless = HEADLESS
         self.blocks_width = 10
         self.blocks_height = 25 
