@@ -452,6 +452,8 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
     # Use output_name for progress tracking if provided, otherwise use input filename
     progress_key = output_name if output_name else filename
     
+    log(f"render_video_thread called with: output_name={output_name}, progress_key={progress_key}", module="API")
+    
     try:
         renderer = VideoRenderer()
         log(f"Starting render: {video_path} at {render_fps} FPS", module="API")
@@ -520,6 +522,8 @@ def render_uploaded_video():
         start_time = data.get('start_time')
         end_time = data.get('end_time')
         output_name = data.get('output_name')
+        
+        log(f"Render request: filename={filename}, output_name={output_name}, fps={render_fps}", module="API")
         
         # Extract crop parameters if provided
         crop_rect = None
