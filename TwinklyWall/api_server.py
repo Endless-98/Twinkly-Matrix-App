@@ -460,6 +460,58 @@ def rename_rendered_video(filename):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/videos/<filename>/frame/<int:frame_index>', methods=['GET'])
+def get_rendered_video_frame(filename, frame_index):
+    """Get a single frame from a rendered video (.npz) as a PNG image."""
+    try:
+        from urllib.parse import unquote
+        import numpy as np
+        import cv2
+        import io
+        
+        # Decode URL-encoded filename
+        filename = unquote(filename)
+        
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': 'Video not found'}), 404
+
+        # Load the video data
+        data = np.load(file_path)
+        frames = data['frames']
+        
+        # Validate frame index
+        if frame_index < 0 or frame_index >= len(frames):
+            return jsonify({'error': f'Frame index {frame_index} out of range (0-{len(frames)-1})'}), 400
+        
+        # Get the frame (RGB format)
+        frame = frames[frame_index]
+        
+        # Convert RGB to BGR for cv2
+        bgr_frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
+        
+        # Encode as PNG
+        success, buffer = cv2.imencode('.png', bgr_frame)
+        if not success:
+            return jsonify({'error': 'Failed to encode frame'}), 500
+        
+        # Return as image
+        return send_file(
+            io.BytesIO(buffer.tobytes()),
+            mimetype='image/png',
+            as_attachment=False,
+            download_name=f'{filename}_frame_{frame_index}.png'
+        )
+    except Exception as e:
+        log(f"Get frame error: {e}", level='ERROR', module="API")
+        import traceback
+        log(f"Traceback: {traceback.format_exc()}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
 def allowed_file(filename):
     """Check if file has an allowed extension."""
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
