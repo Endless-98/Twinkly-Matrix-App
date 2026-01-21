@@ -37,7 +37,7 @@ FPS_DEBUG = os.environ.get('TWINKLYWALL_FPS_DEBUG', '').lower() in ('1', 'true',
 
 # Import after setting environment variables
 from dotmatrix import DotMatrix
-from games.tetris import Tetris
+from games.tetris.tetris import Tetris
 from video_player import VideoPlayer
 from logger import log
 from event_poller import EventPoller
@@ -65,7 +65,7 @@ def run_tetris(matrix, stop_event=None, level=1):
     
     # Get gamemode from the first active player (default to MODERN if no players)
     active_players = players.active_players()
-    gamemode_selection = 0  # Default to CLASSIC
+    gamemode_selection = 1  # Default to MODERN
     if active_players:
         gamemode_selection = get_player_gamemode(active_players[0].player_id)
         log(f"🎮 Starting Tetris with gamemode: {'CLASSIC' if gamemode_selection == 0 else 'MODERN'}", module="Tetris")
@@ -74,7 +74,7 @@ def run_tetris(matrix, stop_event=None, level=1):
     tetris.begin_play()
 
     # Game timing constants
-    GAME_TICK_RATE = 60
+    GAME_TICK_RATE = 20
     RENDER_FPS = 20
     game_tick_interval = 1.0 / GAME_TICK_RATE
     render_interval = 1.0 / RENDER_FPS

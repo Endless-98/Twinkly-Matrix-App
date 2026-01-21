@@ -48,19 +48,28 @@ class GamesPage extends ConsumerWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               const Text('Choose your preferred Tetris mode:'),
-              const SizedBox(height: 24),
-              _ModeOption(
-                title: 'Classic',
-                description: 'Original NES-style Tetris',
-                modeIndex: 0,
-                onTap: () => Navigator.pop(context, 0),
-              ),
-              const SizedBox(height: 16),
-              _ModeOption(
-                title: 'Modern',
-                description: 'Tetris Worlds Marathon rules',
-                modeIndex: 1,
-                onTap: () => Navigator.pop(context, 1),
+              const SizedBox(height: 32),
+              SizedBox(
+                width: double.maxFinite,
+                child: Column(
+                  children: [
+                    _ModeOption(
+                      title: 'Classic',
+                      description: 'Original NES-style Tetris',
+                      modeIndex: 0,
+                      color: Colors.cyan,
+                      onTap: () => Navigator.pop(context, 0),
+                    ),
+                    const SizedBox(height: 16),
+                    _ModeOption(
+                      title: 'Modern',
+                      description: 'Tetris Worlds Marathon rules',
+                      modeIndex: 1,
+                      color: Colors.lime,
+                      onTap: () => Navigator.pop(context, 1),
+                    ),
+                  ],
+                ),
               ),
             ],
           ),
@@ -114,49 +123,69 @@ class _GameButton extends StatelessWidget {
     );
   }
 }
-class _ModeOption extends StatelessWidget {
+
+class _ModeOption extends StatefulWidget {
   final String title;
   final String description;
   final int modeIndex;
+  final Color color;
   final VoidCallback onTap;
 
   const _ModeOption({
     required this.title,
     required this.description,
     required this.modeIndex,
+    required this.color,
     required this.onTap,
   });
 
   @override
+  State<_ModeOption> createState() => _ModeOptionState();
+}
+
+class _ModeOptionState extends State<_ModeOption> {
+  bool _isHovered = false;
+
+  @override
   Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.blue, width: 2),
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              title,
-              style: const TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: Colors.white,
-              ),
+    return MouseRegion(
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          width: double.infinity,
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          decoration: BoxDecoration(
+            color: widget.color.withOpacity(_isHovered ? 0.15 : 0.08),
+            border: Border.all(
+              color: widget.color,
+              width: _isHovered ? 3 : 2,
             ),
-            const SizedBox(height: 4),
-            Text(
-              description,
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey[400],
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                widget.title,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: widget.color,
+                ),
               ),
-            ),
-          ],
+              const SizedBox(height: 6),
+              Text(
+                widget.description,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.grey[400],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

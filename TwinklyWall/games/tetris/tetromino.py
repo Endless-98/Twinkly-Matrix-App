@@ -1,9 +1,9 @@
 # All code in this file must be handwritten! No AI allowed!
-
-import numpy
 import random
+from enum import IntEnum
 
 class Tetromino:
+    # TODO : Use industry standard enums as defined here: https://share.google/aimode/CxcXNL8Z6otu56L9U
     #### [piece_group(0: I piece, 1: JLSZT )] [direction(0: clockwise, 1: counterclockwise)] [Desired rotation] [Try number]
     kick_offsets = [
         ### Piece_group 0: I piece
@@ -163,13 +163,10 @@ class Tetromino:
                  [0,0,0]], ]
     def __init__(self, type_index : int, grid_position = (0,0), rotation = 0):
         self.grid_position = grid_position
-        self.precise_height = 0.0 # Won't fall on the grid, but we snap to grid.
-        self.ghost_opacity = 0.2
         self.type_index = type_index
         self.shape = self.shapes[type_index]
-        self.rotation = 0 # Multiply by 90 for degrees
+        self.rotation = 0 # 0: Up 1: Down
 
-from enum import IntEnum
 class RandomBag:
     bag_size = 7
     class RandomStyle(IntEnum):
@@ -203,7 +200,7 @@ class RandomBag:
 
     def simple_random(self) -> int:
         rand = (1, len(Tetromino.shapes))
-        if self.next_piece == None: # Only happens the first time
+        if self.next_piece is None: # Only happens the first time
             self.next_piece = random.randrange(rand[0], rand[1])
 
         num = random.randrange(rand[0], rand[1])
@@ -221,5 +218,5 @@ class RandomBag:
         new_bag = [i for i in range(1,self.bag_size + 1)]
         random.shuffle(new_bag)
         self.contents = new_bag
-        if self.next_piece == None: # Should happen only on the first bag fill 
+        if self.next_piece is None: # Should happen only on the first bag fill 
             self.next_piece = self.contents.pop()
