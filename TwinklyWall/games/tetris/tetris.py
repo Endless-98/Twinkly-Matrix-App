@@ -7,6 +7,8 @@
         # Combo recognition
         # Perfect clear recognition (for later games)
 
+    # Refactor __ to _
+    # Prefer if checking to try/except
     ### Get an AI evaluation of my codebase, and use it to ensure perfect commercial accuracy ###
     # Docstrings for each function
     # Remove all magic numbers by abstracting them into a constants file.
@@ -19,17 +21,16 @@
 import os
 import pygame
 import numpy
-from .tetromino import Tetromino, RandomBag
+import copy
+from .tetromino import Tetromino, RandomBag, RandomStyle, TetrominoType
 from game_players import set_player_score_data, get_active_players_for_game
 from players import set_input_handler
 from .enums import Gamemode
-from .constants import (
+from .constants import ( # TODO : Refactor to group constants by category to make importing less ugly
     GAME_NAME, GRID_WIDTH, GRID_HEIGHT, GRID_PIXEL_SIZE, 
     BORDER_COLOR, BORDER_THICKNESS,
     RGBA_OFF_PIXEL_GRAY, RGB_WHITE, RGB_BLACK, RGBA_INVISIBLE_BLACK, FULL_OPACITY_ALPHA,
-    TETROMINO_GHOST_ALPHA, TETROMINO_I_CYAN, TETROMINO_O_YELLOW, TETROMINO_T_MAGENTA, 
-    TETROMINO_S_GREEN, TETROMINO_Z_RED, TETROMINO_J_DARK_BLUE, TETROMINO_L_ORANGE,
-    TETROMINO_MAX_GRID_SIZE,
+    TETROMINO_COLORS, TETROMINO_GHOST_ALPHA, TETROMINO_MAX_GRID_SIZE, KICK_OFFSETS,
     LINE_FADE_TIME_SECONDS, GAME_OVER_FILENAME, CLASSIC_FIRST_LEVEL_GOAL_FLOOR,
     CLASSIC_NEXT_LEVEL_BASE_GOAL, CLASSIC_NES_FPS, CLASSIC_START_LEVEL_INDEX, CLASSIC_LINES_CLEARED_SCORE_REWARD,
     CLASSIC_POINTS_PER_SOFT_DROP_STEP, CLASSIC_SOFT_DROP_SPEED_DIVISOR, CLASSIC_LEVEL_INDEX_SCORE_OFFSET,
@@ -48,9 +49,13 @@ class Tetris:
         self.screen_grid_height = int(numpy.round(self.game_over_grid_ceiling))
         self.game_x_offset = (self.screen.get_width() / GRID_PIXEL_SIZE - GRID_WIDTH) - 1 # TODO : Determine why the -1 is needed
         self.game_y_offset = (self.screen.get_height() / GRID_PIXEL_SIZE - GRID_HEIGHT) - 1 # TODO : Determine why the -1 is needed
-        self.colors = [RGB_BLACK, TETROMINO_I_CYAN, TETROMINO_O_YELLOW, TETROMINO_T_MAGENTA, 
-                       TETROMINO_S_GREEN, TETROMINO_Z_RED, TETROMINO_J_DARK_BLUE, TETROMINO_L_ORANGE] # TODO : Move to an enum
-        self.randomizer = RandomBag(random_style_index=self.gamemode)
+        
+        match self.gamemode:
+            case Gamemode.CLASSIC:
+                self.randomizer = RandomBag(RandomStyle.SIMPLE)
+            case Gamemode.MODERN:
+                self.randomizer = RandomBag(RandomStyle.BAG)
+
         self.dead_grid  = [[0 for element in range(GRID_WIDTH)] for row in range(GRID_HEIGHT)]
         current_dir = os.path.dirname(os.path.abspath(__file__))
         img_path = os.path.join(current_dir, 'assets', GAME_OVER_FILENAME)
@@ -71,7 +76,7 @@ class Tetris:
         self.__calc_drop_speed() # Also called each time we level up
         self.players = get_active_players_for_game(GAME_NAME)
         self.live_tetromino = None
-        self.is_down = False
+        self.cannot_move_down = False
         self.is_playing = True
 
         self.__spawn_tetromino()
@@ -96,74 +101,63 @@ class Tetris:
                 self.down_time_elapsed = 0.0
                 self.next_level_goal = MODERN_NEXT_LEVEL_BASE_GOAL * self.level_index
 
-    def __get_size(self, type_index) -> int: # TODO : Rework this function
-        size = 4 if type_index == 4 or type_index == 1 else 3 # TODO : Move magic number to constants
-        return size
-
-    def __draw_square(self, color_index, position, opacity = FULL_OPACITY_ALPHA):
-        color = self.colors[color_index]
-        
+    def __draw_square(self, color, position, alpha = FULL_OPACITY_ALPHA):
         if len(color) == 3: # If color is in RGB form
-            color = (*color, opacity) # Add opacity
+            color = (*color, alpha) # Add opacity
         
         pygame.draw.rect(self.screen, color, (position[0], position[1], GRID_PIXEL_SIZE, GRID_PIXEL_SIZE))
-    
+
     def __draw_border(self):
-        x_left = int(self.game_x_offset * GRID_PIXEL_SIZE) - BORDER_THICKNESS
-        x_right = int(self.game_x_offset * GRID_PIXEL_SIZE + (GRID_WIDTH * GRID_PIXEL_SIZE))
+        x_left : int = int(self.game_x_offset * GRID_PIXEL_SIZE) - BORDER_THICKNESS
+        x_right : int = int(self.game_x_offset * GRID_PIXEL_SIZE + (GRID_WIDTH * GRID_PIXEL_SIZE))
         pygame.draw.rect(self.screen, BORDER_COLOR, (x_left, 0, BORDER_THICKNESS, GRID_HEIGHT * GRID_PIXEL_SIZE,))
         pygame.draw.rect(self.screen, BORDER_COLOR, (x_right, 0, BORDER_THICKNESS, GRID_HEIGHT * GRID_PIXEL_SIZE,))
 
-    def __draw_next_piece_preview(self): # TODO : Get live piece size instead of TETROMINO_MAX_GRID_SIZE
-        type_index = self.randomizer.next_piece
-        thickness = GRID_PIXEL_SIZE * TETROMINO_MAX_GRID_SIZE
-        x_left = int(self.game_x_offset * GRID_PIXEL_SIZE) - thickness - BORDER_THICKNESS
-        pygame.draw.rect(self.screen, BORDER_COLOR, (x_left, 0, thickness, thickness)) 
+    def __draw_next_piece_preview(self):
+        pass
+        # tetromino = self.live_tetromino
+        # try:
+        #     tetromino = self.randomizer.next_piece
+        # except ValueError:
+        #     print("Bad next tetromino value")
+
+        # thickness = GRID_PIXEL_SIZE * tetromino.type.size
+        # x_left = int(self.game_x_offset * GRID_PIXEL_SIZE) - thickness - BORDER_THICKNESS
+        # pygame.draw.rect(self.screen, BORDER_COLOR, (x_left, 0, thickness, thickness)) 
         
-        self.__draw_tetromino(grid_position=(0 - TETROMINO_MAX_GRID_SIZE, self.screen_grid_height - TETROMINO_MAX_GRID_SIZE), type_index=type_index)
+        # self.__draw_tetromino(grid_position=(0 - tetromino.type.size, self.screen_grid_height - tetromino.type.size), tetromino=tetromino)
 
     def __draw_ghost_piece(self): # TODO : Write comment explaining this
-        type_index = self.live_tetromino.type_index
+        tetromino = copy.copy(self.live_tetromino)
         pos = self.live_tetromino.grid_position
-        for y in range(pos[1], -self.__get_size(type_index), -1): 
+        for y in range(pos[1], -tetromino.type.size, -1): 
             pos = (pos[0], y)
             if not self.__check_move_validity(pos):
                 pos = (pos[0], y + 1)
                 break
-        self.__draw_tetromino(grid_position=pos, opacity=TETROMINO_GHOST_ALPHA)
+        
+        self._draw_tetromino(grid_position=pos, tetromino=tetromino, opacity=TETROMINO_GHOST_ALPHA)
 
-    def __draw_tetromino(self, grid_position = None, type_index = None, opacity = FULL_OPACITY_ALPHA):
-        '''
-        Docstring for draw_tetromino
-        
-        :param self: Description
-        :param grid_position: Description
-        :param type_index: Description
-        :param opacity: Description
-        '''
-        
+    def _draw_tetromino(self, grid_position = None, tetromino = None, opacity = FULL_OPACITY_ALPHA):
         # Draw tetromino on top of dead_grid
         if grid_position is None:
             pos = self.live_tetromino.grid_position
         else:
             pos = grid_position
-        if type_index is not None:
-            shape = Tetromino.shapes[type_index]
-        else:
-            shape = self.live_tetromino.shape
-            type_index = self.live_tetromino.type_index
-        size = self.__get_size(type_index)
-        for local_y, grid_y in enumerate(range(pos[1], pos[1] + size)):
+        if tetromino is None:
+            tetromino = self.live_tetromino
+
+        shape = tetromino.shape_instance
+        for local_y, grid_y in enumerate(range(pos[1], pos[1] + tetromino.type.size)):
             y_position = GRID_HEIGHT - grid_y + self.game_y_offset
             y_position *= GRID_PIXEL_SIZE
-            for local_x, grid_x in enumerate(range(pos[0], pos[0] + size)):
+            for local_x, grid_x in enumerate(range(pos[0], pos[0] + tetromino.type.size)):
                 x_position = grid_x + self.game_x_offset 
                 x_position *= GRID_PIXEL_SIZE
-                tetromino_cell_value = shape[-local_y + size -1][local_x] # Invert y because the origin is in the bottom left of the grid
-                if tetromino_cell_value != 0:
-                    if type_index is not None:
-                        tetromino_cell_value = type_index
-                    self.__draw_square(tetromino_cell_value, (x_position, y_position), opacity)
+                is_cell_filled = shape[-local_y + tetromino.type.size -1][local_x] # Invert y because the origin is in the bottom left of the grid
+                if is_cell_filled and tetromino.type is not None:
+                    self.__draw_square(tetromino.type.color, (x_position, y_position), opacity)
+
 
     def __draw_grid(self):
         if not self.headless:
@@ -177,35 +171,34 @@ class Tetris:
             y_position = GRID_HEIGHT - y_index + self.game_y_offset
             for x_index, value in enumerate(column): 
                 x_position = x_index + self.game_x_offset 
-                color_index = self.dead_grid[y_index][x_index]
+                cell_index = self.dead_grid[y_index][x_index]
                 pos = (x_position * GRID_PIXEL_SIZE, y_position * GRID_PIXEL_SIZE)
-                self.__draw_square(color_index, pos)
+                color = RGB_WHITE
+                color = TETROMINO_COLORS[cell_index] # TODO : OOB check Soft fail to default color
+
+                self.__draw_square(color, pos)
+                
 
     def __drop_tetromino(self, is_soft_drop = False) -> bool:
-        move_succeeded = True
-
         if not self.__move_tetromino(offset=(0, -1)):
-            self.is_down = True
-            move_succeeded = False
+            self.cannot_move_down = True
+            return False
 
-        elif is_soft_drop and self.gamemode == Gamemode.MODERN:
-            self.__award_score(CLASSIC_POINTS_PER_SOFT_DROP_STEP)
+        match self.gamemode:
+            case Gamemode.CLASSIC:
+                self.soft_drop_streak = self.soft_drop_streak + 1 if self.is_soft_dropping else self.soft_drop_streak
+            case Gamemode.MODERN:
+                self.__award_score(CLASSIC_POINTS_PER_SOFT_DROP_STEP)
         
-        if move_succeeded and self.gamemode == Gamemode.CLASSIC:
-            if self.is_soft_dropping:
-                self.soft_drop_streak += 1
-            else:
-                self.soft_drop_streak = 0
-
         # Require two blocks air to reset down
-        if self.is_down and self.__check_move_validity(test_position=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] - MODERN_RESET_DOWN_GAP)):
-            self.is_down = False
+        if self.cannot_move_down and self.__check_move_validity(test_position=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] - MODERN_RESET_DOWN_GAP)):
+            self.cannot_move_down = False
             self.__reset_down() 
         # One block air is enough to pause
-        if self.__check_move_validity(test_position=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)): # Offset one block down. Is -1 a magic number?
-            self.is_down = False
+        if self.__check_move_validity(test_position=(self.live_tetromino.grid_position[0], self.live_tetromino.grid_position[1] -1)): # Offset one block down. Is -1 a magic number in this case?
+            self.cannot_move_down = False
 
-        return move_succeeded
+        return True
 
     def __hard_drop_tetromino(self, was_player_called = False):
         for _ in range(GRID_HEIGHT):
@@ -215,7 +208,7 @@ class Tetris:
 
     def __spawn_tetromino(self):
         piece_type = self.randomizer.pull_piece()
-        size = self.__get_size(piece_type)
+        size = piece_type.size
 
         self.live_tetromino = Tetromino(piece_type, grid_position=((GRID_WIDTH - size) // 2, GRID_HEIGHT - size)) # TODO : Magic number?
    
@@ -228,31 +221,28 @@ class Tetris:
         return True
 
     def __check_move_validity(self, test_position) -> bool:
-        grid = self.dead_grid
-
         if test_position is None:
             test_position = self.live_tetromino.grid_position
 
-        size = self.__get_size(self.live_tetromino.type_index)
+        size = self.live_tetromino.type.size
 
         for local_y, grid_y in enumerate(range(test_position[1], test_position[1] + size)):
             for local_x, grid_x in enumerate(range(test_position[0], test_position[0] + size)):
-                tetromino_cell_value = self.live_tetromino.shape[-local_y + size - 1][local_x]
-                if tetromino_cell_value != 0: 
+                is_cell_filled = self.live_tetromino.shape_instance[-local_y + size - 1][local_x]
+                if is_cell_filled: 
                     if grid_x < 0 or grid_y < 0 or grid_x >= GRID_WIDTH or grid_y > GRID_HEIGHT: 
                         return False
-                    if grid[grid_y][grid_x] != 0:
+                    if self.dead_grid[grid_y][grid_x] != 0:
                         return False
                     
         return True
 
     def __rotate_tetromino(self, clockwise = True) -> bool:
-        type_index = self.live_tetromino.type_index
-        if type_index == 4: # O (square) piece doesn't rotate # TODO : Make Enum for type_index
+        if self.live_tetromino.type == TetrominoType.O_PIECE: # O (square) piece doesn't rotate
             return True
 
         loops = 1 if clockwise else 3 # Three rights make a left
-        initial_shape = self.live_tetromino.shape
+        initial_shape = self.live_tetromino.shape_instance
         initial_rot = self.live_tetromino.rotation
         desired_rot = (initial_rot + loops) % 4 # TODO : Make Enum for rotation
 
@@ -263,28 +253,28 @@ class Tetris:
             self.live_tetromino.rotation = desired_rot
             return True
 
-        piece_group = 1 if type_index == 1 else 0
-        for offset in Tetromino.kick_offsets[piece_group][clockwise][desired_rot]:
+        piece_group = 1 if self.live_tetromino.type == TetrominoType.I_PIECE else 0
+        for offset in KICK_OFFSETS[piece_group][clockwise][desired_rot]:
             if self.__move_tetromino(offset):
                 return True
 
-        self.live_tetromino.shape = initial_shape
+        self.live_tetromino.shape_instance = initial_shape
         self.live_tetromino.rotation = initial_rot  
         return False
 
     def __rotate_shape_clockwise(self):
-        self.live_tetromino.shape = [list(reversed(element)) for element in zip(*self.live_tetromino.shape)]
+        self.live_tetromino.shape_instance = [list(reversed(element)) for element in zip(*self.live_tetromino.shape_instance)]
 
     def __lock_piece(self):
         self.__move_tetromino(offset=(0, -1))
         pos = self.live_tetromino.grid_position
-        size = self.__get_size(self.live_tetromino.type_index)
+        size = self.live_tetromino.type.size
 
         for local_y, grid_y in enumerate(range(pos[1], pos[1] + size)):
             for local_x, grid_x in enumerate(range(pos[0], pos[0] + size)):
-                tetromino_cell_value = self.live_tetromino.shape[-local_y + size - 1][local_x] # Invert y because the origin is in the bottom left of the grid
-                if tetromino_cell_value != 0:
-                    self.dead_grid[grid_y][grid_x] = tetromino_cell_value
+                is_cell_filled = self.live_tetromino.shape_instance[-local_y + size - 1][local_x] # Invert y because the origin is in the bottom left of the grid
+                if is_cell_filled:
+                    self.dead_grid[grid_y][grid_x] = self.live_tetromino.type.value
                     if grid_y >= self.game_over_grid_ceiling:
                         self.__game_over()
 
@@ -293,16 +283,16 @@ class Tetris:
             self.soft_drop_streak = 0
             
         self.__spawn_tetromino()
-        self.is_down = False
+        self.cannot_move_down = False
         self.__clear_lines()
 
     def __reset_down(self):
         self.down_time_elapsed = 0
         self.moves_while_down = 0
-        self.is_down = False
+        self.cannot_move_down = False
 
     def __moved(self, wants_to_lock = False):
-        if self.is_down:
+        if self.cannot_move_down:
             if self.moves_while_down < MODERN_MAX_MOVES_WHILE_DOWN:
                 self.moves_while_down += 1
                 self.down_time_elapsed = 0
@@ -439,26 +429,28 @@ class Tetris:
         image_width = GRID_WIDTH * GRID_PIXEL_SIZE
         scaled_image = pygame.transform.scale(self.game_over_image, (image_width, image_height))
         scaled_rect = scaled_image.get_rect()
-        scaled_rect.center = (self.screen.get_width() / 2, self.screen.get_height() / 2) # Is the 2 a magic number here? 
+        scaled_rect.center = (self.screen.get_width() / 2, self.screen.get_height() / 2) # Is the 2 a magic number here? # TODO : Refactor to a function
         self.screen.blit(scaled_image, scaled_rect)
         pygame.display.update()
 
     def tick(self, delta_time, fps): # Called in main
+        print("Start tick")
+
         if not self.is_playing:
             self.__draw_game_over_frame()
             return
 
         match self.gamemode:
             case Gamemode.MODERN:
-                if self.is_down:
+                if self.cannot_move_down:
                     self.down_time_elapsed += delta_time
 
                 if self.down_time_elapsed >= MODERN_MAX_DOWN_TIME_SECONDS:
                     self.__hard_drop_tetromino()
                     self.down_time_elapsed = 0
-                    self.is_down = False
+                    self.cannot_move_down = False
             case Gamemode.CLASSIC:
-                if self.is_down:
+                if self.cannot_move_down:
                     self.__lock_piece()
 
         self.drop_time_elapsed += delta_time
@@ -470,8 +462,11 @@ class Tetris:
         self.__draw_ghost_piece()
         self.__animate_line_clears(delta_time)
         self.__draw_border()
-        self.__draw_tetromino()
+        self._draw_tetromino()
         self.__draw_next_piece_preview()
+
+        print("Finish tick")
+
 
         if self.gamemode == Gamemode.CLASSIC:
             return
