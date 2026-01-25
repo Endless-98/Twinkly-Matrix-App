@@ -131,24 +131,27 @@ def initialize_matrix():
     """Initialize the DotMatrix if not already initialized."""
     global current_matrix
     if current_matrix is None:
-        # Detect if running on Pi
+        # Detect if running on Pi or if FPP_MODEL_NAME is set (FPP environment)
+        on_pi = False
         try:
             with open('/proc/device-tree/model', 'r') as f:
                 on_pi = 'raspberry pi' in f.read().lower()
         except:
-            on_pi = False
+            pass
         
-        headless = on_pi or ('DISPLAY' not in os.environ)
+        # Enable FPP output if on Pi OR if FPP_MODEL_NAME env var is set
+        use_fpp_output = on_pi or bool(os.environ.get("FPP_MODEL_NAME"))
+        headless = use_fpp_output or ('DISPLAY' not in os.environ)
         
         fpp_memory_file = _resolve_fpp_memory_file()
         print(f"DotMatrix init: headless={headless}")
-        print(f"DotMatrix FPP output enabled: {on_pi}")
-        if on_pi:
+        print(f"DotMatrix FPP output enabled: {use_fpp_output}")
+        if use_fpp_output:
             print(f"DotMatrix FPP memory file: {fpp_memory_file}")
 
         current_matrix = DotMatrix(
             headless=headless,
-            fpp_output=on_pi,
+            fpp_output=use_fpp_output,
             show_source_preview=True,
             enable_performance_monitor=True,
             disable_blending=True,
