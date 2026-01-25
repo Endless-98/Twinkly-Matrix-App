@@ -86,12 +86,15 @@ class FPPOutput:
     def _initialize_memory_map(self, fpp_file):
         """Initialize memory-mapped file for FPP output."""
         try:
+            print(f"[FPP_INIT] Initializing memory map for: {fpp_file}")
             if not os.path.exists(fpp_file) or os.path.getsize(fpp_file) != self.buffer_size:
+                print(f"[FPP_INIT] Creating/resizing buffer file: {self.buffer_size} bytes")
                 with open(fpp_file, 'wb') as f:
                     f.write(b'\x00' * self.buffer_size)
 
             self.file_handle = open(fpp_file, 'r+b')
             self.memory_map = mmap.mmap(self.file_handle.fileno(), self.buffer_size)
+            print(f"[FPP_INIT] Memory map created successfully")
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
             print(f"Fix: sudo chmod 666 {fpp_file}")
@@ -208,6 +211,7 @@ class FPPOutput:
         flush_start = time.perf_counter()
         self.memory_map.seek(0)
         self.memory_map.write(self.buffer)
+        self.memory_map.flush()  # Force sync to shared memory
         flush_elapsed = time.perf_counter() - flush_start
         
         total_elapsed = time.perf_counter() - start
