@@ -1,3 +1,4 @@
+from __future__ import annotations
 
 from enum import Enum, IntEnum
 from .constants import ( TETROMINO_I_GRID_SHAPE, TETROMINO_J_GRID_SHAPE, TETROMINO_L_GRID_SHAPE, 
