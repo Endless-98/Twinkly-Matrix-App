@@ -163,6 +163,8 @@ class FPPOutput:
     def write(self, dot_colors):
         """Write color data to FPP buffer and flush to memory map."""
         if not self.memory_map:
+            import sys
+            print(f"[FPP_WRITE] ERROR: No memory map, cannot write to FPP buffer", flush=True, file=sys.stderr)
             return 0.0
 
         start = time.perf_counter()
@@ -210,8 +212,10 @@ class FPPOutput:
         
         total_elapsed = time.perf_counter() - start
         
-        # Optional: verbose logging (disabled by default)
-        # print(f"[FPP_FLUSH] seek+write={flush_elapsed*1000:.3f}ms total={total_elapsed*1000:.3f}ms", flush=True)
+        # Log write activity for debugging
+        import sys
+        if total_elapsed > 0.01:  # Only log slow writes
+            print(f"[FPP_WRITE] Slow write detected: total={total_elapsed*1000:.2f}ms flush={flush_elapsed*1000:.2f}ms", flush=True, file=sys.stderr)
         
         return total_elapsed * 1000
 

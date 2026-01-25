@@ -144,10 +144,11 @@ def initialize_matrix():
         headless = use_fpp_output or ('DISPLAY' not in os.environ)
         
         fpp_memory_file = _resolve_fpp_memory_file()
-        print(f"DotMatrix init: headless={headless}")
-        print(f"DotMatrix FPP output enabled: {use_fpp_output}")
+        fpp_model_name = os.environ.get("FPP_MODEL_NAME")
+        log(f"DotMatrix init: on_pi={on_pi}, FPP_MODEL_NAME={fpp_model_name}, headless={headless}", level='INFO', module="MATRIX")
+        log(f"DotMatrix FPP output enabled: {use_fpp_output}", level='INFO', module="MATRIX")
         if use_fpp_output:
-            print(f"DotMatrix FPP memory file: {fpp_memory_file}")
+            log(f"DotMatrix FPP memory file: {fpp_memory_file}", level='INFO', module="MATRIX")
 
         current_matrix = DotMatrix(
             headless=headless,
@@ -197,12 +198,15 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
     global current_player, current_matrix, playback_active
     
     try:
+        log(f"[VIDEO_THREAD] Starting video playback: {video_path}", level='INFO', module="PLAYBACK")
         matrix = initialize_matrix()
+        log(f"[VIDEO_THREAD] Matrix initialized, FPP output: {bool(getattr(matrix, 'fpp', None))}", level='INFO', module="PLAYBACK")
+        
         player = VideoPlayer(matrix)
         current_player = player
         
-        print(f"Starting playback: {video_path}")
-        print(f"  Loop: {loop}, Speed: {speed}, Brightness: {brightness}, FPS: {playback_fps}")
+        log(f"[VIDEO_THREAD] Playing: {video_path}", level='INFO', module="PLAYBACK")
+        log(f"[VIDEO_THREAD] Settings: Loop={loop}, Speed={speed}, Brightness={brightness}, FPS={playback_fps}", level='INFO', module="PLAYBACK")
         
         # Play the video
         frames = player.play(
@@ -215,7 +219,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
             playback_fps=playback_fps,
         )
         
-        print(f"Playback complete: {frames} frames")
+        log(f"[VIDEO_THREAD] Playback complete: {frames} frames", level='INFO', module="PLAYBACK")
         
     except Exception as e:
         print(f"Error during playback: {e}")
