@@ -216,10 +216,14 @@ class FPPOutput:
         
         total_elapsed = time.perf_counter() - start
         
-        # Log write activity for debugging
-        import sys
-        if total_elapsed > 0.01:  # Only log slow writes
-            print(f"[FPP_WRITE] Slow write detected: total={total_elapsed*1000:.2f}ms flush={flush_elapsed*1000:.2f}ms", flush=True, file=sys.stderr)
+        # Debug: Log write activity periodically
+        if not hasattr(self, '_write_count'):
+            self._write_count = 0
+        self._write_count += 1
+        if self._write_count <= 5 or self._write_count % 100 == 0:
+            # Sample some pixel values to verify data is being written
+            sample = bytes(self.buffer[:12])  # First 4 pixels (12 bytes)
+            print(f"[FPP_WRITE] Frame #{self._write_count}: wrote {len(self.buffer)} bytes, first 12: {sample.hex()}", flush=True)
         
         return total_elapsed * 1000
 
