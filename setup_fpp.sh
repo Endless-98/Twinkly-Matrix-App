@@ -124,6 +124,27 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
+# Check FPP frame buffer permissions
+SAFE_MODEL_NAME="${MODEL// /_}"
+FPP_MMAP_FILE="/dev/shm/FPP-Model-Data-${SAFE_MODEL_NAME}"
+echo '🔍 Checking FPP frame buffer permissions...'
+if [ ! -e "$FPP_MMAP_FILE" ]; then
+    echo "⚠️  Frame buffer file does not exist yet: $FPP_MMAP_FILE"
+    echo "   (This is normal; FPP will create it when the model is activated)"
+else
+    if [ -w "$FPP_MMAP_FILE" ]; then
+        echo "✅ Frame buffer exists and is writable: $FPP_MMAP_FILE"
+    else
+        echo "⚠️  Frame buffer exists but is NOT writable, fixing permissions..."
+        sudo chmod 666 "$FPP_MMAP_FILE" || {
+            echo "❌ Failed to set permissions on $FPP_MMAP_FILE"
+            echo "   Try running: sudo chmod 666 $FPP_MMAP_FILE"
+            exit 1
+        }
+        echo "✅ Frame buffer permissions fixed"
+    fi
+fi
+
 # Ensure services are running (and no duplicate manual processes)
 if [ $DEBUG_MODE -eq 0 ]; then
     # Always reload units in case they changed outside this script
