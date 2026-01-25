@@ -10,7 +10,7 @@ WorkingDirectory=/home/fpp/TwinklyWall_Project/TwinklyWall
 Environment="PATH=/home/fpp/.pyenv/versions/3.12.12/bin:/home/fpp/TwinklyWall_Project/TwinklyWall/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="PYTHONUNBUFFERED=1"
 Environment="TWINKLYWALL_DEBUG=1"
-Environment="FPP_MODEL_NAME=Light Wall"
+Environment="FPP_MODEL_NAME=Light_Wall"
 ExecStart=/home/fpp/.pyenv/versions/3.12.12/bin/python main.py --mode api
 KillSignal=SIGINT
 TimeoutStopSec=15
