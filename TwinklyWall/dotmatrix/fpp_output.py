@@ -3,6 +3,8 @@
 import mmap
 import os
 import time
+import urllib.request
+import json
 
 try:
     import numpy as np
@@ -95,6 +97,8 @@ class FPPOutput:
             self.file_handle = open(fpp_file, 'r+b')
             self.memory_map = mmap.mmap(self.file_handle.fileno(), self.buffer_size)
             print(f"[FPP_INIT] Memory map created successfully")
+            # Enable overlay to always transmit (state 3)
+            self._enable_overlay_state()
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
             print(f"Fix: sudo chmod 666 {fpp_file}")
@@ -102,6 +106,27 @@ class FPPOutput:
         except Exception as e:
             print(f"FPP Error: {e}")
             self._cleanup()
+
+    def _enable_overlay_state(self, model_name="Light_Wall", state=3):
+        """Enable the Pixel Overlay Model to always transmit (state 3).
+        
+        State values:
+        - 0 = Disabled
+        - 1 = Enabled (transparent)
+        - 2 = Enabled (transparent RGB)
+        - 3 = Enabled (always on - sends buffer data to outputs)
+        """
+        try:
+            url = f"http://localhost/api/overlays/model/{model_name}/state"
+            data = json.dumps({"State": state}).encode('utf-8')
+            req = urllib.request.Request(url, data=data, method='PUT')
+            req.add_header('Content-Type', 'application/json')
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                result = resp.read().decode('utf-8')
+                print(f"[FPP_INIT] Overlay '{model_name}' set to state {state}: {result}")
+        except Exception as e:
+            print(f"[FPP_INIT] Warning: Could not set overlay state: {e}")
+            print(f"[FPP_INIT] Overlay may need manual activation via FPP UI")
 
     def _build_routing_table(self):
         """Pre-compute routing from visual grid to FPP buffer positions.
