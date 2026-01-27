@@ -56,9 +56,9 @@ class DdpBridge:
         self.sock.bind(self.addr)
         # Make non-blocking to batch-process packets
         self.sock.setblocking(False)
-        # Use FPPOutput to target overlay mmap
+        # Use FPPOutput to target overlay mmap with gamma correction for LED output
         mmap_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
-        self.out = FPPOutput(width, height, mapping_file=mmap_path)
+        self.out = FPPOutput(width, height, mapping_file=mmap_path, gamma=2.2)
 
         # Multi-sequence frame assembly
         self.frames_map = {}  # key: (sender, seq) -> FrameState
