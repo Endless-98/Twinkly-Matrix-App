@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'dart:io';
 import 'dart:typed_data';
-import '../services/screen_capture.dart';
+import '../services/platform_screen_capture.dart';
 import '../services/ddp_sender.dart';
 import '../providers/app_state.dart';
 import '../widgets/region_selector_overlay.dart';
@@ -16,55 +16,61 @@ class MirroringPage extends ConsumerStatefulWidget {
 
 class _MirroringPageState extends ConsumerState<MirroringPage> {
   bool isCapturing = false;
-  String statusMessage = "Ready to capture screen";
+  String statusMessage = "Ready";
   int frameCount = 0;
+  double currentFps = 0.0;
   List<String> availableWindows = [];
   bool isLoadingWindows = false;
+  bool isInitializing = false;
+  late ScreenCaptureCapabilities capabilities;
 
   @override
   void initState() {
     super.initState();
+    capabilities = PlatformScreenCaptureService.getCapabilities();
+    _initializeStatus();
+  }
+
+  Future<void> _initializeStatus() async {
     if (Platform.isAndroid) {
-      _checkCaptureStatus();
+      final capturing = await PlatformScreenCaptureService.isCapturing();
+      setState(() {
+        isCapturing = capturing;
+        statusMessage = capturing ? "Capturing screen" : "Ready to capture";
+      });
     } else {
       setState(() {
-        statusMessage = "Click Start to begin desktop screen mirroring";
+        statusMessage = "Ready - ${capabilities.captureMethod}";
       });
     }
   }
 
-  Future<void> _checkCaptureStatus() async {
-    final capturing = await ScreenCaptureService.isCapturing();
-    setState(() {
-      isCapturing = capturing;
-    });
-  }
-
   Future<void> _startMirroringLoop() async {
-    // Apply capture mode configuration before starting
     final captureMode = ref.read(captureModeProvider);
     final selectedWindow = ref.read(selectedWindowProvider);
     final captureRegion = ref.read(captureRegionProvider);
 
-    // Configure the capture mode
+    // Validate mode-specific requirements
+    if (captureMode == CaptureMode.appWindow && selectedWindow == null) {
+      setState(() {
+        statusMessage = "⚠️ Please select a window first";
+      });
+      return;
+    }
+
+    // Configure capture mode
     switch (captureMode) {
       case CaptureMode.desktop:
-        ScreenCaptureService.setCaptureMode(CaptureMode.desktop);
+        PlatformScreenCaptureService.setCaptureMode(CaptureMode.desktop);
         break;
       case CaptureMode.appWindow:
-        if (selectedWindow == null) {
-          setState(() {
-            statusMessage = "Please select a window first";
-          });
-          return;
-        }
-        ScreenCaptureService.setCaptureMode(
+        PlatformScreenCaptureService.setCaptureMode(
           CaptureMode.appWindow,
           windowTitle: selectedWindow,
         );
         break;
       case CaptureMode.region:
-        ScreenCaptureService.setCaptureMode(
+        PlatformScreenCaptureService.setCaptureMode(
           CaptureMode.region,
           x: captureRegion['x'],
           y: captureRegion['y'],
@@ -76,37 +82,32 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
     final fppIp = ref.read(fppIpProvider);
     final fppPort = ref.read(fppDdpPortProvider);
-    // Always mirror to the configured port and also FPP native 4048 for visibility
     final fallbackPort = fppPort == 4048 ? null : 4048;
 
     setState(() {
       isCapturing = true;
-      statusMessage = "Initializing capture...";
+      statusMessage = "🔄 Initializing capture...";
       frameCount = 0;
+      currentFps = 0.0;
     });
 
-    debugPrint(
-      "[MIRRORING] Starting capture: $fppIp:$fppPort",
-    );
-    DDPSender.setDebugLevel(0); // Disable verbose logging for speed
+    DDPSender.setDebugLevel(0);
 
-    // Capture at 20 FPS (50ms per frame) with comprehensive timing logs
+    // Timing tracking
     int totalMsAcc = 0;
     int captureMsAcc = 0;
     int sendMsAcc = 0;
-    int waitMsAcc = 0;
-    
-    // Use monotonic scheduling to prevent drift
+
     const targetIntervalMs = 50; // 20 FPS
     final stopwatch = Stopwatch()..start();
     int nextFrameTargetMs = targetIntervalMs;
-    
+
     while (isCapturing) {
       try {
         final frameStart = stopwatch.elapsedMilliseconds;
-        
+
         final screenshotStart = DateTime.now();
-        final screenshotData = await ScreenCaptureService.captureScreenshot();
+        final screenshotData = await PlatformScreenCaptureService.captureFrame();
         final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
 
         if (screenshotData != null) {
@@ -126,7 +127,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
 
           if (!sentPrimary) {
-            debugPrint("[MIRRORING] ERROR: Failed to send frame $frameCount");
+            debugPrint("[MIRRORING] Failed to send frame $frameCount");
             break;
           }
 
@@ -134,52 +135,42 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           captureMsAcc += captureMs;
           sendMsAcc += sendMs;
 
-          // Calculate how long to wait to hit the next frame target
           final waitMs = nextFrameTargetMs - stopwatch.elapsedMilliseconds;
-          
           if (waitMs > 0) {
             await Future.delayed(Duration(milliseconds: waitMs));
-            waitMsAcc += waitMs;
           }
-          
-          // Move to next frame target
+
           nextFrameTargetMs += targetIntervalMs;
-          
-          // If we've fallen behind, catch up (don't accumulate drift)
           if (stopwatch.elapsedMilliseconds > nextFrameTargetMs) {
             nextFrameTargetMs = stopwatch.elapsedMilliseconds + targetIntervalMs;
           }
-          
+
           final totalMs = stopwatch.elapsedMilliseconds - frameStart;
           totalMsAcc += totalMs;
 
           if (frameCount % 20 == 0) {
-            final avgFrameMs = (totalMsAcc / 20).toStringAsFixed(1);
+            final avgFps = 20000 / totalMsAcc;
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
-            final avgWaitMs = (waitMsAcc / 20).toStringAsFixed(1);
-            final fps = (20000 / totalMsAcc).toStringAsFixed(1); // More accurate FPS
             totalMsAcc = 0;
             captureMsAcc = 0;
             sendMsAcc = 0;
-            waitMsAcc = 0;
 
             setState(() {
-              statusMessage = "Streaming @ $fps FPS | frame ${avgFrameMs}ms (wait ${avgWaitMs}ms, capture ${avgCaptureMs}ms, send ${avgSendMs}ms) | total $frameCount";
+              currentFps = avgFps;
+              statusMessage = "📺 ${avgFps.toStringAsFixed(1)} FPS | Capture: ${avgCaptureMs}ms | Send: ${avgSendMs}ms";
             });
-            debugPrint("[MIRRORING] $frameCount frames | ${fps} FPS | frame ${avgFrameMs}ms (wait ${avgWaitMs}ms, capture ${avgCaptureMs}ms, send ${avgSendMs}ms)");
           }
         } else {
-          debugPrint("[MIRRORING] ERROR: Capture returned null");
           setState(() {
-            statusMessage = "Capture failed - check FFmpeg";
+            statusMessage = "⚠️ No frame data - check FFmpeg";
           });
           break;
         }
       } catch (e) {
         debugPrint("[MIRRORING] Error: $e");
         setState(() {
-          statusMessage = "Capture error: $e";
+          statusMessage = "❌ Error: $e";
         });
         break;
       }
@@ -188,59 +179,57 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
   Future<void> _toggleCapture() async {
     try {
+      setState(() {
+        isInitializing = true;
+      });
+
       if (isCapturing) {
-        final success = await ScreenCaptureService.stopCapture();
-        // Clean up DDP socket to prevent buffer buildup
+        final success = await PlatformScreenCaptureService.stopCapture();
         DDPSender.disposeStatic();
-        if (success) {
-          setState(() {
-            isCapturing = false;
-            statusMessage = "Screen capture stopped ($frameCount frames sent)";
-          });
-        } else {
-          setState(() {
-            statusMessage = "Failed to stop capture";
-          });
-        }
+        setState(() {
+          isCapturing = false;
+          isInitializing = false;
+          statusMessage = success
+              ? "✅ Stopped ($frameCount frames sent)"
+              : "⚠️ Stop may have failed";
+        });
       } else {
-        final success = await ScreenCaptureService.startCapture();
+        final success = await PlatformScreenCaptureService.startCapture();
+        setState(() {
+          isInitializing = false;
+        });
 
         if (success) {
           setState(() {
             isCapturing = true;
-            statusMessage = "Screen capture started (20 FPS)";
+            statusMessage = "✅ Capture started";
           });
-
-          // Use the same mirroring loop on every platform; the Android native
-          // channel returns scaled RGB frames just like the desktop path.
           _startMirroringLoop();
         } else {
           setState(() {
-            statusMessage = Platform.isAndroid
-                ? "Failed to start capture - check permissions"
-                : "Failed to initialize capture";
+            statusMessage = capabilities.requiresPermission
+                ? "❌ Permission denied or capture failed"
+                : "❌ Failed to initialize - check FFmpeg";
           });
         }
       }
     } catch (e) {
       setState(() {
-        statusMessage = "Error: $e";
+        isInitializing = false;
+        statusMessage = "❌ Error: $e";
       });
     }
   }
 
-  /// Send a solid red test frame to verify DDP connectivity
   Future<void> _sendTestFrame() async {
     final fppIp = ref.read(fppIpProvider);
     final fppPort = ref.read(fppDdpPortProvider);
-    // Fallback to native FPP DDP port (4048) if the configured port is a bridge
-    final fallbackPort = fppPort == 4048 ? null : 4048;
+
     setState(() {
-      statusMessage = "Sending test frame (red) to $fppIp:$fppPort" +
-          (fallbackPort != null ? " (also trying $fallbackPort)" : "");
+      statusMessage = "🧪 Sending test frame...";
     });
 
-    // Create a pure red frame: all pixels R=255, G=0, B=0
+    // Create a pure red test frame
     final testFrame = Uint8List(13500);
     for (int i = 0; i < 13500; i += 3) {
       testFrame[i] = 255; // R
@@ -249,67 +238,35 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     }
 
     DDPSender.setDebug(true);
-    final sentPrimary = await DDPSender.sendFrameStatic(
-      fppIp,
-      testFrame,
-      port: fppPort,
-    );
-
-    bool sentFallback = false;
-    if (!sentPrimary && fallbackPort != null) {
-      sentFallback = await DDPSender.sendFrameStatic(
-        fppIp,
-        testFrame,
-        port: fallbackPort,
-      );
-    } else if (fallbackPort != null) {
-      // Still push to 4048 to cover native FPP even when primary succeeds (e.g., bridge port)
-      sentFallback = await DDPSender.sendFrameStatic(
-        fppIp,
-        testFrame,
-        port: fallbackPort,
-      );
-    }
+    final sent = await DDPSender.sendFrameStatic(fppIp, testFrame, port: fppPort);
 
     setState(() {
-      if (sentPrimary || sentFallback) {
-        final portInfo = sentFallback && fallbackPort != null
-            ? "$fppPort and $fallbackPort"
-            : "$fppPort";
-        statusMessage = "✓ Test frame sent! Ports: $portInfo";
-      } else {
-        statusMessage = "✗ Failed to send test frame";
-      }
+      statusMessage = sent
+          ? "✅ Test frame sent to $fppIp:$fppPort"
+          : "❌ Failed to send test frame";
     });
-
-    debugPrint("[TEST] Red frame sent to $fppIp");
   }
 
   Future<void> _loadAvailableWindows() async {
     setState(() {
       isLoadingWindows = true;
-      statusMessage = "Loading windows...";
+      statusMessage = "🔍 Scanning for windows...";
     });
 
-    final windows = await ScreenCaptureService.enumerateWindows();
+    final windows = await PlatformScreenCaptureService.getAvailableWindows();
 
     setState(() {
       availableWindows = windows;
       isLoadingWindows = false;
       statusMessage = windows.isEmpty
-          ? "No windows found"
-          : "Found ${windows.length} windows";
+          ? "⚠️ No capturable windows found"
+          : "✅ Found ${windows.length} windows";
     });
   }
 
   Future<void> _openRegionSelector() async {
     final captureRegion = ref.read(captureRegionProvider);
 
-    setState(() {
-      statusMessage = "Opening region selector...";
-    });
-
-    // Full-screen draggable overlay (no manual typing)
     final result = await Navigator.of(context).push<Map<String, int>?>(
       PageRouteBuilder(
         opaque: false,
@@ -321,44 +278,146 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             initialWidth: captureRegion['width'] ?? 800,
             initialHeight: captureRegion['height'] ?? 600,
             onRegionChanged: (x, y, width, height) {
-              // Live update while dragging/resizing
               ref.read(captureRegionProvider.notifier).state = {
                 'x': x,
                 'y': y,
                 'width': width,
                 'height': height,
               };
-              ScreenCaptureService.setCaptureMode(
+              PlatformScreenCaptureService.setCaptureMode(
                 CaptureMode.region,
                 x: x,
                 y: y,
                 width: width,
                 height: height,
               );
-              setState(() {
-                statusMessage = "Region: ${width}x${height} at ($x,$y)";
-              });
             },
           );
         },
       ),
     );
 
-    // Persist the final region after overlay closes
     if (result != null) {
       ref.read(captureRegionProvider.notifier).state = result;
-      ScreenCaptureService.setCaptureMode(
-        CaptureMode.region,
-        x: result['x'],
-        y: result['y'],
-        width: result['width'],
-        height: result['height'],
-      );
       setState(() {
-        statusMessage =
-            "Region set: ${result['width']}x${result['height']} at (${result['x']},${result['y']})";
+        statusMessage = "📐 Region: ${result['width']}x${result['height']}";
       });
     }
+  }
+
+  void _showPlatformInfo() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(_getPlatformIcon(), size: 28),
+            const SizedBox(width: 12),
+            Text(capabilities.platformName),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildInfoSection('Capture Method', capabilities.captureMethod),
+              const SizedBox(height: 16),
+              _buildInfoSection('Capabilities', null, children: [
+                _buildCapabilityRow('Desktop Capture', capabilities.supportsDesktopCapture),
+                _buildCapabilityRow('Window Capture', capabilities.supportsWindowCapture),
+                _buildCapabilityRow('Region Capture', capabilities.supportsRegionCapture),
+                _buildCapabilityRow('Requires Permission', capabilities.requiresPermission),
+              ]),
+              if (capabilities.limitations.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _buildInfoSection('Limitations', null, children: [
+                  for (final limit in capabilities.limitations)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('• ', style: TextStyle(color: Colors.orange)),
+                          Expanded(child: Text(limit, style: const TextStyle(fontSize: 13))),
+                        ],
+                      ),
+                    ),
+                ]),
+              ],
+              if (capabilities.setupInstructions.isNotEmpty) ...[
+                const SizedBox(height: 16),
+                _buildInfoSection('Setup Instructions', null, children: [
+                  for (int i = 0; i < capabilities.setupInstructions.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${i + 1}. ', style: const TextStyle(color: Colors.blue)),
+                          Expanded(child: Text(capabilities.setupInstructions[i], style: const TextStyle(fontSize: 13))),
+                        ],
+                      ),
+                    ),
+                ]),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoSection(String title, String? value, {List<Widget>? children}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(title, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+        const SizedBox(height: 4),
+        if (value != null)
+          Text(value, style: TextStyle(color: Colors.grey[400])),
+        if (children != null) ...children,
+      ],
+    );
+  }
+
+  Widget _buildCapabilityRow(String name, bool supported) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(
+            supported ? Icons.check_circle : Icons.cancel,
+            size: 16,
+            color: supported ? Colors.green : Colors.red,
+          ),
+          const SizedBox(width: 8),
+          Text(name, style: const TextStyle(fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  IconData _getPlatformIcon() {
+    if (Platform.isAndroid) return Icons.android;
+    if (Platform.isIOS) return Icons.apple;
+    if (Platform.isWindows) return Icons.window;
+    if (Platform.isLinux) return Icons.computer;
+    if (Platform.isMacOS) return Icons.laptop_mac;
+    return Icons.devices;
+  }
+
+  Color _getStatusColor() {
+    if (isCapturing) return Colors.green;
+    if (statusMessage.contains('❌')) return Colors.red;
+    if (statusMessage.contains('⚠️')) return Colors.orange;
+    return Colors.blue;
   }
 
   @override
@@ -370,294 +429,498 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     final captureRegion = ref.watch(captureRegionProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Screen Mirroring'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Screen Mirroring'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'Platform Info',
+            onPressed: _showPlatformInfo,
+          ),
+        ],
+      ),
       body: LayoutBuilder(
         builder: (context, constraints) {
           return SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 16),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 200,
-                      height: 200,
-                      decoration: BoxDecoration(
-                        color: Colors.grey[800],
-                        shape: BoxShape.circle,
-                        border: Border.all(
-                          color: isCapturing ? Colors.green : Colors.grey,
-                          width: 3,
-                        ),
-                      ),
-                      child: Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              isCapturing ? Icons.videocam : Icons.videocam_off,
-                              size: 80,
-                              color: isCapturing ? Colors.green : Colors.grey,
-                            ),
-                            const SizedBox(height: 16),
-                            Text(
-                              isCapturing ? 'CAPTURING' : 'IDLE',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: isCapturing ? Colors.green : Colors.grey,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[800],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      children: [
-                        const Text(
-                          'Status',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Text(
-                          statusMessage,
-                          textAlign: TextAlign.center,
-                          style: const TextStyle(color: Colors.white70),
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'FPP: $fppIp:$fppPort',
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Platform: ${Platform.operatingSystem}',
-                          style: const TextStyle(
-                            color: Colors.white54,
-                            fontSize: 12,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[850],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Capture Mode',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        RadioListTile<CaptureMode>(
-                          title: const Text('Full Desktop'),
-                          subtitle: const Text('Capture entire screen'),
-                          value: CaptureMode.desktop,
-                          groupValue: captureMode,
-                          onChanged: isCapturing
-                              ? null
-                              : (value) {
-                                  ref.read(captureModeProvider.notifier).state =
-                                      value!;
-                                  ScreenCaptureService.setCaptureMode(value);
-                                },
-                        ),
-                        RadioListTile<CaptureMode>(
-                          title: const Text('App Window'),
-                          subtitle: selectedWindow == null
-                              ? const Text('Select a window to capture')
-                              : Text(
-                                  'Capturing: $selectedWindow',
-                                  style: const TextStyle(color: Colors.green),
-                                ),
-                          value: CaptureMode.appWindow,
-                          groupValue: captureMode,
-                          onChanged: isCapturing
-                              ? null
-                              : (value) {
-                                  ref.read(captureModeProvider.notifier).state =
-                                      value!;
-                                  _loadAvailableWindows();
-                                },
-                        ),
-                        if (captureMode == CaptureMode.appWindow &&
-                            !isCapturing)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 32, top: 8),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                ElevatedButton.icon(
-                                  onPressed: isLoadingWindows
-                                      ? null
-                                      : _loadAvailableWindows,
-                                  icon: Icon(
-                                    isLoadingWindows
-                                        ? Icons.refresh
-                                        : Icons.window,
-                                  ),
-                                  label: Text(
-                                    isLoadingWindows
-                                        ? 'Loading...'
-                                        : 'Refresh Windows',
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue,
-                                  ),
-                                ),
-                                if (availableWindows.isNotEmpty) ...[
-                                  const SizedBox(height: 8),
-                                  Container(
-                                    constraints: const BoxConstraints(
-                                      maxHeight: 150,
-                                    ),
-                                    child: ListView.builder(
-                                      shrinkWrap: true,
-                                      itemCount: availableWindows.length,
-                                      itemBuilder: (context, index) {
-                                        final window = availableWindows[index];
-                                        return ListTile(
-                                          dense: true,
-                                          title: Text(
-                                            window,
-                                            style: const TextStyle(
-                                              fontSize: 12,
-                                            ),
-                                          ),
-                                          selected: window == selectedWindow,
-                                          selectedTileColor: Colors.blue
-                                              .withOpacity(0.2),
-                                          onTap: () {
-                                            ref
-                                                    .read(
-                                                      selectedWindowProvider
-                                                          .notifier,
-                                                    )
-                                                    .state =
-                                                window;
-                                            ScreenCaptureService.setCaptureMode(
-                                              CaptureMode.appWindow,
-                                              windowTitle: window,
-                                            );
-                                            setState(() {
-                                              statusMessage =
-                                                  "Window selected: $window";
-                                            });
-                                          },
-                                        );
-                                      },
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        RadioListTile<CaptureMode>(
-                          title: const Text('Region'),
-                          subtitle: Text(
-                            'Capture area: ${captureRegion['width']}x${captureRegion['height']} at (${captureRegion['x']},${captureRegion['y']})',
-                            style: const TextStyle(fontSize: 11),
-                          ),
-                          value: CaptureMode.region,
-                          groupValue: captureMode,
-                          onChanged: isCapturing
-                              ? null
-                              : (value) {
-                                  ref.read(captureModeProvider.notifier).state =
-                                      value!;
-                                  ScreenCaptureService.setCaptureMode(
-                                    value,
-                                    x: captureRegion['x'],
-                                    y: captureRegion['y'],
-                                    width: captureRegion['width'],
-                                    height: captureRegion['height'],
-                                  );
-                                },
-                        ),
-                        if (captureMode == CaptureMode.region && !isCapturing)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 32, top: 8),
-                            child: ElevatedButton.icon(
-                              onPressed: _openRegionSelector,
-                              icon: const Icon(Icons.crop),
-                              label: const Text('Configure Region'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.orange,
-                              ),
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 28),
-                  ElevatedButton(
-                    onPressed: _toggleCapture,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: isCapturing ? Colors.red : Colors.green,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 40,
-                        vertical: 16,
-                      ),
-                    ),
-                    child: Text(
-                      isCapturing ? 'Stop Mirroring' : 'Start Mirroring',
-                      style: const TextStyle(fontSize: 18, color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: _sendTestFrame,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange,
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 30,
-                        vertical: 12,
-                      ),
-                    ),
-                    child: const Text(
-                      'Test: Send Red Frame',
-                      style: TextStyle(fontSize: 14, color: Colors.white),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Text(
-                      'Captures screen at 90x50 resolution (20 FPS) and sends to FPP via DDP',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-                    ),
-                  ),
-                ],
-              ),
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Status Card
+                _buildStatusCard(),
+                const SizedBox(height: 20),
+
+                // Platform Badge
+                _buildPlatformBadge(),
+                const SizedBox(height: 20),
+
+                // Capture Mode Selection (only show supported modes)
+                if (capabilities.supportsDesktopCapture)
+                  _buildCaptureModeCard(captureMode, selectedWindow, captureRegion),
+                const SizedBox(height: 24),
+
+                // Main Action Buttons
+                _buildActionButtons(),
+                const SizedBox(height: 16),
+
+                // Connection Info
+                _buildConnectionInfo(fppIp, fppPort),
+              ],
             ),
           );
         },
+      ),
+    );
+  }
+
+  Widget _buildStatusCard() {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: isCapturing
+              ? [Colors.green.withOpacity(0.2), Colors.green.withOpacity(0.1)]
+              : [Colors.grey.withOpacity(0.2), Colors.grey.withOpacity(0.1)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: isCapturing ? Colors.green.withOpacity(0.5) : Colors.grey.withOpacity(0.3),
+          width: 2,
+        ),
+      ),
+      child: Column(
+        children: [
+          // Animated Status Icon
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 300),
+            width: 100,
+            height: 100,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: isCapturing ? Colors.green.withOpacity(0.2) : Colors.grey.withOpacity(0.2),
+              border: Border.all(
+                color: isCapturing ? Colors.green : Colors.grey,
+                width: 3,
+              ),
+            ),
+            child: Center(
+              child: isInitializing
+                  ? const CircularProgressIndicator()
+                  : Icon(
+                      isCapturing ? Icons.cast_connected : Icons.cast,
+                      size: 50,
+                      color: isCapturing ? Colors.green : Colors.grey,
+                    ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Status Text
+          Text(
+            isCapturing ? 'STREAMING' : 'IDLE',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: isCapturing ? Colors.green : Colors.grey,
+              letterSpacing: 2,
+            ),
+          ),
+          const SizedBox(height: 8),
+
+          // FPS Counter (when active)
+          if (isCapturing && currentFps > 0)
+            Text(
+              '${currentFps.toStringAsFixed(1)} FPS • $frameCount frames',
+              style: const TextStyle(
+                fontSize: 16,
+                color: Colors.white70,
+              ),
+            ),
+
+          const SizedBox(height: 12),
+
+          // Status Message
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              statusMessage,
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: _getStatusColor(),
+                fontSize: 13,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlatformBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Colors.blue.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(_getPlatformIcon(), color: Colors.blue, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  capabilities.platformName,
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+                Text(
+                  capabilities.captureMethod,
+                  style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                ),
+              ],
+            ),
+          ),
+          if (!PlatformScreenCaptureService.isPlatformSupported())
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.red.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'Not Supported',
+                style: TextStyle(color: Colors.red, fontSize: 11),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCaptureModeCard(CaptureMode captureMode, String? selectedWindow, Map<String, int> captureRegion) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[850],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.settings_input_component, size: 20),
+              const SizedBox(width: 8),
+              const Text(
+                'Capture Mode',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Desktop Mode
+          _buildModeOption(
+            icon: Icons.desktop_windows,
+            title: 'Full Desktop',
+            subtitle: 'Capture your entire screen',
+            value: CaptureMode.desktop,
+            groupValue: captureMode,
+            enabled: capabilities.supportsDesktopCapture && !isCapturing,
+          ),
+
+          // Window Mode
+          if (capabilities.supportsWindowCapture) ...[
+            const SizedBox(height: 8),
+            _buildModeOption(
+              icon: Icons.web_asset,
+              title: 'Application Window',
+              subtitle: selectedWindow ?? 'Select a window to capture',
+              value: CaptureMode.appWindow,
+              groupValue: captureMode,
+              enabled: !isCapturing,
+              trailing: captureMode == CaptureMode.appWindow && !isCapturing
+                  ? _buildWindowSelector()
+                  : null,
+            ),
+          ],
+
+          // Region Mode
+          if (capabilities.supportsRegionCapture) ...[
+            const SizedBox(height: 8),
+            _buildModeOption(
+              icon: Icons.crop,
+              title: 'Screen Region',
+              subtitle: '${captureRegion['width']}×${captureRegion['height']} at (${captureRegion['x']}, ${captureRegion['y']})',
+              value: CaptureMode.region,
+              groupValue: captureMode,
+              enabled: !isCapturing,
+              trailing: captureMode == CaptureMode.region && !isCapturing
+                  ? TextButton.icon(
+                      onPressed: _openRegionSelector,
+                      icon: const Icon(Icons.edit, size: 16),
+                      label: const Text('Configure'),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.orange,
+                      ),
+                    )
+                  : null,
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildModeOption({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required CaptureMode value,
+    required CaptureMode groupValue,
+    required bool enabled,
+    Widget? trailing,
+  }) {
+    final isSelected = value == groupValue;
+
+    return InkWell(
+      onTap: enabled
+          ? () {
+              ref.read(captureModeProvider.notifier).state = value;
+              PlatformScreenCaptureService.setCaptureMode(value);
+              if (value == CaptureMode.appWindow) {
+                _loadAvailableWindows();
+              }
+            }
+          : null,
+      borderRadius: BorderRadius.circular(8),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blue.withOpacity(0.15) : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isSelected ? Colors.blue.withOpacity(0.5) : Colors.transparent,
+          ),
+        ),
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Icon(icon, size: 24, color: isSelected ? Colors.blue : Colors.grey),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: enabled ? Colors.white : Colors.grey,
+                        ),
+                      ),
+                      Text(
+                        subtitle,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: enabled ? Colors.grey[400] : Colors.grey[600],
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                Radio<CaptureMode>(
+                  value: value,
+                  groupValue: groupValue,
+                  onChanged: enabled ? (v) {
+                    ref.read(captureModeProvider.notifier).state = v!;
+                    PlatformScreenCaptureService.setCaptureMode(v);
+                  } : null,
+                ),
+              ],
+            ),
+            if (trailing != null) ...[
+              const SizedBox(height: 8),
+              trailing,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildWindowSelector() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        OutlinedButton.icon(
+          onPressed: isLoadingWindows ? null : _loadAvailableWindows,
+          icon: isLoadingWindows
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.refresh, size: 18),
+          label: Text(isLoadingWindows ? 'Scanning...' : 'Refresh Window List'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: Colors.blue,
+          ),
+        ),
+        if (availableWindows.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          Container(
+            constraints: const BoxConstraints(maxHeight: 150),
+            decoration: BoxDecoration(
+              color: Colors.black26,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: availableWindows.length,
+              itemBuilder: (context, index) {
+                final window = availableWindows[index];
+                final isSelected = window == ref.watch(selectedWindowProvider);
+                return ListTile(
+                  dense: true,
+                  selected: isSelected,
+                  selectedTileColor: Colors.blue.withOpacity(0.2),
+                  leading: const Icon(Icons.window, size: 18),
+                  title: Text(
+                    window,
+                    style: const TextStyle(fontSize: 12),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    ref.read(selectedWindowProvider.notifier).state = window;
+                    PlatformScreenCaptureService.setCaptureMode(
+                      CaptureMode.appWindow,
+                      windowTitle: window,
+                    );
+                    setState(() {
+                      statusMessage = "✅ Selected: $window";
+                    });
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildActionButtons() {
+    final isSupported = PlatformScreenCaptureService.isPlatformSupported();
+
+    return Column(
+      children: [
+        // Main Start/Stop Button
+        SizedBox(
+          width: double.infinity,
+          height: 56,
+          child: ElevatedButton.icon(
+            onPressed: isSupported && !isInitializing ? _toggleCapture : null,
+            icon: isInitializing
+                ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : Icon(isCapturing ? Icons.stop : Icons.play_arrow, size: 28),
+            label: Text(
+              isCapturing ? 'Stop Mirroring' : 'Start Mirroring',
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: isCapturing ? Colors.red : Colors.green,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // Secondary Actions Row
+        Row(
+          children: [
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: isCapturing ? null : _sendTestFrame,
+                icon: const Icon(Icons.bug_report, size: 20),
+                label: const Text('Test Connection'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.orange,
+                  side: const BorderSide(color: Colors.orange),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _showPlatformInfo,
+                icon: const Icon(Icons.help_outline, size: 20),
+                label: const Text('Setup Help'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.blue,
+                  side: const BorderSide(color: Colors.blue),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildConnectionInfo(String fppIp, int fppPort) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey[900],
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.router, size: 18, color: Colors.grey),
+              const SizedBox(width: 8),
+              Text(
+                'FPP: $fppIp:$fppPort',
+                style: TextStyle(color: Colors.grey[400], fontSize: 13),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Output: ${PlatformScreenCaptureService.targetWidth}×${PlatformScreenCaptureService.targetHeight} @ 20 FPS',
+            style: TextStyle(color: Colors.grey[500], fontSize: 12),
+          ),
+        ],
       ),
     );
   }
