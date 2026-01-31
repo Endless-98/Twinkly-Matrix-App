@@ -17,6 +17,8 @@ except ImportError:
 from .source_preview import SourcePreview
 from .performance import PerformanceMonitor
 from .fpp_output import FPPOutput
+import os
+import sys
 
 
 class DotMatrix:
@@ -45,7 +47,10 @@ class DotMatrix:
         fpp_gamma=None,
         fpp_channel_gains=(1.0, 1.0, 1.0),
         enable_performance_monitor=True,
-        max_fps=20
+        max_fps=20,
+        ddp_output=False,
+        ddp_host=None,
+        ddp_port=4048
     ):
         """
         Initialize DotMatrix renderer.
@@ -60,12 +65,15 @@ class DotMatrix:
             supersample: Antialiasing factor for source scaling
             headless: Skip pygame window creation
             show_source_preview: Show separate preview window of source
-            fpp_output: Enable FPP memory-mapped output
+            fpp_output: Enable FPP memory-mapped output (for running directly on FPP)
             fpp_memory_buffer_file: Path to FPP memory buffer
             fpp_color_order: One of RGB/GRB/BGR/BRG/RBG/GBR for hardware wiring
             fpp_gamma: Optional gamma correction applied only to FPP output
             fpp_channel_gains: Per-channel gain tuple applied only to FPP output
             enable_performance_monitor: Track and log performance
+            ddp_output: Enable DDP network output (for remote control from Windows/Mac)
+            ddp_host: IP address of FPP device (required if ddp_output=True)
+            ddp_port: DDP port (default 4048)
         """
         self.width = width
         self.height = height
@@ -92,13 +100,36 @@ class DotMatrix:
         
         # Optional components
         self.monitor = PerformanceMonitor(enabled=enable_performance_monitor, target_fps=self.max_fps)
-        # FPP output: pass through color correction and channel order
-        self.fpp = FPPOutput(
-            width, height, fpp_memory_buffer_file,
-            color_order=fpp_color_order,
-            gamma=fpp_gamma,
-            channel_gains=fpp_channel_gains,
-        ) if fpp_output else None
+        
+        # Choose output method: DDP (network) or FPP (local mmap)
+        # DDP is used when running remotely (e.g., Windows), FPP when running on the Pi
+        self.fpp = None
+        self.ddp = None
+        
+        if ddp_output:
+            # Network output for remote control
+            if not ddp_host:
+                print("[DotMatrix] ERROR: ddp_host is required when ddp_output=True")
+                print("[DotMatrix] Set FPP_IP environment variable or pass ddp_host parameter")
+                sys.exit(1)
+            try:
+                from ddp_output import DDPOutput
+                self.ddp = DDPOutput(ddp_host, ddp_port, width, height)
+                print(f"[DotMatrix] Using DDP output to {ddp_host}:{ddp_port}")
+            except Exception as e:
+                print(f"[DotMatrix] ERROR: Failed to initialize DDP output: {e}")
+                sys.exit(1)
+        elif fpp_output:
+            # Local memory-mapped output (running on FPP device)
+            self.fpp = FPPOutput(
+                width, height, fpp_memory_buffer_file,
+                color_order=fpp_color_order,
+                gamma=fpp_gamma,
+                channel_gains=fpp_channel_gains,
+            )
+            print(f"[DotMatrix] Using FPP memory-mapped output: {fpp_memory_buffer_file}")
+        else:
+            print("[DotMatrix] No hardware output enabled (visualization only)")
         # Scale preview window 6x for better visibility
         preview_scale = 6
         self.preview = SourcePreview(
@@ -161,12 +192,16 @@ class DotMatrix:
         self._visualize()
         self.monitor.record('visualization', (time.perf_counter() - t4) * 1000)
         
-        # Write to FPP if enabled
+        # Write to output (FPP mmap or DDP network)
         t5 = time.perf_counter()
         if self.fpp:
-            # Pass numpy array directly - no conversion needed!
+            # Local FPP memory-mapped output
             fpp_time = self.fpp.write(self.dot_colors)
             self.monitor.record('fpp_write', fpp_time)
+        elif self.ddp:
+            # Network DDP output
+            ddp_time = self.ddp.write(self.dot_colors)
+            self.monitor.record('ddp_write', ddp_time)
         
         # Complete frame
         total_time = (time.perf_counter() - frame_start) * 1000

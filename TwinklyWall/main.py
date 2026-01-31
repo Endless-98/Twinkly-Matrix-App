@@ -308,17 +308,34 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
 
 def build_matrix(show_preview=True, fps=20):
     fpp_memory_file = _resolve_fpp_memory_file()
+    
+    # Determine output mode based on platform
+    # On Pi: use FPP memory-mapped output (direct hardware control)
+    # On Windows/Mac: use DDP network output to send to FPP over network
+    use_fpp_output = ON_PI
+    use_ddp_output = not ON_PI and sys.platform.startswith('win')  # Enable DDP on Windows
+    ddp_host = os.environ.get('FPP_IP', '192.168.1.68')  # Default FPP IP
+    ddp_port = int(os.environ.get('DDP_PORT', '4048'))   # Default DDP port
+    
     if ON_PI:
         print(f"FPP memory file: {fpp_memory_file}")
+    else:
+        print(f"Running on {sys.platform}")
+        if use_ddp_output:
+            print(f"DDP network output enabled: {ddp_host}:{ddp_port}")
+            print("Set FPP_IP environment variable to change target FPP device")
     
     # Show preview windows only when not on Pi and show_preview is True
     show_windows = not ON_PI and show_preview
     
-    log(f"🎬 Building DotMatrix with {fps} FPS cap, headless={HEADLESS}, fpp_output={ON_PI}", module="Matrix")
+    log(f"🎬 Building DotMatrix with {fps} FPS cap, headless={HEADLESS}, fpp_output={use_fpp_output}, ddp_output={use_ddp_output}", module="Matrix")
     
     return DotMatrix(
         headless=HEADLESS,
-        fpp_output=ON_PI,
+        fpp_output=use_fpp_output,
+        ddp_output=use_ddp_output,
+        ddp_host=ddp_host if use_ddp_output else None,
+        ddp_port=ddp_port if use_ddp_output else 4048,
         show_source_preview=show_windows,
         enable_performance_monitor=FPS_DEBUG,
         disable_blending=True,
@@ -341,13 +358,22 @@ def main():
     parser.add_argument("--start", type=int, default=0, help="Start frame (video mode)")
     parser.add_argument("--end", type=int, default=None, help="End frame (exclusive, video mode)")
     parser.add_argument("--brightness", type=float, default=None, help="Optional brightness scalar (0-1 or 0-255) for video mode")
+    parser.add_argument("--fpp-ip", type=str, default=None, help="FPP IP address for DDP network output (Windows/Mac mode)")
+    parser.add_argument("--ddp-port", type=int, default=4048, help="DDP port (default: 4048)")
     parser.add_argument("--level", type=int, default=1, help="Starting level for Tetris")
     parser.add_argument("--fps-debug", action="store_true", help="Enable FPS/performance debug logging")
     args = parser.parse_args()
+    
     # Apply CLI flag for FPS debug (overrides env when true)
     global FPS_DEBUG
     if args.fps_debug:
         FPS_DEBUG = True
+    
+    # Set FPP IP from command line if provided
+    if args.fpp_ip:
+        os.environ['FPP_IP'] = args.fpp_ip
+    if args.ddp_port:
+        os.environ['DDP_PORT'] = str(args.ddp_port)
 
     # Install graceful shutdown for SIGTERM/SIGINT so systemd stops cleanly
     def _graceful_exit(signum, frame):
