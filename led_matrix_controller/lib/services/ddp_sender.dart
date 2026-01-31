@@ -26,6 +26,8 @@ class DDPSender {
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
   static final Map<String, InternetAddress> _hostCache = {};
   static int _lastSendFailureMs = 0;
+  static int _consecutiveSendZeros = 0;  // Track consecutive zero returns
+  static const int _maxConsecutiveZerosBeforeRecreate = 100;  // Only recreate after many consecutive zeros
 
 
   /// Initialize log file
@@ -195,29 +197,29 @@ class DDPSender {
       // Fast-path: single UDP packet for the entire frame (13500B + 10B header)
       if (_useSinglePacket && rgbData.length <= 60000) {
         if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
-          if (_staticSocket != null) {
-            _staticSocket!.close();
-            _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
-          }
           final ok = await _recreateStaticSocket('interval');
           if (!ok) return false;
         }
 
         _framesSinceSocketRecreate++;
         final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true, frameSeq);
-        var bytesSent = _staticSocket!.send(packet, addr, port);
-        if (bytesSent == 0) {
-          final recreated = await _recreateStaticSocket('send failure');
-          if (recreated) {
-            bytesSent = _staticSocket!.send(packet, addr, port);
+        
+        // Note: On Windows, send() may return 0 even when data is queued.
+        // UDP doesn't confirm delivery - just send and continue.
+        final bytesSent = _staticSocket!.send(packet, addr, port);
+        if (bytesSent > 0) {
+          _consecutiveSendZeros = 0;
+        } else {
+          _consecutiveSendZeros++;
+          if (_consecutiveSendZeros >= _maxConsecutiveZerosBeforeRecreate) {
+            _log('[DDP] Too many zero-byte sends, recreating socket');
+            await _recreateStaticSocket('consecutive zeros');
+            _consecutiveSendZeros = 0;
           }
         }
-        if (bytesSent == 0) {
-          _logSendFailure(host, port, packet.length, _staticSocket?.port);
-          return false;
-        }
+        
         if (!_firstFrameSent) {
-          _log('[DDP] SUCCESS: First frame sent! ${packet.length} bytes to $host:$port');
+          _log('[DDP] First frame sent! ${packet.length} bytes to $host:$port');
           _firstFrameSent = true;
         }
 
@@ -243,16 +245,19 @@ class DDPSender {
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        var bytesSent = _staticSocket!.send(packet, addr, port);
-        if (bytesSent == 0 && packets == 0) {
-          final recreated = await _recreateStaticSocket('send failure');
-          if (recreated) {
-            bytesSent = _staticSocket!.send(packet, addr, port);
+        // Note: On Windows, RawDatagramSocket.send() may return 0 even when data is sent.
+        // UDP is fire-and-forget - we don't get delivery confirmation anyway.
+        // Only recreate socket after many consecutive zero returns to handle truly broken sockets.
+        final bytesSent = _staticSocket!.send(packet, addr, port);
+        if (bytesSent > 0) {
+          _consecutiveSendZeros = 0;  // Reset on successful send
+        } else {
+          _consecutiveSendZeros++;
+          if (_consecutiveSendZeros >= _maxConsecutiveZerosBeforeRecreate) {
+            _log('[DDP] Too many zero-byte sends ($_consecutiveSendZeros), recreating socket');
+            await _recreateStaticSocket('consecutive zeros');
+            _consecutiveSendZeros = 0;
           }
-        }
-        if (bytesSent == 0 && packets == 0) {
-          _logSendFailure(host, port, packet.length, _staticSocket?.port, chunkSize: dataLen);
-          return false;
         }
         
         sent += dataLen;
