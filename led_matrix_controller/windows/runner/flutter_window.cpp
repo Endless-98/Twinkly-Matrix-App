@@ -28,8 +28,11 @@ bool FlutterWindow::OnCreate() {
   RegisterPlugins(flutter_controller_->engine());
   
   // Register custom screen capture plugin
-  ScreenCapturePlugin::RegisterWithRegistrar(
-      flutter_controller_->engine()->GetRegistrarForPlugin("ScreenCapturePlugin"));
+  auto registrar = 
+      flutter::PluginRegistrarManager::GetInstance()
+          ->GetRegistrar<flutter::PluginRegistrarWindows>(
+              flutter_controller_->engine()->GetRegistrarForPlugin("ScreenCapturePlugin"));
+  ScreenCapturePlugin::RegisterWithRegistrar(registrar);
   
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
