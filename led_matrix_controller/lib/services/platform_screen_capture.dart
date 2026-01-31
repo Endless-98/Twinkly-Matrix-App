@@ -147,20 +147,27 @@ class PlatformScreenCaptureService {
     } else if (Platform.isWindows) {
       return const ScreenCaptureCapabilities(
         supportsDesktopCapture: true,
-        supportsWindowCapture: false,  // TODO: Add window capture support
-        supportsRegionCapture: false,  // TODO: Add region capture support
+        supportsWindowCapture: false,
+        supportsRegionCapture: false,
         requiresPermission: false,
         platformName: 'Windows',
-        captureMethod: 'Desktop Duplication API / GDI',
+        captureMethod: 'GDI Screen Capture (FFmpeg)',
         limitations: [
-          'Some protected content (DRM) may appear black',
+          'Some protected content may appear black',
           'Performance depends on display resolution',
         ],
         setupInstructions: [
-          'No setup required - just click "Start Mirroring"!',
-          'The app uses native Windows screen capture APIs.',
-          'Works on Windows 8 and newer (Desktop Duplication)',
-          'Falls back to GDI capture on older systems.',
+          '1. Download FFmpeg from https://ffmpeg.org/download.html',
+          '2. Extract the downloaded zip file',
+          '3. Add ffmpeg\\bin folder to your System PATH',
+          '4. Restart this app after installing FFmpeg',
+          '5. Click "Start Mirroring" - no permission dialog needed!',
+          '',
+          'Quick Install: Use Windows Package Manager',
+          '  winget install ffmpeg',
+          '',
+          'Verify Installation:',
+          '  Open Command Prompt and type: ffmpeg -version',
         ],
       );
     } else if (Platform.isLinux) {
@@ -438,66 +445,57 @@ class PlatformScreenCaptureService {
     }
   }
 
-  // ========== WINDOWS CAPTURE (Native) ==========
+  // ========== WINDOWS CAPTURE (FFmpeg) ==========
   
   static Future<bool> _startWindowsCapture() async {
-    try {
-      // Initialize gamma LUT for processing
-      _initGammaLut(2.2);
-      _outFrameBuffer = Uint8List(_targetFrameSize);
-      
-      // Start native capture with target dimensions
-      final result = await _channel.invokeMethod<bool>('startScreenCapture', {
-        'width': targetWidth,
-        'height': targetHeight,
-      });
-      
-      _isCapturing = result ?? false;
-      _isInitialized = _isCapturing;
-      
-      if (_isCapturing) {
-        debugPrint('[WINDOWS] Native screen capture started');
-      } else {
-        debugPrint('[WINDOWS] Failed to start native capture');
-      }
-      
-      return _isCapturing;
-    } on PlatformException catch (e) {
-      debugPrint('[WINDOWS] Capture failed: ${e.message}');
-      return false;
-    } catch (e) {
-      debugPrint('[WINDOWS] Capture error: $e');
-      return false;
+    await _detectScreenSize();
+    
+    final args = <String>[
+      '-hide_banner',
+      '-loglevel', 'error',
+      '-nostdin',
+      '-f', 'gdigrab',
+      '-framerate', '20',
+      '-probesize', '32',
+      '-fflags', 'nobuffer+flush_packets',
+      '-flags', 'low_delay',
+    ];
+    
+    // Add mode-specific input
+    switch (_captureMode) {
+      case CaptureMode.desktop:
+        args.addAll(['-i', 'desktop']);
+        break;
+      case CaptureMode.appWindow:
+        if (_selectedWindowTitle == null || _selectedWindowTitle!.isEmpty) {
+          debugPrint('[WINDOWS] No window selected');
+          return false;
+        }
+        args.addAll(['-i', 'title=$_selectedWindowTitle']);
+        break;
+      case CaptureMode.region:
+        args.addAll([
+          '-offset_x', '$_regionX',
+          '-offset_y', '$_regionY',
+          '-video_size', '${_regionWidth}x$_regionHeight',
+          '-i', 'desktop',
+        ]);
+        break;
     }
+    
+    // Add output processing
+    _addOutputProcessing(args);
+    
+    return await _startFFmpegProcess(args);
   }
   
   static Future<Uint8List?> _captureWindowsFrame() async {
     try {
-      final result = await _channel.invokeMethod('getLatestFrame');
-      
-      if (result == null) return null;
-      
-      // Convert result to Uint8List
-      Uint8List frameData;
-      if (result is Uint8List) {
-        frameData = result;
-      } else if (result is List) {
-        frameData = Uint8List.fromList(result.cast<int>());
-      } else {
+      if (!_isInitialized || _ffmpegProcess == null) {
         return null;
       }
       
-      if (frameData.isEmpty) return null;
-      
-      // Apply gamma correction to the frame
-      final lut = _gammaLut ?? Uint8List(256);
-      final outBuf = _outFrameBuffer ?? Uint8List(frameData.length);
-      
-      for (int i = 0; i < frameData.length && i < outBuf.length; i++) {
-        outBuf[i] = lut[frameData[i]];
-      }
-      
-      return outBuf;
+      return await _readFrameFromStream();
     } catch (e) {
       debugPrint('[WINDOWS] Frame capture error: $e');
       return null;
