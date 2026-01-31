@@ -156,13 +156,19 @@ class DdpBridge:
         run_start = time.time()
         pacing = f"pacing at <= {self.max_fps:.1f} FPS" if self.max_fps > 0.0 else "no pacing"
         # Always print startup message
+        print(f"[DDP_BRIDGE] ========================================", flush=True)
+        print(f"[DDP_BRIDGE] Started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
         print(f"[DDP_BRIDGE] Listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})", flush=True)
         print(f"[DDP_BRIDGE] Output: /dev/shm/FPP-Model-Data-Light_Wall, verbose={self.verbose}", flush=True)
+        print(f"[DDP_BRIDGE] Waiting for DDP packets from Windows app...", flush=True)
+        print(f"[DDP_BRIDGE] ========================================", flush=True)
         self._log(f"Enhanced logging enabled - tracking packet recv, parsing, assembly, pacing, conversion, and mmap writes")
         current_sender = None
         # Track first packet/frame for debugging
         first_packet_received = False
         first_frame_written = False
+        last_status_time = time.time()
+        status_interval = 5.0  # Print status every 5 seconds even if no packets
         
         while True:
             loop_start = time.perf_counter()
@@ -194,7 +200,10 @@ class DdpBridge:
                 # Log first packet received for debugging
                 if not first_packet_received:
                     first_packet_received = True
-                    print(f"[DDP_BRIDGE] First DDP packet received! Size: {len(data)}, From: {sender}", flush=True)
+                    print(f"[DDP_BRIDGE] *** FIRST DDP PACKET RECEIVED! ***", flush=True)
+                    print(f"[DDP_BRIDGE]   Size: {len(data)} bytes", flush=True)
+                    print(f"[DDP_BRIDGE]   From: {sender}", flush=True)
+                    print(f"[DDP_BRIDGE]   Header: {data[:10].hex() if len(data) >= 10 else data.hex()}", flush=True)
 
                 # DDP v1 header (10 bytes): 'A' flags seq off24 len16 dataId16
                 if len(data) < 10:
@@ -417,7 +426,12 @@ class DdpBridge:
                     # Log first frame written for debugging
                     if not first_frame_written:
                         first_frame_written = True
-                        print(f"[DDP_BRIDGE] First frame written to mmap! Total frames written: {self.frames_written}", flush=True)
+                        print(f"[DDP_BRIDGE] *** FIRST FRAME WRITTEN TO FPP! ***", flush=True)
+                        print(f"[DDP_BRIDGE]   Frame size: {self.frame_size} bytes", flush=True)
+                        print(f"[DDP_BRIDGE]   Chunks received: {latest.chunks}", flush=True)
+                        # Sample first few pixels
+                        sample = bytes(latest.buf[:12])
+                        print(f"[DDP_BRIDGE]   First 4 pixels (RGB): {sample.hex()}", flush=True)
                     
                 except Exception as e:
                     self._log(f"[WRITE ERROR] {e}")
@@ -431,6 +445,18 @@ class DdpBridge:
             # Sleep briefly when no packets to avoid CPU spinning
             if packets_this_loop == 0 and not wrote:
                 time.sleep(0.0001)  # 0.1ms
+            
+            # Print periodic status if no packets received (helps debug network issues)
+            now = time.time()
+            if now - last_status_time >= status_interval:
+                if not first_packet_received:
+                    print(f"[DDP_BRIDGE] WAITING: No DDP packets received yet. Check:", flush=True)
+                    print(f"[DDP_BRIDGE]   1. Windows app is running and sending to this IP", flush=True)
+                    print(f"[DDP_BRIDGE]   2. Firewall allows UDP port {self.addr[1]}", flush=True)
+                    print(f"[DDP_BRIDGE]   3. Both devices on same network/subnet", flush=True)
+                else:
+                    print(f"[DDP_BRIDGE] STATUS: packets={self._tot_packets} frames_in={self._tot_frames_in} frames_out={self._tot_frames_out}", flush=True)
+                last_status_time = now
 
             # Duration check: exit after requested seconds
             if self.duration_sec and (time.time() - run_start) >= self.duration_sec:

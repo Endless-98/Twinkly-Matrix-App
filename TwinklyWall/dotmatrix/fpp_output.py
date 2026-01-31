@@ -88,16 +88,28 @@ class FPPOutput:
     def _initialize_memory_map(self, fpp_file):
         """Initialize memory-mapped file for FPP output."""
         try:
-            print(f"[FPP_INIT] Initializing memory map for: {fpp_file}")
-            if not os.path.exists(fpp_file) or os.path.getsize(fpp_file) != self.buffer_size:
-                print(f"[FPP_INIT] Creating/resizing buffer file: {self.buffer_size} bytes")
+            print(f\"[FPP_INIT] ========================================\", flush=True)
+            print(f\"[FPP_INIT] Initializing memory map for: {fpp_file}\", flush=True)
+            print(f\"[FPP_INIT] Buffer size: {self.buffer_size} bytes ({self.width}x{self.height}x3)\", flush=True)
+            
+            if not os.path.exists(fpp_file):
+                print(f\"[FPP_INIT] WARNING: mmap file does not exist, creating it\", flush=True)
+                print(f\"[FPP_INIT] NOTE: FPP Pixel Overlay may need to be configured!\", flush=True)
                 with open(fpp_file, 'wb') as f:
-                    f.write(b'\x00' * self.buffer_size)
+                    f.write(b'\\x00' * self.buffer_size)
+            elif os.path.getsize(fpp_file) != self.buffer_size:
+                print(f\"[FPP_INIT] WARNING: mmap file size mismatch, resizing\", flush=True)
+                with open(fpp_file, 'wb') as f:
+                    f.write(b'\\x00' * self.buffer_size)
+            else:
+                print(f\"[FPP_INIT] mmap file exists with correct size\", flush=True)
 
             self.file_handle = open(fpp_file, 'r+b')
             self.memory_map = mmap.mmap(self.file_handle.fileno(), self.buffer_size)
-            print(f"[FPP_INIT] Memory map created successfully")
+            print(f\"[FPP_INIT] Memory map created successfully\", flush=True)
+            print(f\"[FPP_INIT] ========================================\", flush=True)
             # Enable overlay to always transmit (state 3)
+            self._enable_overlay_state()
             self._enable_overlay_state()
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
@@ -107,26 +119,30 @@ class FPPOutput:
             print(f"FPP Error: {e}")
             self._cleanup()
 
-    def _enable_overlay_state(self, model_name="Light_Wall", state=3):
-        """Enable the Pixel Overlay Model to always transmit (state 3).
+    def _enable_overlay_state(self, model_name=\"Light_Wall\", state=3):
+        \"\"\"Enable the Pixel Overlay Model to always transmit (state 3).
         
         State values:
         - 0 = Disabled
         - 1 = Enabled (transparent)
         - 2 = Enabled (transparent RGB)
         - 3 = Enabled (always on - sends buffer data to outputs)
-        """
+        \"\"\"
         try:
-            url = f"http://localhost/api/overlays/model/{model_name}/state"
-            data = json.dumps({"State": state}).encode('utf-8')
+            url = f\"http://localhost/api/overlays/model/{model_name}/state\"
+            data = json.dumps({\"State\": state}).encode('utf-8')
             req = urllib.request.Request(url, data=data, method='PUT')
             req.add_header('Content-Type', 'application/json')
             with urllib.request.urlopen(req, timeout=5) as resp:
                 result = resp.read().decode('utf-8')
-                print(f"[FPP_INIT] Overlay '{model_name}' set to state {state}: {result}")
+                print(f\"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' set to state {state}\", flush=True)
+                print(f\"[FPP_OVERLAY] Response: {result}\", flush=True)
+        except urllib.error.URLError as e:
+            print(f\"[FPP_OVERLAY] ERROR: Could not reach FPP API: {e}\", flush=True)
+            print(f\"[FPP_OVERLAY] Is FPPD running? Try: sudo systemctl status fppd\", flush=True)
         except Exception as e:
-            print(f"[FPP_INIT] Warning: Could not set overlay state: {e}")
-            print(f"[FPP_INIT] Overlay may need manual activation via FPP UI")
+            print(f\"[FPP_OVERLAY] WARNING: Could not set overlay state: {e}\", flush=True)
+            print(f\"[FPP_OVERLAY] Overlay may need manual activation via FPP UI\", flush=True)
 
     def _build_routing_table(self):
         """Pre-compute routing from visual grid to FPP buffer positions.
