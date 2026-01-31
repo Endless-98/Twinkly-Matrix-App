@@ -404,3 +404,5 @@ class WindowsScreenCapture {
     
     _isInitialized = false;
     logger.info('GDI resources cleaned up', module: 'GDI');
+  }
+}
