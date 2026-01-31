@@ -34,7 +34,8 @@ jobs:
         run: flutter build windows --release
 
       - name: Zip Release Directory
-        run: Compress-Archive -Path "led_matrix_controller/build/windows/x64/runner/Release" -DestinationPath "led_matrix_controller-windows-release.zip"
+        shell: pwsh
+        run: Compress-Archive -Path "led_matrix_controller/build/windows/x64/runner/Release/*" -DestinationPath "led_matrix_controller-windows-release.zip"
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
