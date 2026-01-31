@@ -70,7 +70,7 @@ class CaptureStatus {
 /// Unified platform-aware screen capture service
 /// Automatically detects platform and uses the appropriate capture method
 class PlatformScreenCaptureService {
-  static const _androidChannel = MethodChannel('com.twinklywall.led_matrix_controller/screen_capture');
+  static const _channel = MethodChannel('com.twinklywall.led_matrix_controller/screen_capture');
   
   // State
   static bool _isCapturing = false;
@@ -147,27 +147,20 @@ class PlatformScreenCaptureService {
     } else if (Platform.isWindows) {
       return const ScreenCaptureCapabilities(
         supportsDesktopCapture: true,
-        supportsWindowCapture: true,
-        supportsRegionCapture: true,
+        supportsWindowCapture: false,  // TODO: Add window capture support
+        supportsRegionCapture: false,  // TODO: Add region capture support
         requiresPermission: false,
         platformName: 'Windows',
-        captureMethod: 'GDI Screen Capture (FFmpeg)',
+        captureMethod: 'Desktop Duplication API / GDI',
         limitations: [
-          'Some protected content may appear black',
+          'Some protected content (DRM) may appear black',
           'Performance depends on display resolution',
         ],
         setupInstructions: [
-          '1. Download FFmpeg from https://ffmpeg.org/download.html',
-          '2. Extract the downloaded zip file',
-          '3. Add ffmpeg\\bin folder to your System PATH',
-          '4. Restart this app after installing FFmpeg',
-          '5. Click "Start Mirroring" - no permission dialog needed!',
-          '',
-          'Quick Install: Use Windows Package Manager',
-          '  winget install ffmpeg',
-          '',
-          'Verify Installation:',
-          '  Open Command Prompt and type: ffmpeg -version',
+          'No setup required - just click "Start Mirroring"!',
+          'The app uses native Windows screen capture APIs.',
+          'Works on Windows 8 and newer (Desktop Duplication)',
+          'Falls back to GDI capture on older systems.',
         ],
       );
     } else if (Platform.isLinux) {
@@ -365,11 +358,11 @@ class PlatformScreenCaptureService {
   /// Stop screen capture
   static Future<bool> stopCapture() async {
     try {
-      if (Platform.isAndroid) {
-        await _androidChannel.invokeMethod('stopScreenCapture');
+      if (Platform.isAndroid || Platform.isWindows) {
+        await _channel.invokeMethod('stopScreenCapture');
       }
       
-      // Common cleanup for desktop platforms
+      // Common cleanup for desktop platforms using FFmpeg
       _isCapturing = false;
       _isInitialized = false;
       _stdoutRemainder = Uint8List(0);
@@ -398,9 +391,9 @@ class PlatformScreenCaptureService {
 
   /// Check if currently capturing
   static Future<bool> isCapturing() async {
-    if (Platform.isAndroid) {
+    if (Platform.isAndroid || Platform.isWindows) {
       try {
-        return await _androidChannel.invokeMethod('isCapturing') ?? false;
+        return await _channel.invokeMethod('isCapturing') ?? false;
       } catch (_) {
         return false;
       }
@@ -412,8 +405,12 @@ class PlatformScreenCaptureService {
   static Future<Uint8List?> captureFrame() async {
     try {
       if (Platform.isAndroid) {
-        final result = await _androidChannel.invokeMethod('captureScreenshot');
+        final result = await _channel.invokeMethod('captureScreenshot');
         return result is Uint8List ? result : null;
+      }
+      
+      if (Platform.isWindows) {
+        return await _captureWindowsFrame();
       }
       
       if (!_isInitialized || _ffmpegProcess == null) {
@@ -431,7 +428,7 @@ class PlatformScreenCaptureService {
   
   static Future<bool> _startAndroidCapture() async {
     try {
-      final result = await _androidChannel.invokeMethod<bool>('startScreenCapture');
+      final result = await _channel.invokeMethod<bool>('startScreenCapture');
       _isCapturing = result ?? false;
       _isInitialized = _isCapturing;
       return _isCapturing;
@@ -441,48 +438,70 @@ class PlatformScreenCaptureService {
     }
   }
 
-  // ========== WINDOWS CAPTURE ==========
+  // ========== WINDOWS CAPTURE (Native) ==========
   
   static Future<bool> _startWindowsCapture() async {
-    await _detectScreenSize();
-    
-    final args = <String>[
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-nostdin',
-      '-f', 'gdigrab',
-      '-framerate', '20',
-      '-probesize', '32',
-      '-fflags', 'nobuffer+flush_packets',
-      '-flags', 'low_delay',
-    ];
-    
-    // Add mode-specific input
-    switch (_captureMode) {
-      case CaptureMode.desktop:
-        args.addAll(['-i', 'desktop']);
-        break;
-      case CaptureMode.appWindow:
-        if (_selectedWindowTitle == null || _selectedWindowTitle!.isEmpty) {
-          debugPrint('[WINDOWS] No window selected');
-          return false;
-        }
-        args.addAll(['-i', 'title=$_selectedWindowTitle']);
-        break;
-      case CaptureMode.region:
-        args.addAll([
-          '-offset_x', '$_regionX',
-          '-offset_y', '$_regionY',
-          '-video_size', '${_regionWidth}x$_regionHeight',
-          '-i', 'desktop',
-        ]);
-        break;
+    try {
+      // Initialize gamma LUT for processing
+      _initGammaLut(2.2);
+      _outFrameBuffer = Uint8List(_targetFrameSize);
+      
+      // Start native capture with target dimensions
+      final result = await _channel.invokeMethod<bool>('startScreenCapture', {
+        'width': targetWidth,
+        'height': targetHeight,
+      });
+      
+      _isCapturing = result ?? false;
+      _isInitialized = _isCapturing;
+      
+      if (_isCapturing) {
+        debugPrint('[WINDOWS] Native screen capture started');
+      } else {
+        debugPrint('[WINDOWS] Failed to start native capture');
+      }
+      
+      return _isCapturing;
+    } on PlatformException catch (e) {
+      debugPrint('[WINDOWS] Capture failed: ${e.message}');
+      return false;
+    } catch (e) {
+      debugPrint('[WINDOWS] Capture error: $e');
+      return false;
     }
-    
-    // Add output processing
-    _addOutputProcessing(args);
-    
-    return await _startFFmpegProcess(args);
+  }
+  
+  static Future<Uint8List?> _captureWindowsFrame() async {
+    try {
+      final result = await _channel.invokeMethod('getLatestFrame');
+      
+      if (result == null) return null;
+      
+      // Convert result to Uint8List
+      Uint8List frameData;
+      if (result is Uint8List) {
+        frameData = result;
+      } else if (result is List) {
+        frameData = Uint8List.fromList(result.cast<int>());
+      } else {
+        return null;
+      }
+      
+      if (frameData.isEmpty) return null;
+      
+      // Apply gamma correction to the frame
+      final lut = _gammaLut ?? Uint8List(256);
+      final outBuf = _outFrameBuffer ?? Uint8List(frameData.length);
+      
+      for (int i = 0; i < frameData.length && i < outBuf.length; i++) {
+        outBuf[i] = lut[frameData[i]];
+      }
+      
+      return outBuf;
+    } catch (e) {
+      debugPrint('[WINDOWS] Frame capture error: $e');
+      return null;
+    }
   }
 
   // ========== LINUX CAPTURE ==========
