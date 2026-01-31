@@ -3,6 +3,8 @@ name: Build Windows Flutter App
 on:
   workflow_dispatch:
   push:
+    branches:
+      - master
     tags:
       - 'v*'
 
