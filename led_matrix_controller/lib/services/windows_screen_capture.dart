@@ -186,6 +186,11 @@ class WindowsScreenCapture {
       _screenWidth = _getSystemMetrics(SM_CXSCREEN);
       _screenHeight = _getSystemMetrics(SM_CYSCREEN);
       
+      if (_screenWidth == 0 || _screenHeight == 0) {
+        debugPrint('[WIN_CAPTURE] Invalid screen size: ${_screenWidth}x$_screenHeight');
+        return false;
+      }
+      
       debugPrint('[WIN_CAPTURE] Screen: ${_screenWidth}x$_screenHeight, Target: ${_targetWidth}x$_targetHeight');
       
       // Get screen DC
@@ -194,6 +199,7 @@ class WindowsScreenCapture {
         debugPrint('[WIN_CAPTURE] Failed to get screen DC');
         return false;
       }
+      debugPrint('[WIN_CAPTURE] Got screen DC: $_screenDC');
       
       // Create memory DC
       _memDC = _createCompatibleDC(_screenDC);
@@ -202,20 +208,29 @@ class WindowsScreenCapture {
         cleanup();
         return false;
       }
+      debugPrint('[WIN_CAPTURE] Created memory DC: $_memDC');
       
       // Set stretch mode for quality scaling
-      _setStretchBltMode(_memDC, HALFTONE);
+      final modeSet = _setStretchBltMode(_memDC, HALFTONE);
+      debugPrint('[WIN_CAPTURE] Set stretch mode: $modeSet');
       
       // Create bitmap at target size
       _memBitmap = _createCompatibleBitmap(_screenDC, _targetWidth, _targetHeight);
       if (_memBitmap == 0) {
-        debugPrint('[WIN_CAPTURE] Failed to create bitmap');
+        debugPrint('[WIN_CAPTURE] Failed to create bitmap (${_targetWidth}x${_targetHeight})');
         cleanup();
         return false;
       }
+      debugPrint('[WIN_CAPTURE] Created bitmap: $_memBitmap');
       
       // Select bitmap into memory DC
       _oldBitmap = _selectObject(_memDC, _memBitmap);
+      if (_oldBitmap == 0) {
+        debugPrint('[WIN_CAPTURE] Failed to select bitmap into DC');
+        cleanup();
+        return false;
+      }
+      debugPrint('[WIN_CAPTURE] Selected bitmap, old bitmap: $_oldBitmap');
       
       // Allocate bitmap info structure
       _bitmapInfo = calloc<BITMAPINFO>();
@@ -234,10 +249,10 @@ class WindowsScreenCapture {
       _pixelBuffer = calloc<Uint8>(bufferSize);
       
       _isInitialized = true;
-      debugPrint('[WIN_CAPTURE] Initialized successfully');
+      debugPrint('[WIN_CAPTURE] ✅ Initialized successfully - ready to capture');
       return true;
     } catch (e) {
-      debugPrint('[WIN_CAPTURE] Init error: $e');
+      debugPrint('[WIN_CAPTURE] ❌ Init error: $e');
       cleanup();
       return false;
     }

@@ -91,7 +91,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       currentFps = 0.0;
     });
 
-    DDPSender.setDebugLevel(0);
+    DDPSender.setDebugLevel(1);
 
     // Timing tracking
     int totalMsAcc = 0;
@@ -226,25 +226,55 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     final fppPort = ref.read(fppDdpPortProvider);
 
     setState(() {
-      statusMessage = "🧪 Sending test frame...";
+      statusMessage = "🧪 Testing capture + connection...";
     });
 
-    // Create a pure red test frame
-    final testFrame = Uint8List(13500);
-    for (int i = 0; i < 13500; i += 3) {
-      testFrame[i] = 255; // R
-      testFrame[i + 1] = 0; // G
-      testFrame[i + 2] = 0; // B
+    try {
+      // Test 1: Check if we can capture at all
+      debugPrint('[TEST] Testing screen capture...');
+      final captureSuccess = await PlatformScreenCaptureService.startCapture();
+      if (!captureSuccess) {
+        setState(() {
+          statusMessage = "❌ Screen capture failed to start";
+        });
+        return;
+      }
+
+      // Test 2: Capture a real frame
+      final testCapture = await PlatformScreenCaptureService.captureFrame();
+      if (testCapture == null) {
+        setState(() {
+          statusMessage = "❌ Screen capture returned no frame";
+        });
+        await PlatformScreenCaptureService.stopCapture();
+        return;
+      }
+
+      debugPrint('[TEST] Captured frame: ${testCapture.length} bytes');
+      await PlatformScreenCaptureService.stopCapture();
+
+      // Test 3: Send a red test frame to FPP
+      final testFrame = Uint8List(13500);
+      for (int i = 0; i < 13500; i += 3) {
+        testFrame[i] = 255; // R
+        testFrame[i + 1] = 0; // G
+        testFrame[i + 2] = 0; // B
+      }
+
+      DDPSender.setDebugLevel(2);
+      final sent = await DDPSender.sendFrameStatic(fppIp, testFrame, port: fppPort);
+
+      setState(() {
+        statusMessage = sent
+            ? "✅ Test RED frame sent to $fppIp:$fppPort - should light up FPP!"
+            : "❌ Failed to send test frame";
+      });
+    } catch (e) {
+      setState(() {
+        statusMessage = "❌ Test failed: $e";
+      });
+      debugPrint('[TEST] Error: $e');
     }
-
-    DDPSender.setDebug(true);
-    final sent = await DDPSender.sendFrameStatic(fppIp, testFrame, port: fppPort);
-
-    setState(() {
-      statusMessage = sent
-          ? "✅ Test frame sent to $fppIp:$fppPort"
-          : "❌ Failed to send test frame";
-    });
   }
 
   Future<void> _loadAvailableWindows() async {
