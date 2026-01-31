@@ -483,15 +483,36 @@ class PlatformScreenCaptureService {
     }
   }
   
+  static int _windowsFrameCount = 0;
+  static int _windowsBlackFrames = 0;
+  
   static Future<Uint8List?> _captureWindowsFrame() async {
     try {
       if (!_isInitialized || _windowsCapture == null) {
+        debugPrint('[WIN_CAPTURE] Not initialized - capture: ${_windowsCapture != null}, init: $_isInitialized');
         return null;
       }
       
       final frameData = _windowsCapture!.captureFrame();
       if (frameData == null) {
+        debugPrint('[WIN_CAPTURE] captureFrame returned null');
         return null;
+      }
+      
+      _windowsFrameCount++;
+      
+      // Check if frame is all black
+      int nonZero = 0;
+      for (int i = 0; i < frameData.length && nonZero == 0; i++) {
+        if (frameData[i] > 0) nonZero++;
+      }
+      if (nonZero == 0) {
+        _windowsBlackFrames++;
+      }
+      
+      // Log every 100 frames
+      if (_windowsFrameCount % 100 == 1) {
+        debugPrint('[WIN_CAPTURE] Frame $_windowsFrameCount: size=${frameData.length}, black_frames=$_windowsBlackFrames');
       }
       
       // Copy to pre-buffer and apply frame processing (folding for LED layout)

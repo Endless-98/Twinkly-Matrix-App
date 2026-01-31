@@ -243,11 +243,20 @@ class WindowsScreenCapture {
     }
   }
   
+  // Frame counter for periodic logging
+  int _frameCounter = 0;
+  int _logInterval = 100;  // Log every N frames
+  int _nonBlackFrames = 0;
+  
   /// Capture the screen and return RGB data at target resolution
   Uint8List? captureFrame() {
     if (!_isInitialized) {
+      debugPrint('[WIN_CAPTURE] Not initialized');
       return null;
     }
+    
+    _frameCounter++;
+    final shouldLog = _frameCounter % _logInterval == 1;
     
     try {
       // StretchBlt from screen to memory DC (with scaling)
@@ -258,15 +267,15 @@ class WindowsScreenCapture {
       );
       
       if (result == 0) {
-        debugPrint('[WIN_CAPTURE] StretchBlt failed');
+        debugPrint('[WIN_CAPTURE] StretchBlt failed (result=0)');
         return null;
       }
       
-      // Get the bitmap bits
+      // Get the bitmap bits - use _screenDC (not _memDC) for proper color conversion
       final rowStride = ((_targetWidth * 3 + 3) & ~3);
       
       final lines = _getDIBits(
-        _memDC,
+        _screenDC,  // Use screen DC for proper color conversion
         _memBitmap,
         0,
         _targetHeight,
@@ -276,23 +285,55 @@ class WindowsScreenCapture {
       );
       
       if (lines == 0) {
-        debugPrint('[WIN_CAPTURE] GetDIBits failed');
+        debugPrint('[WIN_CAPTURE] GetDIBits failed (lines=0)');
         return null;
+      }
+      
+      if (shouldLog) {
+        debugPrint('[WIN_CAPTURE] GetDIBits returned $lines lines (expected $_targetHeight)');
       }
       
       // Convert BGR to RGB and remove padding
       final rgbData = Uint8List(_targetWidth * _targetHeight * 3);
       int outIdx = 0;
+      int nonZeroCount = 0;
+      int sumR = 0, sumG = 0, sumB = 0;
       
       for (int y = 0; y < _targetHeight; y++) {
         final rowStart = y * rowStride;
         for (int x = 0; x < _targetWidth; x++) {
           final srcIdx = rowStart + x * 3;
           // BGR -> RGB
-          rgbData[outIdx++] = _pixelBuffer![srcIdx + 2];  // R
-          rgbData[outIdx++] = _pixelBuffer![srcIdx + 1];  // G
-          rgbData[outIdx++] = _pixelBuffer![srcIdx];      // B
+          final r = _pixelBuffer![srcIdx + 2];
+          final g = _pixelBuffer![srcIdx + 1];
+          final b = _pixelBuffer![srcIdx];
+          
+          rgbData[outIdx++] = r;
+          rgbData[outIdx++] = g;
+          rgbData[outIdx++] = b;
+          
+          if (r > 0 || g > 0 || b > 0) {
+            nonZeroCount++;
+            sumR += r;
+            sumG += g;
+            sumB += b;
+          }
         }
+      }
+      
+      // Track non-black frames
+      if (nonZeroCount > 0) {
+        _nonBlackFrames++;
+      }
+      
+      // Log capture stats periodically
+      if (shouldLog) {
+        final totalPixels = _targetWidth * _targetHeight;
+        final pctNonZero = (nonZeroCount * 100 / totalPixels).toStringAsFixed(1);
+        final avgR = nonZeroCount > 0 ? sumR ~/ nonZeroCount : 0;
+        final avgG = nonZeroCount > 0 ? sumG ~/ nonZeroCount : 0;
+        final avgB = nonZeroCount > 0 ? sumB ~/ nonZeroCount : 0;
+        debugPrint('[WIN_CAPTURE] Frame $_frameCounter: $pctNonZero% non-black, avg RGB=($avgR,$avgG,$avgB), non-black frames: $_nonBlackFrames');
       }
       
       return rgbData;

@@ -2,6 +2,7 @@
 Simple debug logging module for TwinklyWall.
 
 Provides a single log() function that works with FPP debug mode and regular output.
+All logs go to stdout for journalctl access when running as a systemd service.
 """
 
 import os
@@ -11,14 +12,17 @@ from datetime import datetime
 
 
 class DebugLogger:
-    """Lightweight logging system optimized for FPP debug mode."""
+    """Lightweight logging system optimized for FPP and systemd."""
     
     def __init__(self):
         self.debug_mode = os.environ.get('TWINKLYWALL_DEBUG', '').lower() in ('1', 'true', 'yes')
         self.fpp_debug = os.environ.get('FPP_DEBUG', '').lower() in ('1', 'true', 'yes')
         self.log_file = os.environ.get('TWINKLYWALL_LOG_FILE', None)
         self.start_time = time.time()
-        self.enabled = self.debug_mode or self.fpp_debug
+        # Always enabled for systemd service visibility via journalctl
+        # Only debug-level messages are filtered when not in debug mode
+        self.enabled = True
+        self.verbose = self.debug_mode or self.fpp_debug
         
     def log(self, message, level='INFO', module=None):
         """
@@ -29,7 +33,8 @@ class DebugLogger:
             level: Log level (DEBUG, INFO, WARNING, ERROR)
             module: Optional module name for context
         """
-        if not self.enabled:
+        # Skip DEBUG messages unless in verbose mode
+        if level == 'DEBUG' and not self.verbose:
             return
         
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
@@ -42,8 +47,8 @@ class DebugLogger:
         
         output = f"{prefix} {message}"
         
-        # Always print to stdout
-        print(output)
+        # Always print to stdout (for journalctl)
+        print(output, flush=True)
         
         # Also write to file if configured
         if self.log_file:
@@ -51,7 +56,7 @@ class DebugLogger:
                 with open(self.log_file, 'a') as f:
                     f.write(output + '\n')
             except Exception as e:
-                print(f"Warning: Could not write to log file: {e}")
+                print(f"Warning: Could not write to log file: {e}", flush=True)
     
     def debug(self, message, module=None):
         """Log a debug message."""

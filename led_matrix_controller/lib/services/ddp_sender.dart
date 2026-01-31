@@ -103,6 +103,9 @@ class DDPSender {
     }
   }
 
+  // Track first frame for debugging
+  static bool _firstFrameSent = false;
+  
   /// Static method to send a frame directly (for desktop screen mirroring)
   static Future<bool> sendFrameStatic(String host, Uint8List rgbData, {int port = 4048}) async {
     // Initialize log file on first call
@@ -113,6 +116,15 @@ class DDPSender {
     if (rgbData.length != frameSize) {
       _log('[DDP] Invalid frame size: ${rgbData.length}, expected $frameSize');
       return false;
+    }
+    
+    // Check if frame has any content
+    if (!_firstFrameSent) {
+      int nonZero = 0;
+      for (int i = 0; i < rgbData.length && nonZero < 10; i++) {
+        if (rgbData[i] > 0) nonZero++;
+      }
+      debugPrint('[DDP] First frame analysis: size=${rgbData.length}, hasContent=${nonZero > 0}, sending to $host:$port');
     }
 
     try {
@@ -190,6 +202,12 @@ class DDPSender {
       DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame
       _updateFpsMetrics();
       _lastSendMetrics();
+      
+      if (!_firstFrameSent) {
+        _firstFrameSent = true;
+        debugPrint('[DDP] First frame sent! $packets packets, $sent bytes to $host:$port');
+      }
+      
       return true;
     } catch (e) {
       _log('[DDP] Failed to send frame: $e');

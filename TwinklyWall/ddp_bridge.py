@@ -139,7 +139,11 @@ class DdpBridge:
         def complete(self):
             return self.missing == 0 and self.saw_eof
 
-    def _log(self, msg):
+    def _log(self, msg, force=False):
+        """Log a message. Set force=True to always print regardless of verbose mode."""
+        if force:
+            print(msg, flush=True)
+            return
         if not self.verbose:
             return
         if self.compact:
@@ -151,9 +155,14 @@ class DdpBridge:
     def run(self):
         run_start = time.time()
         pacing = f"pacing at <= {self.max_fps:.1f} FPS" if self.max_fps > 0.0 else "no pacing"
-        self._log(f"DDP bridge listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})")
+        # Always print startup message
+        print(f"[DDP_BRIDGE] Listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})", flush=True)
+        print(f"[DDP_BRIDGE] Output: /dev/shm/FPP-Model-Data-Light_Wall, verbose={self.verbose}", flush=True)
         self._log(f"Enhanced logging enabled - tracking packet recv, parsing, assembly, pacing, conversion, and mmap writes")
         current_sender = None
+        # Track first packet/frame for debugging
+        first_packet_received = False
+        first_frame_written = False
         
         while True:
             loop_start = time.perf_counter()
@@ -181,10 +190,11 @@ class DdpBridge:
                 parse_start = time.perf_counter()
                 if not data or data[0] != 0x41:
                     continue
-
-                parse_start = time.perf_counter()
-                if not data or data[0] != 0x41:
-                    continue
+                
+                # Log first packet received for debugging
+                if not first_packet_received:
+                    first_packet_received = True
+                    print(f"[DDP_BRIDGE] First DDP packet received! Size: {len(data)}, From: {sender}", flush=True)
 
                 # DDP v1 header (10 bytes): 'A' flags seq off24 len16 dataId16
                 if len(data) < 10:
@@ -267,6 +277,13 @@ class DdpBridge:
                         # Min/max write times
                         min_write = min(self._write_times) if self._write_times else 0
                         max_write = max(self._write_times) if self._write_times else 0
+                        
+                        # Always print summary if frames are being received (for journalctl visibility)
+                        if self._sec_packets > 0 or self._sec_frames_out > 0:
+                            print(
+                                f"[DDP_BRIDGE] frames_in={self._sec_frames_in} fps_out={self._sec_frames_out} pkts={self._sec_packets} dropped={self._sec_dropped}",
+                                flush=True
+                            )
                         
                         self._log(
                             f"[1s STATS] in={self._sec_frames_in} fps | out={self._sec_frames_out} fps | "
@@ -396,6 +413,12 @@ class DdpBridge:
                     self._sec_frames_out += 1
                     self.last_write_ts = self._clock()
                     wrote = True
+                    
+                    # Log first frame written for debugging
+                    if not first_frame_written:
+                        first_frame_written = True
+                        print(f"[DDP_BRIDGE] First frame written to mmap! Total frames written: {self.frames_written}", flush=True)
+                    
                 except Exception as e:
                     self._log(f"[WRITE ERROR] {e}")
 
