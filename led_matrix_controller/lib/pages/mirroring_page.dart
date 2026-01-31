@@ -323,11 +323,14 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             children: [
               _buildInfoSection('Capture Method', capabilities.captureMethod),
               const SizedBox(height: 16),
-              _buildInfoSection('Capabilities', null, children: [
+              _buildInfoSection('Features', null, children: [
                 _buildCapabilityRow('Desktop Capture', capabilities.supportsDesktopCapture),
                 _buildCapabilityRow('Window Capture', capabilities.supportsWindowCapture),
                 _buildCapabilityRow('Region Capture', capabilities.supportsRegionCapture),
-                _buildCapabilityRow('Requires Permission', capabilities.requiresPermission),
+              ]),
+              const SizedBox(height: 16),
+              _buildInfoSection('Requirements', null, children: [
+                _buildRequirementRow('Permission Required', capabilities.requiresPermission),
               ]),
               if (capabilities.limitations.isNotEmpty) ...[
                 const SizedBox(height: 16),
@@ -399,6 +402,26 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           ),
           const SizedBox(width: 8),
           Text(name, style: const TextStyle(fontSize: 13)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRequirementRow(String name, bool required) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Icon(
+            required ? Icons.warning : Icons.check_circle,
+            size: 16,
+            color: required ? Colors.orange : Colors.green,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            required ? name : 'No permission needed',
+            style: const TextStyle(fontSize: 13),
+          ),
         ],
       ),
     );
