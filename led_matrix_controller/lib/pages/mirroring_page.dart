@@ -4,8 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 import '../services/platform_screen_capture.dart';
 import '../services/ddp_sender.dart';
+import '../services/app_logger.dart';
 import '../providers/app_state.dart';
 import '../widgets/region_selector_overlay.dart';
+import '../widgets/log_viewer.dart';
 
 class MirroringPage extends ConsumerStatefulWidget {
   const MirroringPage({super.key});
@@ -23,12 +25,14 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
   bool isLoadingWindows = false;
   bool isInitializing = false;
   late ScreenCaptureCapabilities capabilities;
+  bool _logsExpanded = true;
 
   @override
   void initState() {
     super.initState();
     capabilities = PlatformScreenCaptureService.getCapabilities();
     _initializeStatus();
+    logger.info('Mirroring page initialized', module: 'UI');
   }
 
   Future<void> _initializeStatus() async {
@@ -229,20 +233,27 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       statusMessage = "🧪 Testing capture + connection...";
     });
 
+    logger.info('=== Starting Test Connection ===', module: 'TEST');
+    logger.info('Target: $fppIp:$fppPort', module: 'TEST');
+
     try {
       // Test 1: Check if we can capture at all
-      debugPrint('[TEST] Testing screen capture...');
+      logger.info('Step 1: Starting screen capture...', module: 'TEST');
       final captureSuccess = await PlatformScreenCaptureService.startCapture();
       if (!captureSuccess) {
+        logger.error('Screen capture failed to start!', module: 'TEST');
         setState(() {
           statusMessage = "❌ Screen capture failed to start";
         });
         return;
       }
+      logger.success('Screen capture started', module: 'TEST');
 
       // Test 2: Capture a real frame
+      logger.info('Step 2: Capturing test frame...', module: 'TEST');
       final testCapture = await PlatformScreenCaptureService.captureFrame();
       if (testCapture == null) {
+        logger.error('Screen capture returned no frame!', module: 'TEST');
         setState(() {
           statusMessage = "❌ Screen capture returned no frame";
         });
@@ -250,10 +261,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
         return;
       }
 
-      debugPrint('[TEST] Captured frame: ${testCapture.length} bytes');
+      logger.success('Captured frame: ${testCapture.length} bytes', module: 'TEST');
       await PlatformScreenCaptureService.stopCapture();
 
       // Test 3: Send a red test frame to FPP
+      logger.info('Step 3: Sending RED test frame to FPP...', module: 'TEST');
       final testFrame = Uint8List(13500);
       for (int i = 0; i < 13500; i += 3) {
         testFrame[i] = 255; // R
@@ -264,16 +276,22 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       DDPSender.setDebugLevel(2);
       final sent = await DDPSender.sendFrameStatic(fppIp, testFrame, port: fppPort);
 
+      if (sent) {
+        logger.success('Test frame sent! FPP should show RED', module: 'TEST');
+      } else {
+        logger.error('Failed to send test frame', module: 'TEST');
+      }
+
       setState(() {
         statusMessage = sent
-            ? "✅ Test RED frame sent to $fppIp:$fppPort - should light up FPP!"
+            ? "✅ Test RED frame sent to $fppIp:$fppPort"
             : "❌ Failed to send test frame";
       });
     } catch (e) {
+      logger.error('Test failed: $e', module: 'TEST');
       setState(() {
         statusMessage = "❌ Test failed: $e";
       });
-      debugPrint('[TEST] Error: $e');
     }
   }
 
@@ -495,32 +513,55 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
       ),
       body: LayoutBuilder(
         builder: (context, constraints) {
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Status Card
-                _buildStatusCard(),
-                const SizedBox(height: 20),
+          return Column(
+            children: [
+              // Scrollable content area
+              Expanded(
+                flex: _logsExpanded ? 2 : 4,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Status Card
+                      _buildStatusCard(),
+                      const SizedBox(height: 20),
 
-                // Platform Badge
-                _buildPlatformBadge(),
-                const SizedBox(height: 20),
+                      // Platform Badge
+                      _buildPlatformBadge(),
+                      const SizedBox(height: 20),
 
-                // Capture Mode Selection (only show supported modes)
-                if (capabilities.supportsDesktopCapture)
-                  _buildCaptureModeCard(captureMode, selectedWindow, captureRegion),
-                const SizedBox(height: 24),
+                      // Capture Mode Selection (only show supported modes)
+                      if (capabilities.supportsDesktopCapture)
+                        _buildCaptureModeCard(captureMode, selectedWindow, captureRegion),
+                      const SizedBox(height: 24),
 
-                // Main Action Buttons
-                _buildActionButtons(),
-                const SizedBox(height: 16),
+                      // Main Action Buttons
+                      _buildActionButtons(),
+                      const SizedBox(height: 16),
 
-                // Connection Info
-                _buildConnectionInfo(fppIp, fppPort),
-              ],
-            ),
+                      // Connection Info
+                      _buildConnectionInfo(fppIp, fppPort),
+                    ],
+                  ),
+                ),
+              ),
+              // Log Viewer Panel
+              Expanded(
+                flex: _logsExpanded ? 2 : 1,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: LogViewer(
+                    expanded: _logsExpanded,
+                    onToggle: () {
+                      setState(() {
+                        _logsExpanded = !_logsExpanded;
+                      });
+                    },
+                  ),
+                ),
+              ),
+            ],
           );
         },
       ),

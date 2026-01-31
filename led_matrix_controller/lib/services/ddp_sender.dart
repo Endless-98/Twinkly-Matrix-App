@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
+import 'app_logger.dart';
 
 class DDPSender {
   late RawDatagramSocket _socket;
@@ -37,26 +38,24 @@ class DDPSender {
       _logFile = File('${logDir.path}/ddp_debug.log');
       _log('=== DDP Log Started ===');
     } catch (e) {
-      print('Failed to init log file: $e');
+      logger.error('Failed to init log file: $e', module: 'DDP');
     }
   }
 
-  /// Log helper that writes to file
+  /// Log helper that writes to file AND the visible logger
   static void _log(String message, {int level = 1}) {
     if (_debugLevel < level) return; // Skip if debug level is lower than message level
     
-    final timestamp = DateTime.now().toIso8601String();
-    final logMsg = '[$timestamp] $message';
+    // Log to visible UI logger
+    logger.info(message, module: 'DDP');
     
-    // Print to console using debugPrint (respects production mode)
-    debugPrint(logMsg);
-    
-    // Write to file
+    // Also write to file
     if (_logFile != null) {
       try {
-        _logFile!.writeAsStringSync('$logMsg\n', mode: FileMode.append);
+        final timestamp = DateTime.now().toIso8601String();
+        _logFile!.writeAsStringSync('[$timestamp] $message\n', mode: FileMode.append);
       } catch (e) {
-        debugPrint('Failed to write to log: $e');
+        // Silently fail file writes
       }
     }
   }

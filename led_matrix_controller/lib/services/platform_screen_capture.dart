@@ -7,6 +7,7 @@ import 'dart:math' as math;
 import 'package:async/async.dart';
 import '../providers/app_state.dart';
 import 'windows_screen_capture.dart' if (dart.library.io) 'windows_screen_capture.dart';
+import 'app_logger.dart';
 
 /// Platform capability information for screen capture
 class ScreenCaptureCapabilities {
@@ -456,6 +457,8 @@ class PlatformScreenCaptureService {
   
   static Future<bool> _startWindowsCapture() async {
     try {
+      logger.info('Starting Windows capture...', module: 'CAPTURE');
+      
       // Initialize gamma LUT for processing
       _initGammaLut(2.2);
       _preFrameBuffer = Uint8List(_preTargetFrameSize);
@@ -466,17 +469,17 @@ class PlatformScreenCaptureService {
       final success = _windowsCapture!.initialize(targetWidth, _preTargetHeight);
       
       if (!success) {
-        debugPrint('[WINDOWS] Failed to initialize native capture');
+        logger.error('Failed to initialize native capture', module: 'CAPTURE');
         _windowsCapture = null;
         return false;
       }
       
       _isCapturing = true;
       _isInitialized = true;
-      debugPrint('[WINDOWS] Native screen capture started (${targetWidth}x$_preTargetHeight)');
+      logger.success('Windows capture started (${targetWidth}x$_preTargetHeight)', module: 'CAPTURE');
       return true;
     } catch (e) {
-      debugPrint('[WINDOWS] Capture start error: $e');
+      logger.error('Capture start error: $e', module: 'CAPTURE');
       _windowsCapture?.cleanup();
       _windowsCapture = null;
       return false;
@@ -489,13 +492,13 @@ class PlatformScreenCaptureService {
   static Future<Uint8List?> _captureWindowsFrame() async {
     try {
       if (!_isInitialized || _windowsCapture == null) {
-        debugPrint('[WIN_CAPTURE] Not initialized - capture: ${_windowsCapture != null}, init: $_isInitialized');
+        logger.error('Not initialized - capture: ${_windowsCapture != null}, init: $_isInitialized', module: 'CAPTURE');
         return null;
       }
       
       final frameData = _windowsCapture!.captureFrame();
       if (frameData == null) {
-        debugPrint('[WIN_CAPTURE] captureFrame returned null');
+        logger.error('captureFrame returned null', module: 'CAPTURE');
         return null;
       }
       
@@ -512,7 +515,7 @@ class PlatformScreenCaptureService {
       
       // Log every 100 frames
       if (_windowsFrameCount % 100 == 1) {
-        debugPrint('[WIN_CAPTURE] Frame $_windowsFrameCount: size=${frameData.length}, black_frames=$_windowsBlackFrames');
+        logger.info('Frame $_windowsFrameCount: size=${frameData.length}, black_frames=$_windowsBlackFrames', module: 'CAPTURE');
       }
       
       // Copy to pre-buffer and apply frame processing (folding for LED layout)

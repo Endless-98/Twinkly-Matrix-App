@@ -1,7 +1,7 @@
 import 'dart:ffi';
 import 'dart:typed_data';
 import 'package:ffi/ffi.dart';
-import 'package:flutter/foundation.dart';
+import 'app_logger.dart';
 
 // Windows GDI32 and User32 bindings for native screen capture
 // This avoids the need for FFmpeg or complex C++ plugins
@@ -187,50 +187,50 @@ class WindowsScreenCapture {
       _screenHeight = _getSystemMetrics(SM_CYSCREEN);
       
       if (_screenWidth == 0 || _screenHeight == 0) {
-        debugPrint('[WIN_CAPTURE] Invalid screen size: ${_screenWidth}x$_screenHeight');
+        logger.error('Invalid screen size: ${_screenWidth}x$_screenHeight', module: 'GDI');
         return false;
       }
       
-      debugPrint('[WIN_CAPTURE] Screen: ${_screenWidth}x$_screenHeight, Target: ${_targetWidth}x$_targetHeight');
+      logger.info('Screen: ${_screenWidth}x$_screenHeight, Target: ${_targetWidth}x$_targetHeight', module: 'GDI');
       
       // Get screen DC
       _screenDC = _getDC(0);
       if (_screenDC == 0) {
-        debugPrint('[WIN_CAPTURE] Failed to get screen DC');
+        logger.error('Failed to get screen DC', module: 'GDI');
         return false;
       }
-      debugPrint('[WIN_CAPTURE] Got screen DC: $_screenDC');
+      logger.success('Got screen DC: $_screenDC', module: 'GDI');
       
       // Create memory DC
       _memDC = _createCompatibleDC(_screenDC);
       if (_memDC == 0) {
-        debugPrint('[WIN_CAPTURE] Failed to create memory DC');
+        logger.error('Failed to create memory DC', module: 'GDI');
         cleanup();
         return false;
       }
-      debugPrint('[WIN_CAPTURE] Created memory DC: $_memDC');
+      logger.success('Created memory DC: $_memDC', module: 'GDI');
       
       // Set stretch mode for quality scaling
       final modeSet = _setStretchBltMode(_memDC, HALFTONE);
-      debugPrint('[WIN_CAPTURE] Set stretch mode: $modeSet');
+      logger.info('Set stretch mode: $modeSet', module: 'GDI');
       
       // Create bitmap at target size
       _memBitmap = _createCompatibleBitmap(_screenDC, _targetWidth, _targetHeight);
       if (_memBitmap == 0) {
-        debugPrint('[WIN_CAPTURE] Failed to create bitmap (${_targetWidth}x${_targetHeight})');
+        logger.error('Failed to create bitmap (${_targetWidth}x${_targetHeight})', module: 'GDI');
         cleanup();
         return false;
       }
-      debugPrint('[WIN_CAPTURE] Created bitmap: $_memBitmap');
+      logger.success('Created bitmap: $_memBitmap', module: 'GDI');
       
       // Select bitmap into memory DC
       _oldBitmap = _selectObject(_memDC, _memBitmap);
       if (_oldBitmap == 0) {
-        debugPrint('[WIN_CAPTURE] Failed to select bitmap into DC');
+        logger.error('Failed to select bitmap into DC', module: 'GDI');
         cleanup();
         return false;
       }
-      debugPrint('[WIN_CAPTURE] Selected bitmap, old bitmap: $_oldBitmap');
+      logger.success('Selected bitmap, old bitmap: $_oldBitmap', module: 'GDI');
       
       // Allocate bitmap info structure
       _bitmapInfo = calloc<BITMAPINFO>();
@@ -249,10 +249,10 @@ class WindowsScreenCapture {
       _pixelBuffer = calloc<Uint8>(bufferSize);
       
       _isInitialized = true;
-      debugPrint('[WIN_CAPTURE] ✅ Initialized successfully - ready to capture');
+      logger.success('GDI Capture initialized - ready!', module: 'GDI');
       return true;
     } catch (e) {
-      debugPrint('[WIN_CAPTURE] ❌ Init error: $e');
+      logger.error('Init error: $e', module: 'GDI');
       cleanup();
       return false;
     }
@@ -266,7 +266,7 @@ class WindowsScreenCapture {
   /// Capture the screen and return RGB data at target resolution
   Uint8List? captureFrame() {
     if (!_isInitialized) {
-      debugPrint('[WIN_CAPTURE] Not initialized');
+      logger.error('Capture called but not initialized', module: 'GDI');
       return null;
     }
     
@@ -282,7 +282,7 @@ class WindowsScreenCapture {
       );
       
       if (result == 0) {
-        debugPrint('[WIN_CAPTURE] StretchBlt failed (result=0)');
+        logger.error('StretchBlt failed (result=0)', module: 'GDI');
         return null;
       }
       
@@ -300,12 +300,12 @@ class WindowsScreenCapture {
       );
       
       if (lines == 0) {
-        debugPrint('[WIN_CAPTURE] GetDIBits failed (lines=0)');
+        logger.error('GetDIBits failed (lines=0)', module: 'GDI');
         return null;
       }
       
       if (shouldLog) {
-        debugPrint('[WIN_CAPTURE] GetDIBits returned $lines lines (expected $_targetHeight)');
+        logger.info('Frame $_frameCounter: GetDIBits returned $lines lines', module: 'GDI');
       }
       
       // Convert BGR to RGB and remove padding
@@ -348,12 +348,16 @@ class WindowsScreenCapture {
         final avgR = nonZeroCount > 0 ? sumR ~/ nonZeroCount : 0;
         final avgG = nonZeroCount > 0 ? sumG ~/ nonZeroCount : 0;
         final avgB = nonZeroCount > 0 ? sumB ~/ nonZeroCount : 0;
-        debugPrint('[WIN_CAPTURE] Frame $_frameCounter: $pctNonZero% non-black, avg RGB=($avgR,$avgG,$avgB), non-black frames: $_nonBlackFrames');
+        if (nonZeroCount == 0) {
+          logger.warn('Frame $_frameCounter: ALL BLACK (0% non-black)', module: 'GDI');
+        } else {
+          logger.info('Frame $_frameCounter: $pctNonZero% non-black, RGB=($avgR,$avgG,$avgB)', module: 'GDI');
+        }
       }
       
       return rgbData;
     } catch (e) {
-      debugPrint('[WIN_CAPTURE] Capture error: $e');
+      logger.error('Capture error: $e', module: 'GDI');
       return null;
     }
   }
@@ -399,6 +403,4 @@ class WindowsScreenCapture {
     }
     
     _isInitialized = false;
-    debugPrint('[WIN_CAPTURE] Cleaned up');
-  }
-}
+    logger.info('GDI resources cleaned up', module: 'GDI');
