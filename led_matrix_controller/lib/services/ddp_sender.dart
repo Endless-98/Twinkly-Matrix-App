@@ -24,6 +24,8 @@ class DDPSender {
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
+  static final Map<String, InternetAddress> _hostCache = {};
+  static int _lastSendFailureMs = 0;
 
 
   /// Initialize log file
@@ -57,6 +59,64 @@ class DDPSender {
       } catch (e) {
         // Silently fail file writes
       }
+    }
+  }
+
+  static Future<InternetAddress?> _resolveHost(String host) async {
+    if (host.trim().isEmpty) {
+      _log('[DDP] ERROR: Host is empty');
+      return null;
+    }
+
+    final cached = _hostCache[host];
+    if (cached != null) return cached;
+
+    final parsed = InternetAddress.tryParse(host);
+    if (parsed != null) {
+      _hostCache[host] = parsed;
+      return parsed;
+    }
+
+    try {
+      final results = await InternetAddress.lookup(host, type: InternetAddressType.IPv4);
+      if (results.isNotEmpty) {
+        _hostCache[host] = results.first;
+        return results.first;
+      }
+    } catch (e) {
+      _log('[DDP] ERROR: Failed to resolve host "$host": $e');
+    }
+
+    _log('[DDP] ERROR: Host "$host" could not be resolved');
+    return null;
+  }
+
+  static void _logSendFailure(String host, int port, int packetSize, int? localPort, {int? chunkSize}) {
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastSendFailureMs < 1000) return; // prevent log spam
+    _lastSendFailureMs = nowMs;
+
+    final chunkInfo = chunkSize != null ? ', ChunkSize: $chunkSize' : '';
+    _log('[DDP] ERROR: Socket send failed. Target: $host:$port, PacketSize: $packetSize$chunkInfo, LocalPort: $localPort');
+    _log('[DDP] HINT: Verify target IP/port and Windows Firewall allows outbound UDP for this app');
+  }
+
+  static Future<bool> _recreateStaticSocket(String reason) async {
+    try {
+      if (_staticSocket != null) {
+        _staticSocket!.close();
+        _log('[DDP] Socket recreated ($reason)');
+      }
+      _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      _staticSocket!.broadcastEnabled = true;
+      _staticSocket!.writeEventsEnabled = false;
+      _staticSocket!.readEventsEnabled = false;
+      _framesSinceSocketRecreate = 0;
+      _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
+      return true;
+    } catch (e) {
+      _log('[DDP] ERROR: Failed to recreate socket: $e');
+      return false;
     }
   }
 
@@ -127,6 +187,9 @@ class DDPSender {
     }
 
     try {
+      final addr = await _resolveHost(host);
+      if (addr == null) return false;
+
       final frameSeq = DDPSender._frameSequence;
 
       // Fast-path: single UDP packet for the entire frame (13500B + 10B header)
@@ -136,20 +199,21 @@ class DDPSender {
             _staticSocket!.close();
             _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
           }
-          _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-          _staticSocket!.broadcastEnabled = true;
-          _staticSocket!.writeEventsEnabled = false;
-          _staticSocket!.readEventsEnabled = false;
-          _framesSinceSocketRecreate = 0;
-          _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
+          final ok = await _recreateStaticSocket('interval');
+          if (!ok) return false;
         }
 
         _framesSinceSocketRecreate++;
-        final addr = InternetAddress(host);
         final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true, frameSeq);
-        final bytesSent = _staticSocket!.send(packet, addr, port);
+        var bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0) {
-          _log('[DDP] ERROR: Socket send failed. Target: $host:$port, PacketSize: ${packet.length}, LocalPort: ${_staticSocket!.port}');
+          final recreated = await _recreateStaticSocket('send failure');
+          if (recreated) {
+            bytesSent = _staticSocket!.send(packet, addr, port);
+          }
+        }
+        if (bytesSent == 0) {
+          _logSendFailure(host, port, packet.length, _staticSocket?.port);
           return false;
         }
         if (!_firstFrameSent) {
@@ -165,23 +229,11 @@ class DDPSender {
 
       // Initialize socket if needed or recreate periodically to prevent buffer buildup
       if (_staticSocket == null || _framesSinceSocketRecreate >= _socketRecreateInterval) {
-        if (_staticSocket != null) {
-          _staticSocket!.close();
-          _log('[DDP] Socket recreated after $_framesSinceSocketRecreate frames');
-        }
-        
-        _staticSocket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
-        _staticSocket!.broadcastEnabled = true;
-        _staticSocket!.writeEventsEnabled = false;
-        _staticSocket!.readEventsEnabled = false;  
-        
-        _framesSinceSocketRecreate = 0;
-        _log('[DDP] Socket initialized on local port ${_staticSocket!.port}');
+        final ok = await _recreateStaticSocket('interval');
+        if (!ok) return false;
       }
       
       _framesSinceSocketRecreate++;
-
-      final addr = InternetAddress(host);
       
       int sent = 0;
       int packets = 0;
@@ -191,10 +243,15 @@ class DDPSender {
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        final bytesSent = _staticSocket!.send(packet, addr, port);
-        
+        var bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0 && packets == 0) {
-          _log('[DDP] ERROR: Chunked send failed. Target: $host:$port, PacketSize: ${packet.length}, ChunkSize: $dataLen, LocalPort: ${_staticSocket!.port}');
+          final recreated = await _recreateStaticSocket('send failure');
+          if (recreated) {
+            bytesSent = _staticSocket!.send(packet, addr, port);
+          }
+        }
+        if (bytesSent == 0 && packets == 0) {
+          _logSendFailure(host, port, packet.length, _staticSocket?.port, chunkSize: dataLen);
           return false;
         }
         
