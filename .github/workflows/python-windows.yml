@@ -40,3 +40,10 @@ jobs:
           name: TwinklyWall-exe
           path: dist/TwinklyWall.exe
           if-no-files-found: error
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/TwinklyWall.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
