@@ -458,11 +458,12 @@ class PlatformScreenCaptureService {
     try {
       // Initialize gamma LUT for processing
       _initGammaLut(2.2);
+      _preFrameBuffer = Uint8List(_preTargetFrameSize);
       _outFrameBuffer = Uint8List(_targetFrameSize);
       
-      // Create and initialize Windows capture
+      // Create and initialize Windows capture at double height for frame folding
       _windowsCapture = WindowsScreenCapture();
-      final success = _windowsCapture!.initialize(targetWidth, targetHeight);
+      final success = _windowsCapture!.initialize(targetWidth, _preTargetHeight);
       
       if (!success) {
         debugPrint('[WINDOWS] Failed to initialize native capture');
@@ -472,7 +473,7 @@ class PlatformScreenCaptureService {
       
       _isCapturing = true;
       _isInitialized = true;
-      debugPrint('[WINDOWS] Native screen capture started');
+      debugPrint('[WINDOWS] Native screen capture started (${targetWidth}x$_preTargetHeight)');
       return true;
     } catch (e) {
       debugPrint('[WINDOWS] Capture start error: $e');
@@ -493,14 +494,12 @@ class PlatformScreenCaptureService {
         return null;
       }
       
-      // Apply gamma correction to the frame
-      final lut = _gammaLut ?? Uint8List(256);
-      final outBuf = _outFrameBuffer ?? Uint8List(frameData.length);
+      // Copy to pre-buffer and apply frame processing (folding for LED layout)
+      final preBuf = _preFrameBuffer ?? Uint8List(frameData.length);
+      preBuf.setAll(0, frameData);
       
-      final len = math.min(frameData.length, outBuf.length);
-      for (int i = 0; i < len; i++) {
-        outBuf[i] = lut[frameData[i]];
-      }
+      final outBuf = _outFrameBuffer ?? Uint8List(_targetFrameSize);
+      _processFrame(preBuf, outBuf);
       
       return outBuf;
     } catch (e) {
