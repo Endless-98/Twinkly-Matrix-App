@@ -157,9 +157,17 @@ class PlatformScreenCaptureService {
           'Performance depends on display resolution',
         ],
         setupInstructions: [
-          'FFmpeg must be installed and in PATH',
-          'Download from: https://ffmpeg.org/download.html',
-          'Select capture mode: Desktop, Window, or Region',
+          '1. Download FFmpeg from https://ffmpeg.org/download.html',
+          '2. Extract the downloaded zip file',
+          '3. Add ffmpeg\\bin folder to your System PATH',
+          '4. Restart this app after installing FFmpeg',
+          '5. Click "Start Mirroring" - no permission dialog needed!',
+          '',
+          'Quick Install: Use Windows Package Manager',
+          '  winget install ffmpeg',
+          '',
+          'Verify Installation:',
+          '  Open Command Prompt and type: ffmpeg -version',
         ],
       );
     } else if (Platform.isLinux) {
