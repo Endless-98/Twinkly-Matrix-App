@@ -8,6 +8,7 @@ import '../services/app_logger.dart';
 import '../providers/app_state.dart';
 import '../widgets/region_selector_overlay.dart';
 import '../widgets/log_viewer.dart';
+import '../widgets/network_test_dialog.dart';
 
 class MirroringPage extends ConsumerStatefulWidget {
   const MirroringPage({super.key});
@@ -971,6 +972,34 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
               ),
             ),
             const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: () {
+                  final fppIp = ref.read(fppIpProvider);
+                  final fppPort = ref.read(fppDdpPortProvider);
+                  showDialog(
+                    context: context,
+                    builder: (context) => NetworkTestDialog(
+                      targetIp: fppIp,
+                      targetPort: fppPort,
+                    ),
+                  );
+                },
+                icon: const Icon(Icons.network_check, size: 20),
+                label: const Text('Network Test'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.purple,
+                  side: const BorderSide(color: Colors.purple),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        
+        Row(
+          children: [
             Expanded(
               child: OutlinedButton.icon(
                 onPressed: _showPlatformInfo,

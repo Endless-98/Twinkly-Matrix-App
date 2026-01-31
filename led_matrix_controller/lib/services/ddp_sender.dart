@@ -149,8 +149,12 @@ class DDPSender {
         final packet = _buildDdpPacketStaticChunk(rgbData, 0, rgbData.length, true, frameSeq);
         final bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0) {
-          _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
+          _log('[DDP] ERROR: Socket send failed. Target: $host:$port, PacketSize: ${packet.length}, LocalPort: ${_staticSocket!.port}');
           return false;
+        }
+        if (!_firstFrameSent) {
+          _log('[DDP] SUCCESS: First frame sent! ${packet.length} bytes to $host:$port');
+          _firstFrameSent = true;
         }
 
         _frameSequence = (_frameSequence + 1) & 0xFF; // advance once per frame
@@ -190,7 +194,7 @@ class DDPSender {
         final bytesSent = _staticSocket!.send(packet, addr, port);
         
         if (bytesSent == 0 && packets == 0) {
-          _log('[DDP] ERROR: Socket send failed. Check firewall settings.');
+          _log('[DDP] ERROR: Chunked send failed. Target: $host:$port, PacketSize: ${packet.length}, ChunkSize: $dataLen, LocalPort: ${_staticSocket!.port}');
           return false;
         }
         
