@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'dart:math' as math;
 import 'package:async/async.dart';
 import '../providers/app_state.dart';
+import 'windows_screen_capture.dart' if (dart.library.io) 'windows_screen_capture.dart';
 
 /// Platform capability information for screen capture
 class ScreenCaptureCapabilities {
@@ -151,23 +152,18 @@ class PlatformScreenCaptureService {
         supportsRegionCapture: false,
         requiresPermission: false,
         platformName: 'Windows',
-        captureMethod: 'GDI Screen Capture (FFmpeg)',
+        captureMethod: 'Native GDI Screen Capture',
         limitations: [
-          'Some protected content may appear black',
+          'Some protected content (DRM) may appear black',
           'Performance depends on display resolution',
         ],
         setupInstructions: [
-          '1. Download FFmpeg from https://ffmpeg.org/download.html',
-          '2. Extract the downloaded zip file',
-          '3. Add ffmpeg\\bin folder to your System PATH',
-          '4. Restart this app after installing FFmpeg',
-          '5. Click "Start Mirroring" - no permission dialog needed!',
+          'No setup required - just click "Start Mirroring"!',
           '',
-          'Quick Install: Use Windows Package Manager',
-          '  winget install ffmpeg',
+          'The app uses native Windows APIs for screen capture.',
+          'No additional software installation needed.',
           '',
-          'Verify Installation:',
-          '  Open Command Prompt and type: ffmpeg -version',
+          'Works on Windows 7 and newer.',
         ],
       );
     } else if (Platform.isLinux) {
@@ -365,8 +361,14 @@ class PlatformScreenCaptureService {
   /// Stop screen capture
   static Future<bool> stopCapture() async {
     try {
-      if (Platform.isAndroid || Platform.isWindows) {
+      if (Platform.isAndroid) {
         await _channel.invokeMethod('stopScreenCapture');
+      }
+      
+      // Clean up Windows native capture
+      if (Platform.isWindows && _windowsCapture != null) {
+        _windowsCapture!.cleanup();
+        _windowsCapture = null;
       }
       
       // Common cleanup for desktop platforms using FFmpeg
@@ -398,12 +400,15 @@ class PlatformScreenCaptureService {
 
   /// Check if currently capturing
   static Future<bool> isCapturing() async {
-    if (Platform.isAndroid || Platform.isWindows) {
+    if (Platform.isAndroid) {
       try {
         return await _channel.invokeMethod('isCapturing') ?? false;
       } catch (_) {
         return false;
       }
+    }
+    if (Platform.isWindows) {
+      return _isCapturing && _isInitialized && _windowsCapture != null;
     }
     return _isCapturing && _isInitialized && _ffmpegProcess != null;
   }
@@ -445,57 +450,59 @@ class PlatformScreenCaptureService {
     }
   }
 
-  // ========== WINDOWS CAPTURE (FFmpeg) ==========
+  // ========== WINDOWS CAPTURE (Native FFI) ==========
+  
+  static WindowsScreenCapture? _windowsCapture;
   
   static Future<bool> _startWindowsCapture() async {
-    await _detectScreenSize();
-    
-    final args = <String>[
-      '-hide_banner',
-      '-loglevel', 'error',
-      '-nostdin',
-      '-f', 'gdigrab',
-      '-framerate', '20',
-      '-probesize', '32',
-      '-fflags', 'nobuffer+flush_packets',
-      '-flags', 'low_delay',
-    ];
-    
-    // Add mode-specific input
-    switch (_captureMode) {
-      case CaptureMode.desktop:
-        args.addAll(['-i', 'desktop']);
-        break;
-      case CaptureMode.appWindow:
-        if (_selectedWindowTitle == null || _selectedWindowTitle!.isEmpty) {
-          debugPrint('[WINDOWS] No window selected');
-          return false;
-        }
-        args.addAll(['-i', 'title=$_selectedWindowTitle']);
-        break;
-      case CaptureMode.region:
-        args.addAll([
-          '-offset_x', '$_regionX',
-          '-offset_y', '$_regionY',
-          '-video_size', '${_regionWidth}x$_regionHeight',
-          '-i', 'desktop',
-        ]);
-        break;
+    try {
+      // Initialize gamma LUT for processing
+      _initGammaLut(2.2);
+      _outFrameBuffer = Uint8List(_targetFrameSize);
+      
+      // Create and initialize Windows capture
+      _windowsCapture = WindowsScreenCapture();
+      final success = _windowsCapture!.initialize(targetWidth, targetHeight);
+      
+      if (!success) {
+        debugPrint('[WINDOWS] Failed to initialize native capture');
+        _windowsCapture = null;
+        return false;
+      }
+      
+      _isCapturing = true;
+      _isInitialized = true;
+      debugPrint('[WINDOWS] Native screen capture started');
+      return true;
+    } catch (e) {
+      debugPrint('[WINDOWS] Capture start error: $e');
+      _windowsCapture?.cleanup();
+      _windowsCapture = null;
+      return false;
     }
-    
-    // Add output processing
-    _addOutputProcessing(args);
-    
-    return await _startFFmpegProcess(args);
   }
   
   static Future<Uint8List?> _captureWindowsFrame() async {
     try {
-      if (!_isInitialized || _ffmpegProcess == null) {
+      if (!_isInitialized || _windowsCapture == null) {
         return null;
       }
       
-      return await _readFrameFromStream();
+      final frameData = _windowsCapture!.captureFrame();
+      if (frameData == null) {
+        return null;
+      }
+      
+      // Apply gamma correction to the frame
+      final lut = _gammaLut ?? Uint8List(256);
+      final outBuf = _outFrameBuffer ?? Uint8List(frameData.length);
+      
+      final len = math.min(frameData.length, outBuf.length);
+      for (int i = 0; i < len; i++) {
+        outBuf[i] = lut[frameData[i]];
+      }
+      
+      return outBuf;
     } catch (e) {
       debugPrint('[WINDOWS] Frame capture error: $e');
       return null;
