@@ -6,7 +6,8 @@ using flutter::EncodableList;
 using flutter::EncodableMap;
 using flutter::EncodableValue;
 
-void ScreenCapturePlugin::Register(flutter::PluginRegistrarWindows* registrar) {
+void ScreenCapturePlugin::RegisterWithRegistrar(
+    flutter::PluginRegistrarWindows* registrar) {
     auto channel = std::make_unique<flutter::MethodChannel<EncodableValue>>(
         registrar->messenger(), 
         "com.twinklywall.led_matrix_controller/screen_capture",

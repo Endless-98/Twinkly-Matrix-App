@@ -7,15 +7,19 @@
 #include <memory>
 #include "screen_capture.h"
 
-class ScreenCapturePlugin {
+class ScreenCapturePlugin : public flutter::Plugin {
 public:
-    static void Register(flutter::PluginRegistrarWindows* registrar);
+    static void RegisterWithRegistrar(flutter::PluginRegistrarWindows* registrar);
 
-private:
     ScreenCapturePlugin(
         std::unique_ptr<flutter::MethodChannel<flutter::EncodableValue>> channel);
-    ~ScreenCapturePlugin();
+    virtual ~ScreenCapturePlugin();
 
+    // Disallow copy and assign.
+    ScreenCapturePlugin(const ScreenCapturePlugin&) = delete;
+    ScreenCapturePlugin& operator=(const ScreenCapturePlugin&) = delete;
+
+private:
     void HandleMethodCall(
         const flutter::MethodCall<flutter::EncodableValue>& method_call,
         std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>> result);
