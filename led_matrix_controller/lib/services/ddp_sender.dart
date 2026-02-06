@@ -245,12 +245,23 @@ class DDPSender {
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        // Note: On Windows, RawDatagramSocket.send() may return 0 even when data is sent.
-        // UDP is fire-and-forget - we don't get delivery confirmation anyway.
-        // Only recreate socket after many consecutive zero returns to handle truly broken sockets.
-        final bytesSent = _staticSocket!.send(packet, addr, port);
+        // On Windows, non-blocking UDP send() returns 0 when the socket
+        // buffer is full.  Unlike the previous assumption, 0 means NOT sent.
+        // Retry with a brief yield to let the OS drain the buffer.
+        int bytesSent = _staticSocket!.send(packet, addr, port);
+        if (bytesSent == 0) {
+          // Yield to the event loop so the OS can flush the outgoing buffer
+          await Future.delayed(const Duration(milliseconds: 1));
+          bytesSent = _staticSocket!.send(packet, addr, port);
+        }
+        if (bytesSent == 0) {
+          // Second attempt also failed — one more back-off
+          await Future.delayed(const Duration(milliseconds: 2));
+          bytesSent = _staticSocket!.send(packet, addr, port);
+        }
+
         if (bytesSent > 0) {
-          _consecutiveSendZeros = 0;  // Reset on successful send
+          _consecutiveSendZeros = 0;
         } else {
           _consecutiveSendZeros++;
           if (_consecutiveSendZeros >= _maxConsecutiveZerosBeforeRecreate) {
@@ -262,6 +273,12 @@ class DDPSender {
         
         sent += dataLen;
         packets++;
+
+        // Small yield between chunks to prevent socket buffer overflow.
+        // Without this, Windows drops all but the first UDP packet.
+        if (!isLast) {
+          await Future.delayed(const Duration(milliseconds: 1));
+        }
       }
 
       DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame

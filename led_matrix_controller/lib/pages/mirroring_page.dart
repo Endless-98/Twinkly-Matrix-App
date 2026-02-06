@@ -145,18 +145,17 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
         if (screenshotData != null) {
           final sendStart = DateTime.now();
           
-          // Fold 90×100 captured frame to 90×50 for DDP
-          final foldedFrame = _fold90x100To90x50(screenshotData);
-          
+          // captureFrame() already returns folded 90×50 (13500 bytes)
+          // via _processFrame — no additional folding needed.
           final sentPrimary = await DDPSender.sendFrameStatic(
             fppIp,
-            foldedFrame,
+            screenshotData,
             port: fppPort,
           );
           if (fallbackPort != null) {
             await DDPSender.sendFrameStatic(
               fppIp,
-              foldedFrame,
+              screenshotData,
               port: fallbackPort,
             );
           }
