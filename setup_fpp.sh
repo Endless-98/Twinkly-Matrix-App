@@ -105,22 +105,15 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
-# DDP Bridge service
+# DDP Bridge service (no longer needed — bridge runs inside twinklywall)
 DDP_SERVICE_FILE="/etc/systemd/system/ddp_bridge.service"
 if [ $DEBUG_MODE -eq 0 ]; then
-    if [ ! -f "$DDP_SERVICE_FILE" ]; then
-    echo '⚙️ Installing DDP bridge service...'
-    sudo cp ddp_bridge.service /etc/systemd/system/
-    sudo systemctl daemon-reload
-    sudo systemctl enable ddp_bridge
-    elif ! cmp -s ddp_bridge.service "$DDP_SERVICE_FILE"; then
-    echo '🔄 Updating DDP bridge service...'
-    sudo cp ddp_bridge.service /etc/systemd/system/
-    sudo systemctl daemon-reload
-    echo '♻️ Restarting ddp_bridge to apply unit changes...'
-    sudo systemctl restart ddp_bridge || true
-    else
-        echo '✅ DDP bridge service is up to date'
+    if [ -f "$DDP_SERVICE_FILE" ]; then
+        echo '🧹 Removing obsolete DDP bridge service (now built into twinklywall)...'
+        sudo systemctl stop ddp_bridge 2>/dev/null || true
+        sudo systemctl disable ddp_bridge 2>/dev/null || true
+        sudo rm -f "$DDP_SERVICE_FILE"
+        sudo systemctl daemon-reload
     fi
 fi
 
@@ -152,7 +145,8 @@ if [ $DEBUG_MODE -eq 0 ]; then
 
     echo '🧹 Ensuring a single clean instance is running...'
     echo '   - Stopping services if active'
-    sudo systemctl stop twinklywall ddp_bridge || true
+    sudo systemctl stop twinklywall || true
+    sudo systemctl stop ddp_bridge 2>/dev/null || true
 
     echo '   - Killing any stray manual Python processes'
     # Kill any manually launched processes for safety (do not fail the script if none)
@@ -162,15 +156,14 @@ if [ $DEBUG_MODE -eq 0 ]; then
 
     sleep 0.5
 
-    echo '▶️ Restarting services with latest code...'
+    echo '▶️ Restarting twinklywall with latest code...'
     sudo systemctl restart twinklywall || sudo systemctl start twinklywall
-    sudo systemctl restart ddp_bridge || sudo systemctl start ddp_bridge
 fi
 
 if [ $DEBUG_MODE -eq 1 ]; then
     echo '🧪 Debug mode: stopping any running services to avoid conflicts.'
     sudo systemctl stop twinklywall || true
-    sudo systemctl stop ddp_bridge || true
+    sudo systemctl stop ddp_bridge 2>/dev/null || true
     echo '▶️ Launching DDP debug runner (Ctrl+C to exit)...'
     export TWINKLYWALL_DEBUG=1
     "$PYTHON_BIN" /home/fpp/TwinklyWall_Project/TwinklyWall/debug_ddp.py --port 4049 --width "$WIDTH" --height "$HEIGHT" --model "$MODEL"
@@ -181,13 +174,9 @@ echo '✅ Setup/update complete!'
 echo ''
 echo '📊 Service Status:'
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-echo '📡 TwinklyWall API Server (listens on port 5000):'
+echo '📡 TwinklyWall (API server + DDP bridge on ports 5000 & 4049):'
 sudo systemctl status twinklywall --no-pager -l || true
-echo ''
-echo '📡 DDP Bridge (listens on port 4049):'
-sudo systemctl status ddp_bridge --no-pager -l || true
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo ''
 echo '💡 To view logs:'
-echo '   API Server:  sudo journalctl -u twinklywall -f'
-echo '   DDP Bridge:  sudo journalctl -u ddp_bridge -f'
+echo '   sudo journalctl -u twinklywall -f'

@@ -1,26 +1,40 @@
-"""
-Flask API server for controlling the LED matrix video playback.
+"""Flask API server for controlling the LED matrix video playback.
+
 Provides REST endpoints for the Flutter app to communicate with.
 """
 
+import atexit
+import io
 import os
 import tempfile
 import threading
 import time
 import traceback
-import subprocess
 from collections import OrderedDict
 from pathlib import Path
+from urllib.parse import unquote
 
 import numpy as np
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 from werkzeug.utils import secure_filename
 from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
+
 from dotmatrix import DotMatrix
 from video_player import VideoPlayer
 from video_renderer import VideoRenderer
-from game_players import join_game, leave_game, heartbeat, get_active_players_for_game, is_game_full, get_game_for_player, player_count_for_game
+from game_players import (
+    cleanup_idle_players, get_active_players_for_game,
+    get_game_for_player, get_player_data, heartbeat,
+    is_game_full, join_game, leave_game,
+    player_count_for_game,
+)
 from logger import log
+from players import handle_input
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -131,24 +145,19 @@ def initialize_matrix():
     """Initialize the DotMatrix if not already initialized."""
     global current_matrix
     if current_matrix is None:
-        # Detect if running on Pi or if FPP_MODEL_NAME is set (FPP environment)
         on_pi = False
         try:
             with open('/proc/device-tree/model', 'r') as f:
                 on_pi = 'raspberry pi' in f.read().lower()
-        except:
+        except Exception:
             pass
-        
-        # Enable FPP output if on Pi OR if FPP_MODEL_NAME env var is set
+
         use_fpp_output = on_pi or bool(os.environ.get("FPP_MODEL_NAME"))
         headless = use_fpp_output or ('DISPLAY' not in os.environ)
-        
         fpp_memory_file = _resolve_fpp_memory_file()
-        fpp_model_name = os.environ.get("FPP_MODEL_NAME")
-        log(f"DotMatrix init: on_pi={on_pi}, FPP_MODEL_NAME={fpp_model_name}, headless={headless}", level='INFO', module="MATRIX")
-        log(f"DotMatrix FPP output enabled: {use_fpp_output}", level='INFO', module="MATRIX")
-        if use_fpp_output:
-            log(f"DotMatrix FPP memory file: {fpp_memory_file}", level='INFO', module="MATRIX")
+
+        log(f"DotMatrix init: fpp={use_fpp_output}, headless={headless}",
+            module="MATRIX")
 
         current_matrix = DotMatrix(
             headless=headless,
@@ -268,11 +277,8 @@ def delete_video(filename):
         filename: Name of the video file to delete (must end with .npz)
     """
     try:
-        from urllib.parse import unquote
-        # Decode URL-encoded filename
         filename = unquote(filename)
         
-        # Security: Only allow .npz files to be deleted
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type. Only .npz files can be deleted.'}), 400
         
@@ -316,16 +322,11 @@ def get_video_thumbnail(video_stem):
     If thumbnail doesn't exist but the video does, generates it from the first frame.
     """
     try:
-        import cv2
-        
-        # Find the thumbnail file (should be .png with same stem as .npz)
         thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
         video_path = rendered_videos_dir / f"{video_stem}.npz"
         
-        # If thumbnail doesn't exist but video does, generate it
         if not thumbnail_path.exists() and video_path.exists():
             try:
-                import numpy as np
                 data = np.load(video_path)
                 frames = data['frames']
                 if len(frames) > 0:
@@ -351,9 +352,6 @@ def get_video_thumbnail(video_stem):
 def get_video_metadata(filename):
     """Return basic metadata for a rendered video (.npz)."""
     try:
-        from urllib.parse import unquote
-        import numpy as np
-        # Decode URL-encoded filename
         filename = unquote(filename)
         
         if not filename.endswith('.npz'):
@@ -397,7 +395,6 @@ def get_video_metadata(filename):
         })
     except Exception as e:
         log(f"Metadata error for {filename}: {e}", level='ERROR', module="API")
-        import traceback
         log(f"Traceback: {traceback.format_exc()}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
@@ -406,18 +403,13 @@ def get_video_metadata(filename):
 def trim_rendered_video(filename):
     """Trim an existing rendered video (.npz) and save as a new file."""
     try:
-        from urllib.parse import unquote
-        import numpy as np
-        # Decode URL-encoded filename
         filename = unquote(filename)
         
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
-        # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            # Fallback to local dotmatrix/rendered_videos directory
             fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
             if fallback_path.exists():
                 file_path = fallback_path
@@ -461,9 +453,8 @@ def trim_rendered_video(filename):
 
         # Save thumbnail from first frame of trimmed video
         try:
-            import cv2
             thumbnail_path = output_path.with_suffix('.png')
-            first_frame = trimmed[0]  # RGB frame
+            first_frame = trimmed[0]
             bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
             cv2.imwrite(str(thumbnail_path), bgr_frame)
             log(f"Thumbnail saved: {thumbnail_path}", module="API")
@@ -486,8 +477,6 @@ def trim_rendered_video(filename):
 def rename_rendered_video(filename):
     """Rename an existing rendered video (.npz) and its thumbnail."""
     try:
-        from urllib.parse import unquote
-        # Decode URL-encoded filename
         filename = unquote(filename)
         
         if not filename.endswith('.npz'):
@@ -531,20 +520,13 @@ def rename_rendered_video(filename):
 def get_rendered_video_frame(filename, frame_index):
     """Get a single frame from a rendered video (.npz) as a PNG image."""
     try:
-        from urllib.parse import unquote
-        import cv2
-        import io
-        
-        # Decode URL-encoded filename
         filename = unquote(filename)
         
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
 
-        # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            # Fallback to local dotmatrix/rendered_videos directory
             fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
             if fallback_path.exists():
                 file_path = fallback_path
@@ -583,7 +565,6 @@ def get_rendered_video_frame(filename, frame_index):
         )
     except Exception as e:
         log(f"Get frame error: {e}", level='ERROR', module="API")
-        import traceback
         log(f"Traceback: {traceback.format_exc()}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
@@ -798,8 +779,6 @@ def get_render_progress(filename):
     Returns:
         JSON with 'progress' (0.0-1.0), 'status' ('rendering'/'complete'/'error'/'not_found')
     """
-    from urllib.parse import unquote
-    # Decode URL-encoded filename
     filename = unquote(filename)
     
     if filename in render_progress:
@@ -997,38 +976,27 @@ def game_heartbeat():
     Request body: {"player_id": "uuid-123", "cmd": "MOVE_LEFT", ...}
     """
     try:
-        from game_players import get_game_for_player
-        from players import handle_input
-
         data = request.json
         player_id = data.get('player_id')
 
         if not player_id:
             return jsonify({'error': 'Missing player_id'}), 400
 
-        # Ensure the player is joined so per-game handlers are bound
         current_game = get_game_for_player(player_id)
         if current_game is None:
-            # Auto-join to tetris if not already tracked
             join_game(player_id, phone_id=player_id, game='tetris')
             current_game = 'tetris'
 
-        # Update heartbeat
         heartbeat(player_id)
 
-        # If there's a command, route it to the player registry
         if 'cmd' in data:
-            from game_players import get_game_for_player as get_player_game
-            player_game = get_player_game(player_id)
-            # Normalize command for consistent routing
-            raw_cmd = data.get('cmd', 'UNKNOWN')
-            cmd = raw_cmd.strip().upper()
-            # Map common variants to expected command names
-            if cmd in ("DROP", "DROP_HARD", "HARD"):  # allow Flutter variations
+            player_game = get_game_for_player(player_id)
+            cmd = data.get('cmd', 'UNKNOWN').strip().upper()
+            if cmd in ("DROP", "DROP_HARD", "HARD"):
                 cmd = "HARD_DROP"
             data['cmd'] = cmd
 
-            log(f"🕹️  BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", module="API")
+            log(f"BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", module="API")
             handle_input(player_id, data)
 
         game = get_game_for_player(player_id)
@@ -1045,11 +1013,9 @@ def game_status():
     Query params: ?game=tetris
     """
     try:
-        from game_players import player_count_for_game
-
         game = request.args.get('game', 'tetris')
         count = player_count_for_game(game)
-        players = get_active_players_for_game(game)
+        players_list = get_active_players_for_game(game)
         full = is_game_full(game)
 
         return jsonify({
@@ -1058,7 +1024,7 @@ def game_status():
             'is_full': full,
             'players': [
                 {'player_id': p.player_id, 'phone_id': p.phone_id, 'index': i}
-                for i, p in enumerate(players)
+                for i, p in enumerate(players_list)
             ],
         }), 200
 
@@ -1073,8 +1039,6 @@ def game_state():
     Query params: ?game=tetris&player_id=uuid-123
     """
     try:
-        from game_players import get_player_data
-
         game = request.args.get('game', 'tetris')
         player_id = request.args.get('player_id')
 
@@ -1225,8 +1189,6 @@ def serve_video(filename):
         
         log(f"Serving video: {filename}", module="API")
         
-        # Use send_file with streaming for large videos
-        from flask import send_file
         return send_file(
             str(filepath),
             mimetype='video/mp4',
@@ -1248,8 +1210,6 @@ def cleanup():
 
 def cleanup_idle_loop():
     """Background thread that periodically removes idle players."""
-    from game_players import cleanup_idle_players
-    
     while cleanup_active:
         try:
             cleanup_idle_players()
@@ -1269,7 +1229,6 @@ def start_cleanup_thread():
 
 
 if __name__ == '__main__':
-    import atexit
     atexit.register(cleanup)
     
     # Start background cleanup thread for idle players

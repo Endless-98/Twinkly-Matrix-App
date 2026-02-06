@@ -3,17 +3,18 @@ import sys
 import argparse
 import signal
 import time
+import traceback
 
 # Set pygame to use dummy driver if headless
-def is_raspberry_pi():
+def _is_raspberry_pi():
     """Detect if running on Raspberry Pi."""
     try:
         with open('/proc/device-tree/model', 'r') as f:
             return 'raspberry pi' in f.read().lower()
-    except:
+    except Exception:
         return False
 
-ON_PI = is_raspberry_pi()
+ON_PI = _is_raspberry_pi()
 HEADLESS = ON_PI or ('DISPLAY' not in os.environ)
 
 if HEADLESS:
@@ -56,7 +57,6 @@ def _resolve_fpp_memory_file():
     model_name = os.environ.get('FPP_MODEL_NAME', 'Light Wall')
     return f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
 
-from logger import log
 
 def run_tetris(matrix, stop_event=None, level=1):
     canvas_width = matrix.width * matrix.supersample
@@ -213,7 +213,6 @@ def run_tetris(matrix, stop_event=None, level=1):
                             handler(player, payload)
                             input_triggered_render = True
                         except Exception as e:
-                            import traceback
                             log(f"Error handling queued input for player {player.player_id}: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
 
             # Game logic tick (only if enough time has passed)
@@ -225,44 +224,38 @@ def run_tetris(matrix, stop_event=None, level=1):
                     last_game_tick = current_time
                     last_tick_time = current_time
                 except Exception as e:
-                    import traceback
                     log(f"Error in tetris.tick(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
-            # Render frame (only if needed - don't block event processing)
-            render_needed = input_triggered_render or players.input_received or current_time - last_render >= render_interval
+            render_needed = (input_triggered_render
+                             or players.input_received
+                             or current_time - last_render >= render_interval)
             if render_needed:
                 try:
                     matrix.render_frame(canvas)
                     frame_count += 1
-                    
-                    # Calculate actual FPS
+
                     render_delta = current_time - last_frame_time
                     if render_delta > 0:
                         current_fps = 1.0 / render_delta
-                    
+
                     last_frame_time = current_time
                     last_render = current_time
                     players.input_received = False
 
-                    # FPS logging (always enabled for Tetris)
                     if frame_count % fps_check_interval == 0:
                         elapsed = current_time - last_fps_time
                         actual_fps = fps_check_interval / elapsed if elapsed > 0 else 0
-                        log(f"📊 Tetris FPS: {actual_fps:.1f} | Frame: {frame_count}", module="Tetris")
+                        log(f"Tetris FPS: {actual_fps:.1f} | Frame: {frame_count}", module="Tetris")
                         last_fps_time = current_time
 
                 except Exception as e:
-                    import traceback
                     log(f"Error in matrix.render_frame(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
-
-            # NO SLEEP - poll events as fast as possible to prevent drops
 
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
-        import traceback
         log(f"Unexpected error in Tetris loop: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
     finally:
         log(f"🛑 Tetris shutting down | Total frames: {frame_count}", module="Tetris")
@@ -274,7 +267,6 @@ def run_tetris(matrix, stop_event=None, level=1):
         try:
             matrix.shutdown()
         except Exception as e:
-            import traceback
             log(f"Error during matrix shutdown: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
         log("✅ Tetris fully stopped", module="Tetris")
 
@@ -308,28 +300,21 @@ def run_video(matrix, render_path, loop, speed, start, end, brightness, playback
 
 def build_matrix(show_preview=True, fps=20):
     fpp_memory_file = _resolve_fpp_memory_file()
-    
-    # Determine output mode based on platform
-    # On Pi: use FPP memory-mapped output (direct hardware control)
-    # On Windows/Mac: use DDP network output to send to FPP over network
+
     use_fpp_output = ON_PI
-    use_ddp_output = not ON_PI and sys.platform.startswith('win')  # Enable DDP on Windows
-    ddp_host = os.environ.get('FPP_IP', '192.168.1.68')  # Default FPP IP
-    ddp_port = int(os.environ.get('DDP_PORT', '4048'))   # Default DDP port
-    
+    use_ddp_output = not ON_PI and sys.platform.startswith('win')
+    ddp_host = os.environ.get('FPP_IP', '192.168.1.68')
+    ddp_port = int(os.environ.get('DDP_PORT', '4048'))
+
     if ON_PI:
         print(f"FPP memory file: {fpp_memory_file}")
-    else:
-        print(f"Running on {sys.platform}")
-        if use_ddp_output:
-            print(f"DDP network output enabled: {ddp_host}:{ddp_port}")
-            print("Set FPP_IP environment variable to change target FPP device")
-    
-    # Show preview windows only when not on Pi and show_preview is True
+    elif use_ddp_output:
+        print(f"DDP output: {ddp_host}:{ddp_port}")
+
     show_windows = not ON_PI and show_preview
-    
-    log(f"🎬 Building DotMatrix with {fps} FPS cap, headless={HEADLESS}, fpp_output={use_fpp_output}, ddp_output={use_ddp_output}", module="Matrix")
-    
+    log(f"Building DotMatrix: {fps} FPS, headless={HEADLESS}, "
+        f"fpp={use_fpp_output}, ddp={use_ddp_output}", module="Matrix")
+
     return DotMatrix(
         headless=HEADLESS,
         fpp_output=use_fpp_output,
@@ -340,8 +325,7 @@ def build_matrix(show_preview=True, fps=20):
         enable_performance_monitor=FPS_DEBUG,
         disable_blending=True,
         supersample=1,
-        max_fps=fps,  # Explicitly set FPS cap
-        # Keep FPP options configurable later; defaults here
+        max_fps=fps,
         fpp_gamma=2.2,
         fpp_color_order="RGB",
         fpp_memory_buffer_file=fpp_memory_file,
@@ -364,22 +348,19 @@ def main():
     parser.add_argument("--fps-debug", action="store_true", help="Enable FPS/performance debug logging")
     args = parser.parse_args()
     
-    # Apply CLI flag for FPS debug (overrides env when true)
+    # Apply CLI overrides
     global FPS_DEBUG
     if args.fps_debug:
         FPS_DEBUG = True
-    
-    # Set FPP IP from command line if provided
     if args.fpp_ip:
         os.environ['FPP_IP'] = args.fpp_ip
     if args.ddp_port:
         os.environ['DDP_PORT'] = str(args.ddp_port)
 
-    # Install graceful shutdown for SIGTERM/SIGINT so systemd stops cleanly
-    def _graceful_exit(signum, frame):
+    # Graceful shutdown for systemd
+    def _graceful_exit(signum, _frame):
         try:
             print(f"Received signal {signum}, shutting down...")
-            # Best-effort cleanup for API mode if imported
             try:
                 from api_server import cleanup
                 cleanup()
@@ -471,13 +452,22 @@ def main():
                 except Exception as e:
                     log(f"Error in Tetris monitor: {e}", level='ERROR', module="TetrisMonitor")
                     time.sleep(1)
-                except Exception as e:
-                    log(f"Error: {e}", level='ERROR', module="TetrisMonitor")
-                    time.sleep(1)
         
         monitor_thread = threading.Thread(target=_monitor_tetris, daemon=True)
         monitor_thread.start()
-        
+
+        # Start the DDP bridge inside this process so screen-mirroring
+        # traffic is handled by the same service (visible via
+        # journalctl -u twinklywall).
+        model_name = os.environ.get('FPP_MODEL_NAME', 'Light_Wall')
+        if ON_PI:
+            from ddp_bridge import start_bridge_thread
+            bridge = start_bridge_thread(
+                port=4049, width=90, height=50,
+                model_name=model_name, max_fps=20,
+            )
+            log("DDP bridge started (port 4049)", module="Main")
+
         # Run Flask server (blocks)
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
     else:
@@ -494,35 +484,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-def animate_test_circle(canvas, canvas_width, canvas_height):
-    """Update ball physics and render to canvas."""
-           
-    # Animation state
-    ball_x = canvas_width // 2
-    ball_y = canvas_height // 2
-    velocity_x = 3
-    velocity_y = 2
-    radius = 20
-                
-    # Update physics
-    ball_x += velocity_x
-    ball_y += velocity_y
-    
-    # Bounce off walls
-    if ball_x - radius < 0 or ball_x + radius > canvas_width:
-        velocity_x *= -1
-    if ball_y - radius < 0 or ball_y + radius > canvas_height:
-        velocity_y *= -1
-    
-    # Clear and redraw
-    canvas.fill((0, 0, 0))
-    pygame.draw.circle(
-        canvas,
-        (0, 200, 255),
-        (int(ball_x), int(ball_y)),
-        radius
-    )
-    
-    return ball_x, ball_y, velocity_x, velocity_y

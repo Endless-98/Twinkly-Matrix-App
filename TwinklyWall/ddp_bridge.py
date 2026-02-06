@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
+"""DDP v1 -> FPP Pixel Overlay bridge.
+
+Listens for DDP (Distributed Display Protocol) packets on UDP, assembles
+multi-packet frames, and writes completed frames to the FPP memory-mapped
+Pixel Overlay buffer.  Can run standalone or as a background thread from
+the main TwinklyWall service.
+"""
+
 import argparse
 import os
 import socket
-import struct
 import sys
 import time
 from collections import deque
@@ -13,476 +20,396 @@ try:
 except Exception:
     HAS_NUMPY = False
 
-# Local module to write to FPP Pixel Overlay mmap
 from dotmatrix.fpp_output import FPPOutput
 
 
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
 def parse_args():
-    p = argparse.ArgumentParser(description="DDP v1 → FPP Pixel Overlay bridge")
+    p = argparse.ArgumentParser(description="DDP v1 -> FPP Pixel Overlay bridge")
     p.add_argument("--host", default="0.0.0.0", help="Listen address")
     p.add_argument("--port", type=int, default=4049, help="Listen UDP port")
     p.add_argument("--width", type=int, default=90, help="Matrix width")
     p.add_argument("--height", type=int, default=50, help="Matrix height")
-    # Default model name comes from environment if available
-    p.add_argument("--model", default=os.environ.get("FPP_MODEL_NAME", "Light_Wall"), help="Overlay model name (for mmap file)")
-    p.add_argument("--max-fps", type=float, default=float(os.environ.get("DDP_MAX_FPS", 20)), help="Maximum write FPS to FPP (0 disables pacing)")
-    p.add_argument("--frame-timeout-ms", type=float, default=float(os.environ.get("DDP_FRAME_TIMEOUT_MS", 100.0)), help="Timeout for assembling a frame before discarding (ms)")
-    p.add_argument("--batch-limit", type=int, default=int(os.environ.get("DDP_BATCH_LIMIT", 200)), help="Max packets to process per loop iteration")
-    # Default duration disabled (0) so debug runs don't auto-exit unless explicitly set
-    p.add_argument("--duration-sec", type=float, default=float(os.environ.get("DDP_DURATION_SEC", 0)), help="Run duration in seconds (auto-exit and print summary; 0 disables)")
-    p.add_argument("--compact", action="store_true", help="Compact logs: print only per-second stats and final summary")
+    p.add_argument(
+        "--model",
+        default=os.environ.get("FPP_MODEL_NAME", "Light_Wall"),
+        help="Overlay model name (for mmap file)",
+    )
+    p.add_argument(
+        "--max-fps", type=float,
+        default=float(os.environ.get("DDP_MAX_FPS", 20)),
+        help="Maximum write FPS to FPP (0 disables pacing)",
+    )
+    p.add_argument(
+        "--frame-timeout-ms", type=float,
+        default=float(os.environ.get("DDP_FRAME_TIMEOUT_MS", 100.0)),
+        help="Timeout before discarding incomplete frames (ms)",
+    )
+    p.add_argument(
+        "--batch-limit", type=int,
+        default=int(os.environ.get("DDP_BATCH_LIMIT", 200)),
+        help="Max packets to process per loop iteration",
+    )
+    p.add_argument(
+        "--duration-sec", type=float,
+        default=float(os.environ.get("DDP_DURATION_SEC", 0)),
+        help="Run duration in seconds (0 = unlimited)",
+    )
     p.add_argument("--verbose", action="store_true", help="Verbose logging")
     return p.parse_args()
 
 
+# ---------------------------------------------------------------------------
+# Frame assembly helper
+# ---------------------------------------------------------------------------
+
+class _FrameState:
+    """Tracks partial assembly of a single DDP frame from multiple packets."""
+
+    __slots__ = ("buf", "received", "missing", "chunks", "sender", "seq",
+                 "saw_eof", "start_ts")
+
+    def __init__(self, frame_size, sender, seq):
+        self.buf = bytearray(frame_size)
+        self.received = bytearray(frame_size)
+        self.missing = frame_size
+        self.chunks = 0
+        self.sender = sender
+        self.seq = seq
+        self.saw_eof = False
+        self.start_ts = time.time()
+
+    def add_chunk(self, offset, payload):
+        end = offset + len(payload)
+        self.buf[offset:end] = payload
+        segment = memoryview(self.received)[offset:end]
+        newly_covered = len(segment) - sum(segment)
+        segment[:] = b"\x01" * len(segment)
+        self.missing -= newly_covered
+        self.chunks += 1
+
+    @property
+    def complete(self):
+        return self.missing == 0 and self.saw_eof
+
+
+# ---------------------------------------------------------------------------
+# Bridge
+# ---------------------------------------------------------------------------
+
 class DdpBridge:
-    def __init__(self, host, port, width, height, model_name, max_fps=30.0, frame_timeout_ms=50.0, batch_limit=200, duration_sec=None, compact=False, verbose=False):
+    """Receives DDP v1 UDP frames and writes them to the FPP Pixel Overlay."""
+
+    # DDP v1 header layout (10 bytes):
+    #   [0] 0x41 ('A')   [1] flags   [2] sequence
+    #   [3..5] 24-bit data offset   [6..7] 16-bit data length
+    #   [8..9] 16-bit data ID
+    _DDP_MAGIC = 0x41
+    _DDP_FLAG_PUSH = 0x01
+    _HEADER_SIZE = 10
+
+    def __init__(self, host="0.0.0.0", port=4049, width=90, height=50,
+                 model_name="Light_Wall", *, max_fps=20.0,
+                 frame_timeout_ms=100.0, batch_limit=200,
+                 duration_sec=None, verbose=False):
         self.addr = (host, port)
         self.width = width
         self.height = height
         self.frame_size = width * height * 3
         self.verbose = verbose
-        self.max_fps = float(max(0.0, max_fps or 0.0))
-        # Use perf_counter for scheduling precision
-        self._clock = time.perf_counter
+        self.max_fps = max(0.0, float(max_fps or 0))
+        self.frame_timeout_ms = float(frame_timeout_ms)
+        self.batch_limit = int(batch_limit)
+        self.duration_sec = float(duration_sec) if duration_sec else None
+        self._running = False
+
+        # UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        # Bind exclusively to avoid multiple bridges competing
-        # (Do not enable SO_REUSEADDR for this UDP port)
-        # Increase receive buffer to reduce packet drops (4MB)
         try:
-            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)  # 4MB
-        except Exception:
+            self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4 << 20)
+        except OSError:
             pass
         self.sock.bind(self.addr)
-        # Make non-blocking to batch-process packets
         self.sock.setblocking(False)
-        # Use FPPOutput to target overlay mmap with gamma correction for LED output
+
+        # FPP output (mmap)
         mmap_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
         self.out = FPPOutput(width, height, mapping_file=mmap_path, gamma=2.2)
 
-        # Multi-sequence frame assembly
-        self.frames_map = {}  # key: (sender, seq) -> FrameState
-        self.completed_frames = deque(maxlen=50)  # queue of completed frames ready to write
-        self.max_active_frames = 12
-        self.frames_written = 0
-        self.frames_dropped = 0
-        self.frame_timeout_ms = float(frame_timeout_ms)
-        self.batch_limit = int(batch_limit)
-        self.duration_sec = float(duration_sec or 0) if duration_sec else None
-        self.compact = bool(compact)
-        self.last_write_ts = 0.0
-        self.write_ms_acc = 0.0
-        self._sec_start = time.time()
-        self._sec_frames_in = 0
-        self._sec_frames_out = 0
-        self._sec_dropped = 0
-        self._sec_incomplete = 0
-        self._sec_packets = 0
-        
-        # Enhanced logging metrics
-        self._packet_recv_time_acc = 0.0
-        self._packet_parse_time_acc = 0.0
-        self._frame_assembly_time_acc = 0.0
-        self._pacing_sleep_time_acc = 0.0
-        self._numpy_convert_time_acc = 0.0
-        self._mmap_write_time_acc = 0.0
-        self._total_loop_time_acc = 0.0
-        self._timing_samples = 0
-        self._bytes_received = 0
-        self._bytes_per_sec = 0
-        self._packet_sizes = deque(maxlen=100)  # Track recent packet sizes
-        self._frame_chunk_counts = deque(maxlen=100)  # Track chunks per frame
-        self._write_times = deque(maxlen=100)  # Track recent write times
+        # Frame assembly state
+        self._active_frames: dict = {}   # (sender, seq) -> _FrameState
+        self._completed: deque = deque(maxlen=50)
+        self._max_active = 12
 
-        # Totals across the whole run for final summary
+        # Pacing
+        self._last_write_ts = 0.0
+
+        # Per-interval (1 s) counters
+        self._interval_start = time.time()
+        self._iv_frames_in = 0
+        self._iv_frames_out = 0
+        self._iv_packets = 0
+        self._iv_dropped = 0
+        self._iv_incomplete = 0
+        self._iv_write_ms = 0.0
+
+        # Lifetime totals
         self._tot_frames_in = 0
         self._tot_frames_out = 0
+        self._tot_packets = 0
         self._tot_dropped = 0
         self._tot_incomplete = 0
-        self._tot_packets = 0
-        self._tot_bytes_received = 0
-        self._tot_write_ms = 0.0
-        self._tot_packet_recv_time = 0.0
-        self._tot_packet_parse_time = 0.0
-        self._tot_frame_assembly_time = 0.0
-        self._tot_pacing_sleep_time = 0.0
-        self._tot_numpy_convert_time = 0.0
-        self._tot_mmap_write_time = 0.0
-        self._tot_loop_time = 0.0
 
-    class FrameState:
-        def __init__(self, frame_size, sender, seq):
-            self.buf = bytearray(frame_size)
-            self.received = bytearray(frame_size)  # 0/1 per byte
-            self.missing = frame_size
-            self.chunks = 0
-            self.sender = sender
-            self.seq = seq
-            self.saw_eof = False
-            self.start_ts = time.time()
-            self.last_update_ts = self.start_ts
+    # -- logging helpers ----------------------------------------------------
 
-        def add_chunk(self, off, payload):
-            end = off + len(payload)
-            # Copy payload into buffer
-            mv_buf = memoryview(self.buf)
-            mv_buf[off:end] = payload
-            # Mark newly received bytes and update missing count
-            mv_recv = memoryview(self.received)
-            segment = mv_recv[off:end]
-            newly_covered = len(segment) - sum(segment)  # count zeros
-            segment[:] = b"\x01" * len(segment)
-            self.missing -= newly_covered
-            self.chunks += 1
-            self.last_update_ts = time.time()
-
-        def complete(self):
-            return self.missing == 0 and self.saw_eof
-
-    def _log(self, msg, force=False):
-        """Log a message. Set force=True to always print regardless of verbose mode."""
-        if force:
+    def _log(self, msg):
+        if self.verbose:
             print(msg, flush=True)
-            return
-        if not self.verbose:
-            return
-        if self.compact:
-            if msg.startswith("[1s STATS]") or msg.startswith("[TIMING]") or msg.startswith("[NETWORK]") or msg.startswith("=") or msg.startswith("[ERROR]") or msg.startswith("[WRITE ERROR]"):
-                print(msg, flush=True)
-            return
+
+    @staticmethod
+    def _log_always(msg):
         print(msg, flush=True)
 
-    def run(self):
-        run_start = time.time()
-        pacing = f"pacing at <= {self.max_fps:.1f} FPS" if self.max_fps > 0.0 else "no pacing"
-        # Always print startup message
-        print(f"[DDP_BRIDGE] ========================================", flush=True)
-        print(f"[DDP_BRIDGE] Started at {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
-        print(f"[DDP_BRIDGE] Listening on {self.addr[0]}:{self.addr[1]} for {self.width}x{self.height} ({pacing})", flush=True)
-        print(f"[DDP_BRIDGE] Output: /dev/shm/FPP-Model-Data-Light_Wall, verbose={self.verbose}", flush=True)
-        print(f"[DDP_BRIDGE] Waiting for DDP packets from Windows app...", flush=True)
-        print(f"[DDP_BRIDGE] ========================================", flush=True)
-        self._log(f"Enhanced logging enabled - tracking packet recv, parsing, assembly, pacing, conversion, and mmap writes")
-        current_sender = None
-        # Track first packet/frame for debugging
-        first_packet_received = False
-        first_frame_written = False
-        last_status_time = time.time()
-        status_interval = 5.0  # Print status every 5 seconds even if no packets
-        
-        while True:
-            loop_start = time.perf_counter()
-            
-            # Batch-process all available packets
-            packets_this_loop = 0
-            while packets_this_loop < self.batch_limit:  # Tunable packet batch size
-                try:
-                    recv_start = time.perf_counter()
-                    data, sender = self.sock.recvfrom(1500)
-                    recv_elapsed = time.perf_counter() - recv_start
-                    self._packet_recv_time_acc += recv_elapsed
-                    
-                    packets_this_loop += 1
-                    self._sec_packets += 1
-                    self._bytes_received += len(data)
-                    self._packet_sizes.append(len(data))
-                except BlockingIOError:
-                    # No more packets available right now
-                    break
-                except Exception as e:
-                    self._log(f"Socket error: {e}")
-                    continue
-                
-                parse_start = time.perf_counter()
-                if not data or data[0] != 0x41:
-                    continue
-                
-                # Log first packet received for debugging
-                if not first_packet_received:
-                    first_packet_received = True
-                    print(f"[DDP_BRIDGE] *** FIRST DDP PACKET RECEIVED! ***", flush=True)
-                    print(f"[DDP_BRIDGE]   Size: {len(data)} bytes", flush=True)
-                    print(f"[DDP_BRIDGE]   From: {sender}", flush=True)
-                    print(f"[DDP_BRIDGE]   Header: {data[:10].hex() if len(data) >= 10 else data.hex()}", flush=True)
+    def _reset_interval(self):
+        """Accumulate interval counters into totals and reset."""
+        self._tot_frames_in += self._iv_frames_in
+        self._tot_frames_out += self._iv_frames_out
+        self._tot_packets += self._iv_packets
+        self._tot_dropped += self._iv_dropped
+        self._tot_incomplete += self._iv_incomplete
+        self._iv_frames_in = 0
+        self._iv_frames_out = 0
+        self._iv_packets = 0
+        self._iv_dropped = 0
+        self._iv_incomplete = 0
+        self._iv_write_ms = 0.0
+        self._interval_start = time.time()
 
-                # DDP v1 header (10 bytes): 'A' flags seq off24 len16 dataId16
-                if len(data) < 10:
+    def _maybe_log_interval(self):
+        """Print a 1-second stats line if the interval has elapsed."""
+        elapsed = time.time() - self._interval_start
+        if elapsed < 1.0:
+            return
+        if self._iv_packets > 0 or self._iv_frames_out > 0:
+            avg_write = self._iv_write_ms / max(1, self._iv_frames_out)
+            self._log_always(
+                f"[DDP_BRIDGE] in={self._iv_frames_in} out={self._iv_frames_out} "
+                f"pkts={self._iv_packets} drop={self._iv_dropped} "
+                f"incomplete={self._iv_incomplete} "
+                f"write_avg={avg_write:.2f}ms"
+            )
+        self._reset_interval()
+
+    # -- main loop ----------------------------------------------------------
+
+    def run(self):
+        """Block and process DDP packets until stopped or duration expires."""
+        self._running = True
+        run_start = time.time()
+
+        pacing_desc = (f"pacing <= {self.max_fps:.0f} FPS"
+                       if self.max_fps > 0 else "no pacing")
+        self._log_always(f"[DDP_BRIDGE] ========================================")
+        self._log_always(
+            f"[DDP_BRIDGE] Listening {self.addr[0]}:{self.addr[1]} "
+            f"for {self.width}x{self.height} ({pacing_desc})"
+        )
+        self._log_always(f"[DDP_BRIDGE] Waiting for DDP packets...")
+        self._log_always(f"[DDP_BRIDGE] ========================================")
+
+        first_packet = False
+        first_frame_written = False
+        last_status = time.time()
+
+        while self._running:
+            # -- batch-receive packets ------------------------------------
+            packets_this_loop = 0
+            while packets_this_loop < self.batch_limit:
+                try:
+                    data, sender = self.sock.recvfrom(1500)
+                    packets_this_loop += 1
+                    self._iv_packets += 1
+                except BlockingIOError:
+                    break
+                except OSError:
+                    continue
+
+                # Validate DDP magic byte
+                if not data or data[0] != self._DDP_MAGIC:
+                    continue
+
+                if not first_packet:
+                    first_packet = True
+                    self._log_always(
+                        f"[DDP_BRIDGE] First packet: {len(data)} bytes "
+                        f"from {sender}"
+                    )
+
+                # Parse header
+                if len(data) < self._HEADER_SIZE:
                     continue
                 flags = data[1]
                 seq = data[2]
-                off = (data[3] << 16) | (data[4] << 8) | data[5]
-                ln = (data[6] << 8) | data[7]
-                # dataId = data[8:10] (unused)
-                payload = data[10:10+ln]
-
-                if len(payload) != ln:
+                offset = (data[3] << 16) | (data[4] << 8) | data[5]
+                length = (data[6] << 8) | data[7]
+                payload = data[self._HEADER_SIZE:self._HEADER_SIZE + length]
+                if len(payload) != length:
                     continue
-                
-                parse_elapsed = time.perf_counter() - parse_start
-                self._packet_parse_time_acc += parse_elapsed
-                
-                assembly_start = time.perf_counter()
 
-                # Multi-frame assembly by (sender, seq)
+                # Assemble frame
                 key = (sender, seq)
-                if key not in self.frames_map:
-                    # Limit number of active frames to avoid memory growth
-                    if len(self.frames_map) >= self.max_active_frames:
-                        # Drop the oldest incomplete frame
-                        oldest_key = min(self.frames_map.items(), key=lambda kv: kv[1].start_ts)[0]
-                        of = self.frames_map.pop(oldest_key)
-                        self._log(f"[FRAME RESET] Dropped oldest incomplete frame seq={of.seq} from {of.sender}")
-                        self._sec_incomplete += 1
-                    self.frames_map[key] = self.FrameState(self.frame_size, sender, seq)
-                    if off == 0:
-                        self._log(f"[FRAME START] New frame from {sender}, seq={seq}")
+                if key not in self._active_frames:
+                    if len(self._active_frames) >= self._max_active:
+                        oldest_key = min(
+                            self._active_frames,
+                            key=lambda k: self._active_frames[k].start_ts,
+                        )
+                        self._active_frames.pop(oldest_key)
+                        self._iv_incomplete += 1
+                    self._active_frames[key] = _FrameState(
+                        self.frame_size, sender, seq
+                    )
 
-                frame = self.frames_map[key]
-
-                # Bounds check
-                end = off + ln
-                if end > self.frame_size:
-                    self._log(f"[ERROR] Packet overflow: offset={off} len={ln} end={end} > frame_size={self.frame_size}")
+                frame = self._active_frames[key]
+                if offset + length > self.frame_size:
                     continue
-
-                frame.add_chunk(off, payload)
-                end_of_frame = (flags & 0x01) != 0
-                if end_of_frame:
+                frame.add_chunk(offset, payload)
+                if flags & self._DDP_FLAG_PUSH:
                     frame.saw_eof = True
-                
-                assembly_elapsed = time.perf_counter() - assembly_start
-                self._frame_assembly_time_acc += assembly_elapsed
-                
-                self._log(f"[CHUNK] off={off} len={ln} bytes_so_far={self.frame_size - frame.missing}/{self.frame_size} chunks={frame.chunks} eof={end_of_frame}")
+                if frame.complete:
+                    self._completed.append(frame)
+                    self._active_frames.pop(key, None)
+                    self._iv_frames_in += 1
 
-                # If complete, enqueue for writing and remove from active map
-                if frame.complete():
-                    self._log(f"[FRAME COMPLETE] Ready to write: {self.frame_size} bytes in {frame.chunks} chunks")
-                    self._frame_chunk_counts.append(frame.chunks)
-                    self.completed_frames.append(frame)
-                    self.frames_map.pop(key, None)
-                    self._sec_frames_in += 1
-                    sec_elapsed = time.time() - self._sec_start
-                    if sec_elapsed >= 1.0:
-                        avg_write_ms = (self.write_ms_acc / max(1, self._sec_frames_out))
-                        
-                        # Calculate detailed timing breakdown
-                        avg_recv_ms = (self._packet_recv_time_acc / max(1, self._sec_packets)) * 1000.0
-                        avg_parse_ms = (self._packet_parse_time_acc / max(1, self._sec_packets)) * 1000.0
-                        avg_assembly_ms = (self._frame_assembly_time_acc / max(1, self._sec_packets)) * 1000.0
-                        avg_pacing_ms = (self._pacing_sleep_time_acc / max(1, self._sec_frames_out)) * 1000.0
-                        avg_numpy_ms = (self._numpy_convert_time_acc / max(1, self._sec_frames_out)) * 1000.0
-                        avg_mmap_ms = (self._mmap_write_time_acc / max(1, self._sec_frames_out)) * 1000.0
-                        avg_loop_ms = (self._total_loop_time_acc / max(1, self._timing_samples)) * 1000.0
-                        
-                        # Bandwidth calculation
-                        bandwidth_mbps = (self._bytes_received * 8 / (1024 * 1024)) / sec_elapsed
-                        self._bytes_per_sec = int(self._bytes_received / sec_elapsed)
-                        
-                        # Packet and chunk statistics
-                        avg_packet_size = sum(self._packet_sizes) / max(1, len(self._packet_sizes))
-                        avg_chunks_per_frame = sum(self._frame_chunk_counts) / max(1, len(self._frame_chunk_counts))
-                        
-                        # Min/max write times
-                        min_write = min(self._write_times) if self._write_times else 0
-                        max_write = max(self._write_times) if self._write_times else 0
-                        
-                        # Always print summary if frames are being received (for journalctl visibility)
-                        if self._sec_packets > 0 or self._sec_frames_out > 0:
-                            print(
-                                f"[DDP_BRIDGE] frames_in={self._sec_frames_in} fps_out={self._sec_frames_out} pkts={self._sec_packets} dropped={self._sec_dropped}",
-                                flush=True
-                            )
-                        
-                        self._log(
-                            f"[1s STATS] in={self._sec_frames_in} fps | out={self._sec_frames_out} fps | "
-                            f"drop={self._sec_dropped} | incomplete={self._sec_incomplete} | pkts={self._sec_packets}"
-                        )
-                        self._log(
-                            f"[TIMING] recv={avg_recv_ms:.3f}ms parse={avg_parse_ms:.3f}ms assembly={avg_assembly_ms:.3f}ms | "
-                            f"pacing={avg_pacing_ms:.2f}ms numpy={avg_numpy_ms:.2f}ms mmap={avg_mmap_ms:.2f}ms | "
-                            f"write_avg={avg_write_ms:.2f}ms write_min={min_write:.2f}ms write_max={max_write:.2f}ms"
-                        )
-                        self._log(
-                            f"[NETWORK] bandwidth={bandwidth_mbps:.2f} Mbps | bytes/sec={self._bytes_per_sec:,} | "
-                            f"avg_pkt_size={avg_packet_size:.1f} | avg_chunks/frame={avg_chunks_per_frame:.1f}"
-                        )
-                        self._log("="*100)
-
-                        # Accumulate totals for final summary
-                        self._tot_frames_in += self._sec_frames_in
-                        self._tot_frames_out += self._sec_frames_out
-                        self._tot_dropped += self._sec_dropped
-                        self._tot_incomplete += self._sec_incomplete
-                        self._tot_packets += self._sec_packets
-                        self._tot_bytes_received += self._bytes_received
-                        self._tot_write_ms += self.write_ms_acc
-                        self._tot_packet_recv_time += self._packet_recv_time_acc
-                        self._tot_packet_parse_time += self._packet_parse_time_acc
-                        self._tot_frame_assembly_time += self._frame_assembly_time_acc
-                        self._tot_pacing_sleep_time += self._pacing_sleep_time_acc
-                        self._tot_numpy_convert_time += self._numpy_convert_time_acc
-                        self._tot_mmap_write_time += self._mmap_write_time_acc
-                        self._tot_loop_time += self._total_loop_time_acc
-                        
-                        # Reset counters
-                        self._sec_start = time.time()
-                        self._sec_frames_in = 0
-                        self._sec_frames_out = 0
-                        self._sec_dropped = 0
-                        self._sec_incomplete = 0
-                        self._sec_packets = 0
-                        self.write_ms_acc = 0.0
-                        self._packet_recv_time_acc = 0.0
-                        self._packet_parse_time_acc = 0.0
-                        self._frame_assembly_time_acc = 0.0
-                        self._pacing_sleep_time_acc = 0.0
-                        self._numpy_convert_time_acc = 0.0
-                        self._mmap_write_time_acc = 0.0
-                        self._total_loop_time_acc = 0.0
-                        self._timing_samples = 0
-                        self._bytes_received = 0
-            
-            # Drop timed-out incomplete frames
+            # -- expire incomplete frames ---------------------------------
             now = time.time()
-            to_remove = []
-            for k, fr in self.frames_map.items():
-                age_ms = (now - fr.start_ts) * 1000.0
-                if age_ms > self.frame_timeout_ms:
-                    self._log(f"[TIMEOUT] Frame timeout seq={fr.seq} after {age_ms:.1f}ms with {self.frame_size - fr.missing}/{self.frame_size} bytes, {fr.chunks} chunks")
-                    to_remove.append(k)
-                    self._sec_incomplete += 1
-            for k in to_remove:
-                self.frames_map.pop(k, None)
+            expired = [
+                k for k, f in self._active_frames.items()
+                if (now - f.start_ts) * 1000 > self.frame_timeout_ms
+            ]
+            for k in expired:
+                self._active_frames.pop(k)
+                self._iv_incomplete += 1
 
-            # Pacing and write latest completed frame at target FPS
-            pacing_start = time.perf_counter()
+            # -- pacing ---------------------------------------------------
             wrote = False
-            if self.max_fps > 0.0:
-                min_interval_s = 1.0 / self.max_fps
-                now_perf = self._clock()
-                if self.last_write_ts == 0.0:
-                    self.last_write_ts = now_perf - min_interval_s
-                since_last_s = now_perf - self.last_write_ts
-                if since_last_s < min_interval_s:
-                    remaining_s = min_interval_s - since_last_s
-                    if remaining_s > 0.0005:
-                        self._log(f"[PACING] Sleeping {remaining_s*1000:.2f}ms (since_last={since_last_s*1000:.2f}ms, min_interval={min_interval_s*1000:.2f}ms)")
-                        time.sleep(remaining_s)
+            if self.max_fps > 0:
+                min_interval = 1.0 / self.max_fps
+                now_perf = time.perf_counter()
+                if self._last_write_ts == 0:
+                    self._last_write_ts = now_perf - min_interval
+                wait = min_interval - (now_perf - self._last_write_ts)
+                if wait > 0.0005:
+                    time.sleep(wait)
 
-            if self.completed_frames:
-                # Prefer the latest frame to minimize latency
-                latest = self.completed_frames.pop()
-                # Drop older queued frames silently
-                if self.completed_frames:
-                    self.frames_dropped += len(self.completed_frames)
-                    self._sec_dropped += len(self.completed_frames)
-                    self.completed_frames.clear()
+            # -- write latest completed frame -----------------------------
+            if self._completed:
+                latest = self._completed.pop()
+                # Drop older queued frames to minimize latency
+                if self._completed:
+                    self._iv_dropped += len(self._completed)
+                    self._completed.clear()
 
                 try:
-                    numpy_start = time.perf_counter()
                     if HAS_NUMPY:
-                        arr = np.frombuffer(latest.buf, dtype=np.uint8).reshape(self.height, self.width, 3)
-                        numpy_elapsed = time.perf_counter() - numpy_start
-                        self._numpy_convert_time_acc += numpy_elapsed
-
-                        mmap_start = time.perf_counter()
-                        ms = self.out.write(arr)
-                        mmap_elapsed = time.perf_counter() - mmap_start
-                        self._mmap_write_time_acc += mmap_elapsed
-
-                        self._log(f"[WRITE NUMPY] numpy_convert={numpy_elapsed*1000:.2f}ms mmap_write={mmap_elapsed*1000:.2f}ms total={ms:.2f}ms")
+                        arr = np.frombuffer(
+                            latest.buf, dtype=np.uint8
+                        ).reshape(self.height, self.width, 3)
+                        write_ms = self.out.write(arr)
                     else:
-                        rows = self.height
-                        cols = self.width
                         view = [
                             [
-                                (latest.buf[(r*cols + c)*3 + 0],
-                                 latest.buf[(r*cols + c)*3 + 1],
-                                 latest.buf[(r*cols + c)*3 + 2])
-                                for c in range(cols)
+                                (latest.buf[(r * self.width + c) * 3],
+                                 latest.buf[(r * self.width + c) * 3 + 1],
+                                 latest.buf[(r * self.width + c) * 3 + 2])
+                                for c in range(self.width)
                             ]
-                            for r in range(rows)
+                            for r in range(self.height)
                         ]
-                        numpy_elapsed = time.perf_counter() - numpy_start
-                        self._numpy_convert_time_acc += numpy_elapsed
+                        write_ms = self.out.write(view)
 
-                        mmap_start = time.perf_counter()
-                        ms = self.out.write(view)
-                        mmap_elapsed = time.perf_counter() - mmap_start
-                        self._mmap_write_time_acc += mmap_elapsed
-
-                        self._log(f"[WRITE FALLBACK] list_convert={numpy_elapsed*1000:.2f}ms mmap_write={mmap_elapsed*1000:.2f}ms total={ms:.2f}ms")
-
-                    write_elapsed = (time.perf_counter() - numpy_start)
-                    self.write_ms_acc += write_elapsed * 1000.0
-                    self._write_times.append(write_elapsed * 1000.0)
-                    self._timing_samples += 1
-                    self.frames_written += 1
-                    self._sec_frames_out += 1
-                    self.last_write_ts = self._clock()
+                    self._iv_write_ms += write_ms
+                    self._iv_frames_out += 1
+                    self._last_write_ts = time.perf_counter()
                     wrote = True
-                    
-                    # Log first frame written for debugging
+
                     if not first_frame_written:
                         first_frame_written = True
-                        print(f"[DDP_BRIDGE] *** FIRST FRAME WRITTEN TO FPP! ***", flush=True)
-                        print(f"[DDP_BRIDGE]   Frame size: {self.frame_size} bytes", flush=True)
-                        print(f"[DDP_BRIDGE]   Chunks received: {latest.chunks}", flush=True)
-                        # Sample first few pixels
-                        sample = bytes(latest.buf[:12])
-                        print(f"[DDP_BRIDGE]   First 4 pixels (RGB): {sample.hex()}", flush=True)
-                    
+                        sample = bytes(latest.buf[:12]).hex()
+                        self._log_always(
+                            f"[DDP_BRIDGE] First frame written! "
+                            f"{self.frame_size}B, {latest.chunks} chunks, "
+                            f"pixels={sample}"
+                        )
                 except Exception as e:
-                    self._log(f"[WRITE ERROR] {e}")
+                    self._log(f"[DDP_BRIDGE] Write error: {e}")
 
-            pacing_elapsed = time.perf_counter() - pacing_start
-            self._pacing_sleep_time_acc += pacing_elapsed
+            # -- stats / idle sleep ---------------------------------------
+            self._maybe_log_interval()
 
-            loop_elapsed = time.perf_counter() - loop_start
-            self._total_loop_time_acc += loop_elapsed
-            
-            # Sleep briefly when no packets to avoid CPU spinning
             if packets_this_loop == 0 and not wrote:
-                time.sleep(0.0001)  # 0.1ms
-            
-            # Print periodic status if no packets received (helps debug network issues)
-            now = time.time()
-            if now - last_status_time >= status_interval:
-                if not first_packet_received:
-                    print(f"[DDP_BRIDGE] WAITING: No DDP packets received yet. Check:", flush=True)
-                    print(f"[DDP_BRIDGE]   1. Windows app is running and sending to this IP", flush=True)
-                    print(f"[DDP_BRIDGE]   2. Firewall allows UDP port {self.addr[1]}", flush=True)
-                    print(f"[DDP_BRIDGE]   3. Both devices on same network/subnet", flush=True)
-                else:
-                    print(f"[DDP_BRIDGE] STATUS: packets={self._tot_packets} frames_in={self._tot_frames_in} frames_out={self._tot_frames_out}", flush=True)
-                last_status_time = now
+                time.sleep(0.0001)
 
-            # Duration check: exit after requested seconds
-            if self.duration_sec and (time.time() - run_start) >= self.duration_sec:
+            # Periodic "waiting" message when idle
+            now = time.time()
+            if now - last_status >= 5.0:
+                if not first_packet:
+                    self._log_always(
+                        f"[DDP_BRIDGE] Waiting for packets on "
+                        f"UDP {self.addr[1]}..."
+                    )
+                last_status = now
+
+            # Duration limit
+            if self.duration_sec and (now - run_start) >= self.duration_sec:
                 break
 
-        # Final summary
+        # -- final summary ------------------------------------------------
+        self._reset_interval()  # flush last partial interval into totals
         total_secs = max(1.0, time.time() - run_start)
-        avg_in_fps = self._tot_frames_in / total_secs
-        avg_out_fps = self._tot_frames_out / total_secs
-        avg_recv_ms = (self._tot_packet_recv_time / max(1, self._tot_packets)) * 1000.0
-        avg_parse_ms = (self._tot_packet_parse_time / max(1, self._tot_packets)) * 1000.0
-        avg_assembly_ms = (self._tot_frame_assembly_time / max(1, self._tot_packets)) * 1000.0
-        avg_pacing_ms = (self._tot_pacing_sleep_time / max(1, self._tot_frames_out)) * 1000.0
-        avg_numpy_ms = (self._tot_numpy_convert_time / max(1, self._tot_frames_out)) * 1000.0
-        avg_mmap_ms = (self._tot_mmap_write_time / max(1, self._tot_frames_out)) * 1000.0
-        avg_write_ms = (self._tot_write_ms / max(1, self._tot_frames_out))
-        bandwidth_mbps = (self._tot_bytes_received * 8 / (1024 * 1024)) / total_secs
-
-        print("==================== 10s SUMMARY ====================", flush=True)
-        print(f"avg_in_fps={avg_in_fps:.1f} avg_out_fps={avg_out_fps:.1f} drop={self._tot_dropped} incomplete={self._tot_incomplete} packets={self._tot_packets}", flush=True)
-        print(f"timing recv={avg_recv_ms:.3f}ms parse={avg_parse_ms:.3f}ms assembly={avg_assembly_ms:.3f}ms | pacing={avg_pacing_ms:.2f}ms numpy={avg_numpy_ms:.2f}ms mmap={avg_mmap_ms:.2f}ms | write_avg={avg_write_ms:.2f}ms", flush=True)
-        print(f"network bandwidth={bandwidth_mbps:.2f} Mbps bytes={self._tot_bytes_received} duration={total_secs:.2f}s", flush=True)
+        self._log_always("=" * 60)
+        self._log_always(
+            f"[DDP_BRIDGE] Summary ({total_secs:.1f}s): "
+            f"in={self._tot_frames_in} out={self._tot_frames_out} "
+            f"pkts={self._tot_packets} drop={self._tot_dropped} "
+            f"incomplete={self._tot_incomplete}"
+        )
         if self._tot_packets == 0:
-            print("hint: No DDP traffic detected on the socket. Verify sender IP/port, or try local loopback (send_ddp_test.py).", flush=True)
-        print("=====================================================", flush=True)
+            self._log_always(
+                "[DDP_BRIDGE] No packets received. "
+                "Check sender IP/port and firewall."
+            )
+        self._log_always("=" * 60)
 
+    def stop(self):
+        """Signal the bridge to exit its run loop."""
+        self._running = False
+
+
+# ---------------------------------------------------------------------------
+# Thread helper (used by main.py to embed bridge in the API service)
+# ---------------------------------------------------------------------------
+
+def start_bridge_thread(port=4049, width=90, height=50,
+                        model_name="Light_Wall", max_fps=20, verbose=False):
+    """Launch the DDP bridge in a daemon thread.  Returns the bridge instance."""
+    import threading
+
+    bridge = DdpBridge(
+        port=port, width=width, height=height,
+        model_name=model_name, max_fps=max_fps, verbose=verbose,
+    )
+    t = threading.Thread(target=bridge.run, name="ddp-bridge", daemon=True)
+    t.start()
+    return bridge
+
+
+# ---------------------------------------------------------------------------
+# Standalone entry point
+# ---------------------------------------------------------------------------
 
 def main():
     args = parse_args()
@@ -497,7 +424,6 @@ def main():
             frame_timeout_ms=args.frame_timeout_ms,
             batch_limit=args.batch_limit,
             duration_sec=args.duration_sec,
-            compact=args.compact,
             verbose=args.verbose,
         )
         bridge.run()
