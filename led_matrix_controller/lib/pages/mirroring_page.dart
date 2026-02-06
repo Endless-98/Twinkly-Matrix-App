@@ -10,6 +10,33 @@ import '../widgets/region_selector_overlay.dart';
 import '../widgets/log_viewer.dart';
 import '../widgets/network_test_dialog.dart';
 
+/// Fold a 90×100 RGB frame to 90×50 by averaging adjacent row pairs.
+/// Input: 27000 bytes (90×100×3)
+/// Output: 13500 bytes (90×50×3)
+Uint8List _fold90x100To90x50(Uint8List frame90x100) {
+  const srcW = 90, dstW = 90, dstH = 50;
+  final result = Uint8List(dstW * dstH * 3);
+  
+  for (int outRow = 0; outRow < dstH; outRow++) {
+    final srcRow1 = outRow * 2;
+    final srcRow2 = srcRow1 + 1;
+    
+    for (int col = 0; col < dstW; col++) {
+      // Get pixel from row1 and row2
+      final idx1 = (srcRow1 * srcW + col) * 3;
+      final idx2 = (srcRow2 * srcW + col) * 3;
+      final outIdx = (outRow * dstW + col) * 3;
+      
+      // Average the two rows
+      result[outIdx] = ((frame90x100[idx1] + frame90x100[idx2]) ~/ 2).clamp(0, 255);
+      result[outIdx + 1] = ((frame90x100[idx1 + 1] + frame90x100[idx2 + 1]) ~/ 2).clamp(0, 255);
+      result[outIdx + 2] = ((frame90x100[idx1 + 2] + frame90x100[idx2 + 2]) ~/ 2).clamp(0, 255);
+    }
+  }
+  
+  return result;
+}
+
 class MirroringPage extends ConsumerStatefulWidget {
   const MirroringPage({super.key});
 
@@ -117,15 +144,19 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
 
         if (screenshotData != null) {
           final sendStart = DateTime.now();
+          
+          // Fold 90×100 captured frame to 90×50 for DDP
+          final foldedFrame = _fold90x100To90x50(screenshotData);
+          
           final sentPrimary = await DDPSender.sendFrameStatic(
             fppIp,
-            screenshotData,
+            foldedFrame,
             port: fppPort,
           );
           if (fallbackPort != null) {
             await DDPSender.sendFrameStatic(
               fppIp,
-              screenshotData,
+              foldedFrame,
               port: fallbackPort,
             );
           }
