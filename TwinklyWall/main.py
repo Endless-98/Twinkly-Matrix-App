@@ -462,11 +462,17 @@ def main():
         model_name = os.environ.get('FPP_MODEL_NAME', 'Light_Wall')
         if ON_PI:
             from ddp_bridge import start_bridge_thread
-            bridge = start_bridge_thread(
-                port=4049, width=90, height=50,
-                model_name=model_name, max_fps=20,
-            )
-            log("DDP bridge started (port 4049)", module="Main")
+            try:
+                bridge = start_bridge_thread(
+                    port=4049, width=90, height=50,
+                    model_name=model_name, max_fps=20,
+                )
+                log("DDP bridge started (port 4049)", module="Main")
+            except OSError as e:
+                log(f"Failed to start DDP bridge: {e}. Check if old ddp_bridge.service is still running.", 
+                    level='ERROR', module="Main")
+                log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge", 
+                    level='ERROR', module="Main")
 
         # Run Flask server (blocks)
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
