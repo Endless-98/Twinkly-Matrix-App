@@ -459,8 +459,8 @@ class PlatformScreenCaptureService {
     try {
       logger.info('Starting Windows capture...', module: 'CAPTURE');
       
-      // Initialize gamma LUT for processing
-      _initGammaLut(2.2);
+      // Initialize gamma LUT for processing (1.0 = linear passthrough, no correction)
+      _initGammaLut(1.0);
       _preFrameBuffer = Uint8List(_preTargetFrameSize);
       _outFrameBuffer = Uint8List(_targetFrameSize);
       
@@ -655,7 +655,7 @@ class PlatformScreenCaptureService {
       // Initialize buffers
       _preFrameBuffer = Uint8List(_preTargetFrameSize);
       _outFrameBuffer = Uint8List(_targetFrameSize);
-      _initGammaLut(2.2);
+      _initGammaLut(1.0);
       
       _isCapturing = true;
       _isInitialized = true;
