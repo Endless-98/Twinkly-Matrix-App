@@ -245,19 +245,15 @@ class DDPSender {
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        // Send this chunk.  Use synchronous sleep() for retries and
-        // inter-chunk pacing instead of await Future.delayed() — when the
-        // Dart event loop is throttled (app unfocused), each await takes
-        // ~200ms instead of 1ms, spreading 13 chunks over 2.6 seconds and
-        // causing the DDP bridge to time out every frame.
+        // Send this chunk in a tight burst — no delays between chunks.
+        // 13 packets × 1060 bytes = ~14KB fits easily in the 65KB default
+        // Windows UDP send buffer.  NEVER use sleep() or await between
+        // chunks: sleep() blocks the Win32 message pump (same thread on
+        // Windows) causing hard crashes, and await depends on event-loop
+        // speed which drops to 200ms/tick when throttled.
         int bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0) {
-          // Socket buffer full — brief synchronous pause to let OS drain it
-          sleep(const Duration(microseconds: 500));
-          bytesSent = _staticSocket!.send(packet, addr, port);
-        }
-        if (bytesSent == 0) {
-          sleep(const Duration(milliseconds: 1));
+          // Buffer full — single immediate retry (kernel already draining)
           bytesSent = _staticSocket!.send(packet, addr, port);
         }
 
@@ -274,13 +270,6 @@ class DDPSender {
         
         sent += dataLen;
         packets++;
-
-        // Brief synchronous pause between chunks to prevent socket buffer
-        // overflow.  500µs is enough for the OS to flush one 1060-byte
-        // UDP packet and works regardless of event loop speed.
-        if (!isLast) {
-          sleep(const Duration(microseconds: 500));
-        }
       }
 
       DDPSender._frameSequence = (DDPSender._frameSequence + 1) & 0xFF; // advance once per frame

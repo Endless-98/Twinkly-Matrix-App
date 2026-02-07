@@ -28,6 +28,14 @@ class FlutterWindow : public Win32Window {
 
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
+
+  // ---- keep-alive: prevent focus-loss throttling ----
+  // Subclass the Flutter child view to intercept WM_KILLFOCUS,
+  // which is the message that actually triggers the "inactive"
+  // lifecycle and 5 FPS throttle.
+  static WNDPROC original_flutter_view_proc_;
+  static LRESULT CALLBACK FlutterViewSubclassProc(
+      HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam);
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

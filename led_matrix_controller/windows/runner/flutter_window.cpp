@@ -4,6 +4,25 @@
 
 #include "flutter/generated_plugin_registrant.h"
 
+// ---- keep-alive: Flutter child view subclass ----
+// The Flutter engine transitions to "inactive" (5 FPS throttle) when the
+// child view window receives WM_KILLFOCUS.  Swallowing WM_ACTIVATE on the
+// top-level window doesn't help because Windows sends WM_KILLFOCUS directly
+// to the previously-focused child.  We subclass the child's WndProc to
+// intercept it.
+WNDPROC FlutterWindow::original_flutter_view_proc_ = nullptr;
+
+LRESULT CALLBACK FlutterWindow::FlutterViewSubclassProc(
+    HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+  if (msg == WM_KILLFOCUS) {
+    // Swallow: Flutter engine never learns focus was lost → stays
+    // in "resumed" lifecycle → Dart event loop runs at full speed.
+    return 0;
+  }
+  return CallWindowProcW(original_flutter_view_proc_, hwnd, msg, wparam, lparam);
+}
+// ---- end keep-alive ---------------------------------------------------------
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
@@ -28,6 +47,12 @@ bool FlutterWindow::OnCreate() {
   
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  // Subclass the Flutter view to intercept WM_KILLFOCUS (see comment above)
+  HWND flutter_view = flutter_controller_->view()->GetNativeWindow();
+  original_flutter_view_proc_ = reinterpret_cast<WNDPROC>(
+      SetWindowLongPtrW(flutter_view, GWLP_WNDPROC,
+                        reinterpret_cast<LONG_PTR>(FlutterViewSubclassProc)));
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -41,6 +66,17 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  // Restore original WndProc before Flutter view is destroyed
+  if (original_flutter_view_proc_ && flutter_controller_ &&
+      flutter_controller_->view()) {
+    HWND flutter_view = flutter_controller_->view()->GetNativeWindow();
+    if (flutter_view) {
+      SetWindowLongPtrW(flutter_view, GWLP_WNDPROC,
+                        reinterpret_cast<LONG_PTR>(original_flutter_view_proc_));
+    }
+    original_flutter_view_proc_ = nullptr;
+  }
+
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
@@ -52,39 +88,12 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
-  // ---- keep-alive: hide ALL minimize / focus-loss events from Flutter --------
-  //
-  // Flutter's Windows embedder throttles or pauses the Dart event loop when
-  // it detects these window messages:
-  //
-  //   WM_SIZE(SIZE_MINIMIZED)   → engine lifecycle "hidden"  → Dart stops
-  //   WM_ACTIVATE(WA_INACTIVE)  → engine lifecycle "inactive" → 5 FPS throttle
-  //   WM_ACTIVATEAPP(FALSE)     → also signals deactivation
-  //
-  // Any of these kill the 20+ FPS background screen-capture loop.
-  //
-  // Fix: swallow ALL of them before HandleTopLevelWindowProc or ANY child
-  // window sees them.  We must NOT route to Win32Window::MessageHandler
-  // either, because its WM_ACTIVATE handler calls SetFocus(child_content_)
-  // which generates WM_KILLFOCUS on the Flutter child view — and the engine
-  // processes that internally to trigger the same lifecycle transition.
-  //
-  // The window still minimizes/deactivates visually (these are post-hoc
-  // notifications).  SIZE_RESTORED / WA_ACTIVE / WA_CLICKACTIVE pass through
-  // normally so rendering and focus resume on restore.
-
-  // (a) Window minimized
+  // ---- keep-alive: prevent "hidden" lifecycle on minimize --------------------
+  // Flutter's embedder transitions to "hidden" (Dart fully paused) when it
+  // sees WM_SIZE(SIZE_MINIMIZED) via HandleTopLevelWindowProc.  Swallow it
+  // so the engine keeps running.  The actual focus-loss throttle ("inactive")
+  // is handled by the child-view WM_KILLFOCUS subclass (see OnCreate).
   if (message == WM_SIZE && wparam == SIZE_MINIMIZED) {
-    return 0;
-  }
-
-  // (b) Window deactivated (focus lost to another window)
-  if (message == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE) {
-    return 0;
-  }
-
-  // (c) Application deactivated (another app came to foreground)
-  if (message == WM_ACTIVATEAPP && wparam == FALSE) {
     return 0;
   }
   // ---- end keep-alive -------------------------------------------------------
