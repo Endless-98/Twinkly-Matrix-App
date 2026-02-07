@@ -149,14 +149,15 @@ class PlatformScreenCaptureService {
     } else if (Platform.isWindows) {
       return const ScreenCaptureCapabilities(
         supportsDesktopCapture: true,
-        supportsWindowCapture: false,
-        supportsRegionCapture: false,
+        supportsWindowCapture: true,
+        supportsRegionCapture: true,
         requiresPermission: false,
         platformName: 'Windows',
         captureMethod: 'Native GDI Screen Capture',
         limitations: [
           'Some protected content (DRM) may appear black',
           'Performance depends on display resolution',
+          'Window capture shows what is visible on screen at window location',
         ],
         setupInstructions: [
           'No setup required - just click "Start Mirroring"!',
@@ -165,6 +166,7 @@ class PlatformScreenCaptureService {
           'No additional software installation needed.',
           '',
           'Works on Windows 7 and newer.',
+          'Capture continues even when app is minimized.',
         ],
       );
     } else if (Platform.isLinux) {
@@ -457,16 +459,61 @@ class PlatformScreenCaptureService {
   
   static Future<bool> _startWindowsCapture() async {
     try {
-      logger.info('Starting Windows capture...', module: 'CAPTURE');
+      logger.info('Starting Windows capture (mode: $_captureMode)...', module: 'CAPTURE');
       
       // Initialize gamma LUT for processing (1.0 = linear passthrough, no correction)
       _initGammaLut(1.0);
       _preFrameBuffer = Uint8List(_preTargetFrameSize);
       _outFrameBuffer = Uint8List(_targetFrameSize);
       
+      // Determine capture mode and resolve parameters
+      WindowsCaptureMode gdiMode = WindowsCaptureMode.desktop;
+      int hwnd = 0;
+      int regionX = 0, regionY = 0, regionWidth = 0, regionHeight = 0;
+      
+      switch (_captureMode) {
+        case CaptureMode.desktop:
+          gdiMode = WindowsCaptureMode.desktop;
+          break;
+          
+        case CaptureMode.appWindow:
+          if (_selectedWindowTitle != null && _selectedWindowTitle!.isNotEmpty) {
+            hwnd = WindowsScreenCapture.findWindowByTitle(_selectedWindowTitle!);
+            if (hwnd == 0) {
+              logger.warn('Window "$_selectedWindowTitle" not found, falling back to desktop', module: 'CAPTURE');
+              gdiMode = WindowsCaptureMode.desktop;
+            } else {
+              gdiMode = WindowsCaptureMode.window;
+              logger.info('Found window "$_selectedWindowTitle" (hwnd=$hwnd)', module: 'CAPTURE');
+            }
+          } else {
+            logger.warn('No window selected, falling back to desktop', module: 'CAPTURE');
+            gdiMode = WindowsCaptureMode.desktop;
+          }
+          break;
+          
+        case CaptureMode.region:
+          gdiMode = WindowsCaptureMode.region;
+          regionX = _regionX;
+          regionY = _regionY;
+          regionWidth = _regionWidth;
+          regionHeight = _regionHeight;
+          logger.info('Region capture: $regionX,$regionY ${regionWidth}x$regionHeight', module: 'CAPTURE');
+          break;
+      }
+      
       // Create and initialize Windows capture at double height for frame folding
       _windowsCapture = WindowsScreenCapture();
-      final success = _windowsCapture!.initialize(targetWidth, _preTargetHeight);
+      final success = _windowsCapture!.initialize(
+        targetWidth,
+        _preTargetHeight,
+        mode: gdiMode,
+        hwnd: hwnd,
+        regionX: regionX,
+        regionY: regionY,
+        regionWidth: regionWidth,
+        regionHeight: regionHeight,
+      );
       
       if (!success) {
         logger.error('Failed to initialize native capture', module: 'CAPTURE');
@@ -476,7 +523,7 @@ class PlatformScreenCaptureService {
       
       _isCapturing = true;
       _isInitialized = true;
-      logger.success('Windows capture started (${targetWidth}x$_preTargetHeight)', module: 'CAPTURE');
+      logger.success('Windows capture started ($gdiMode, ${targetWidth}x$_preTargetHeight)', module: 'CAPTURE');
       return true;
     } catch (e) {
       logger.error('Capture start error: $e', module: 'CAPTURE');

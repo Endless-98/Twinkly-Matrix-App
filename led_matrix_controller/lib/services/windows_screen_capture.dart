@@ -74,6 +74,30 @@ typedef StretchBltDart = int Function(
 typedef SetStretchBltModeNative = Int32 Function(IntPtr hdc, Int32 mode);
 typedef SetStretchBltModeDart = int Function(int hdc, int mode);
 
+// Window management functions
+typedef FindWindowWNative = IntPtr Function(Pointer<Utf16> lpClassName, Pointer<Utf16> lpWindowName);
+typedef FindWindowWDart = int Function(Pointer<Utf16> lpClassName, Pointer<Utf16> lpWindowName);
+
+typedef GetWindowRectNative = Int32 Function(IntPtr hWnd, Pointer<RECT> lpRect);
+typedef GetWindowRectDart = int Function(int hWnd, Pointer<RECT> lpRect);
+
+typedef IsWindowNative = Int32 Function(IntPtr hWnd);
+typedef IsWindowDart = int Function(int hWnd);
+
+
+
+// RECT structure for window bounds
+base class RECT extends Struct {
+  @Int32()
+  external int left;
+  @Int32()
+  external int top;
+  @Int32()
+  external int right;
+  @Int32()
+  external int bottom;
+}
+
 // BITMAPINFOHEADER structure
 base class BITMAPINFOHEADER extends Struct {
   @Uint32()
@@ -114,6 +138,9 @@ const int BI_RGB = 0;
 const int SM_CXSCREEN = 0;
 const int SM_CYSCREEN = 1;
 const int HALFTONE = 4;
+
+/// Capture mode for the GDI capture engine
+enum WindowsCaptureMode { desktop, window, region }
 
 /// Native Windows screen capture using GDI
 /// No external dependencies required - uses Windows APIs directly via FFI
@@ -158,6 +185,18 @@ class WindowsScreenCapture {
   static final SetStretchBltModeDart _setStretchBltMode = _gdi32
       .lookupFunction<SetStretchBltModeNative, SetStretchBltModeDart>('SetStretchBltMode');
   
+  // Window management bindings
+  static final FindWindowWDart _findWindow = _user32
+      .lookupFunction<FindWindowWNative, FindWindowWDart>('FindWindowW');
+  
+  static final GetWindowRectDart _getWindowRect = _user32
+      .lookupFunction<GetWindowRectNative, GetWindowRectDart>('GetWindowRect');
+  
+  static final IsWindowDart _isWindow = _user32
+      .lookupFunction<IsWindowNative, IsWindowDart>('IsWindow');
+  
+
+  
   // Cached resources
   int _screenDC = 0;
   int _memDC = 0;
@@ -169,11 +208,43 @@ class WindowsScreenCapture {
   int _targetHeight = 0;
   bool _isInitialized = false;
   
+  // Capture mode settings
+  WindowsCaptureMode _captureMode = WindowsCaptureMode.desktop;
+  int _targetHwnd = 0;        // For window capture
+  int _regionX = 0;           // For region capture
+  int _regionY = 0;
+  int _regionWidth = 0;
+  int _regionHeight = 0;
+  Pointer<RECT>? _rectBuffer; // Reusable rect for window queries
+  
   Pointer<BITMAPINFO>? _bitmapInfo;
   Pointer<Uint8>? _pixelBuffer;
   
+  /// Find a window handle by its exact title
+  static int findWindowByTitle(String title) {
+    final titlePtr = title.toNativeUtf16();
+    final hwnd = _findWindow(Pointer<Utf16>.fromAddress(0), titlePtr);
+    malloc.free(titlePtr);
+    return hwnd;
+  }
+  
+
+  /// Check if a window handle is still valid
+  static bool isValidWindow(int hwnd) {
+    return _isWindow(hwnd) != 0;
+  }
+  
   /// Initialize the capture system with target dimensions
-  bool initialize(int targetWidth, int targetHeight) {
+  bool initialize(
+    int targetWidth,
+    int targetHeight, {
+    WindowsCaptureMode mode = WindowsCaptureMode.desktop,
+    int hwnd = 0,
+    int regionX = 0,
+    int regionY = 0,
+    int regionWidth = 0,
+    int regionHeight = 0,
+  }) {
     if (_isInitialized) {
       cleanup();
     }
@@ -181,6 +252,14 @@ class WindowsScreenCapture {
     try {
       _targetWidth = targetWidth;
       _targetHeight = targetHeight;
+      
+      // Store capture mode settings
+      _captureMode = mode;
+      _targetHwnd = hwnd;
+      _regionX = regionX;
+      _regionY = regionY;
+      _regionWidth = regionWidth;
+      _regionHeight = regionHeight;
       
       // Get screen dimensions
       _screenWidth = _getSystemMetrics(SM_CXSCREEN);
@@ -191,7 +270,23 @@ class WindowsScreenCapture {
         return false;
       }
       
-      logger.info('Screen: ${_screenWidth}x$_screenHeight, Target: ${_targetWidth}x$_targetHeight', module: 'GDI');
+      // Validate mode-specific settings
+      if (mode == WindowsCaptureMode.window) {
+        if (_targetHwnd == 0 || _isWindow(_targetHwnd) == 0) {
+          logger.error('Invalid window handle: $_targetHwnd', module: 'GDI');
+          return false;
+        }
+        _rectBuffer = calloc<RECT>();
+        logger.info('Window capture mode: hwnd=$_targetHwnd', module: 'GDI');
+      } else if (mode == WindowsCaptureMode.region) {
+        if (_regionWidth <= 0 || _regionHeight <= 0) {
+          logger.error('Invalid region: ${_regionWidth}x$_regionHeight', module: 'GDI');
+          return false;
+        }
+        logger.info('Region capture: $_regionX,$_regionY ${_regionWidth}x$_regionHeight', module: 'GDI');
+      }
+      
+      logger.info('Screen: ${_screenWidth}x$_screenHeight, Target: ${_targetWidth}x$_targetHeight, Mode: $mode', module: 'GDI');
       
       // Get screen DC
       _screenDC = _getDC(0);
@@ -274,10 +369,62 @@ class WindowsScreenCapture {
     final shouldLog = _frameCounter % _logInterval == 1;
     
     try {
+      // Determine source rectangle based on capture mode
+      int srcX = 0, srcY = 0, srcW = _screenWidth, srcH = _screenHeight;
+      
+      switch (_captureMode) {
+        case WindowsCaptureMode.desktop:
+          // Full screen (default values already set)
+          break;
+          
+        case WindowsCaptureMode.window:
+          if (_targetHwnd == 0 || _isWindow(_targetHwnd) == 0) {
+            if (shouldLog) {
+              logger.warn('Target window no longer valid (hwnd=$_targetHwnd)', module: 'GDI');
+            }
+            return null;
+          }
+          // Get current window position (window may have moved)
+          _getWindowRect(_targetHwnd, _rectBuffer!);
+          srcX = _rectBuffer!.ref.left;
+          srcY = _rectBuffer!.ref.top;
+          srcW = _rectBuffer!.ref.right - _rectBuffer!.ref.left;
+          srcH = _rectBuffer!.ref.bottom - _rectBuffer!.ref.top;
+          
+          // Clamp to screen bounds
+          if (srcX < 0) { srcW += srcX; srcX = 0; }
+          if (srcY < 0) { srcH += srcY; srcY = 0; }
+          if (srcX + srcW > _screenWidth) srcW = _screenWidth - srcX;
+          if (srcY + srcH > _screenHeight) srcH = _screenHeight - srcY;
+          
+          if (srcW <= 0 || srcH <= 0) {
+            if (shouldLog) {
+              logger.warn('Window has zero visible area', module: 'GDI');
+            }
+            return null;
+          }
+          break;
+          
+        case WindowsCaptureMode.region:
+          srcX = _regionX;
+          srcY = _regionY;
+          srcW = _regionWidth;
+          srcH = _regionHeight;
+          
+          // Clamp to screen bounds
+          if (srcX < 0) { srcW += srcX; srcX = 0; }
+          if (srcY < 0) { srcH += srcY; srcY = 0; }
+          if (srcX + srcW > _screenWidth) srcW = _screenWidth - srcX;
+          if (srcY + srcH > _screenHeight) srcH = _screenHeight - srcY;
+          
+          if (srcW <= 0 || srcH <= 0) return null;
+          break;
+      }
+      
       // StretchBlt from screen to memory DC (with scaling)
       final result = _stretchBlt(
         _memDC, 0, 0, _targetWidth, _targetHeight,
-        _screenDC, 0, 0, _screenWidth, _screenHeight,
+        _screenDC, srcX, srcY, srcW, srcH,
         SRCCOPY,
       );
       
@@ -402,7 +549,14 @@ class WindowsScreenCapture {
       _pixelBuffer = null;
     }
     
+    if (_rectBuffer != null) {
+      calloc.free(_rectBuffer!);
+      _rectBuffer = null;
+    }
+    
     _isInitialized = false;
+    _captureMode = WindowsCaptureMode.desktop;
+    _targetHwnd = 0;
     logger.info('GDI resources cleaned up', module: 'GDI');
   }
 }

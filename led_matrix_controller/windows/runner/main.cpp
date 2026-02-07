@@ -32,10 +32,20 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   }
   window.SetQuitOnClose(true);
 
+  // Keep the Win32 message pump alive even when the window is minimized.
+  // Without this, GetMessage() blocks when there are no window messages,
+  // which starves the Flutter/Dart event loop and stops background tasks
+  // like screen capture from running.
+  UINT_PTR keepAliveTimer = ::SetTimer(nullptr, 0, 16, nullptr);
+
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {
     ::TranslateMessage(&msg);
     ::DispatchMessage(&msg);
+  }
+
+  if (keepAliveTimer) {
+    ::KillTimer(nullptr, keepAliveTimer);
   }
 
   ::CoUninitialize();
