@@ -74,11 +74,14 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
   void didChangeAppLifecycleState(AppLifecycleState state) {
     // Log lifecycle changes but DO NOT stop capturing
     // This allows screen mirroring to continue when app is in background/unfocused
-    logger.info('App lifecycle changed to: $state', module: 'UI');
+    logger.warn('════════════════════════════════════════', module: 'LIFECYCLE');
+    logger.warn('App lifecycle changed to: $state', module: 'LIFECYCLE');
+    logger.warn('isCapturing: $isCapturing', module: 'LIFECYCLE');
+    logger.warn('════════════════════════════════════════', module: 'LIFECYCLE');
     if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
-      logger.info('App backgrounded/unfocused - capture continues', module: 'UI');
+      logger.warn('App backgrounded/unfocused - capture SHOULD continue', module: 'LIFECYCLE');
     } else if (state == AppLifecycleState.resumed) {
-      logger.info('App resumed/focused - capture continues', module: 'UI');
+      logger.info('App resumed/focused', module: 'LIFECYCLE');
     }
   }
 
@@ -162,9 +165,18 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
       try {
         final frameStart = stopwatch.elapsedMilliseconds;
 
+        // Log every 100th frame to confirm loop is running
+        if (localFrameCount % 100 == 0) {
+          logger.info('═══ Loop iteration $localFrameCount, isCapturing=$isCapturing ═══', module: 'LOOP');
+        }
+
         final screenshotStart = DateTime.now();
         final screenshotData = await PlatformScreenCaptureService.captureFrame();
         final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
+        
+        if (localFrameCount % 100 == 0) {
+          logger.info('Frame $localFrameCount: capture returned ${screenshotData?.length ?? 0} bytes in ${captureMs}ms', module: 'LOOP');
+        }
 
         if (screenshotData != null) {
           consecutiveFailures = 0; // Reset on success
@@ -230,7 +242,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
           // Null frame — don't break! The app may be minimized or capture
           // temporarily stalled.  Back off briefly and retry.
           consecutiveFailures++;
+          if (consecutiveFailures % 10 == 1) {
+            logger.warn('NULL FRAME received ($consecutiveFailures consecutive), retrying...', module: 'LOOP');
+          }
           if (consecutiveFailures >= maxConsecutiveFailures) {
+            logger.error('Too many consecutive failures ($consecutiveFailures), stopping', module: 'LOOP');
             debugPrint('[MIRRORING] Too many consecutive failures ($consecutiveFailures), stopping');
             if (mounted) {
               setState(() { statusMessage = "❌ Capture stalled — stopped"; });

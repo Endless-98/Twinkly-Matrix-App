@@ -368,6 +368,10 @@ class WindowsScreenCapture {
     _frameCounter++;
     final shouldLog = _frameCounter % _logInterval == 1;
     
+    if (shouldLog) {
+      logger.info('GDI captureFrame() called (frame #$_frameCounter)', module: 'GDI');
+    }
+    
     try {
       // Determine source rectangle based on capture mode
       int srcX = 0, srcY = 0, srcW = _screenWidth, srcH = _screenHeight;

@@ -536,8 +536,16 @@ class PlatformScreenCaptureService {
   static int _windowsFrameCount = 0;
   static int _windowsBlackFrames = 0;
   
+  static int _captureCallCount = 0;
+  
   static Future<Uint8List?> _captureWindowsFrame() async {
     try {
+      _captureCallCount++;
+      
+      if (_captureCallCount % 100 == 1) {
+        logger.info('_captureWindowsFrame called (call #$_captureCallCount)', module: 'CAPTURE');
+      }
+      
       if (!_isInitialized || _windowsCapture == null) {
         logger.error('Not initialized - capture: ${_windowsCapture != null}, init: $_isInitialized', module: 'CAPTURE');
         return null;
@@ -545,7 +553,9 @@ class PlatformScreenCaptureService {
       
       final frameData = _windowsCapture!.captureFrame();
       if (frameData == null) {
-        logger.error('captureFrame returned null', module: 'CAPTURE');
+        if (_captureCallCount % 10 == 1) {
+          logger.warn('captureFrame returned null (call #$_captureCallCount)', module: 'CAPTURE');
+        }
         return null;
       }
       
