@@ -138,7 +138,7 @@ class DdpBridge:
 
         # FPP output (mmap)
         mmap_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
-        self.out = FPPOutput(width, height, mapping_file=mmap_path, gamma=1.0)
+        self.out = FPPOutput(width, height, mapping_file=mmap_path, gamma=2.2)
 
         # Frame assembly state
         self._active_frames: dict = {}   # (sender, seq) -> _FrameState

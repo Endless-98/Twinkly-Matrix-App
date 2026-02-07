@@ -155,6 +155,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
     
     // Local frame counter to avoid race conditions with widget state
     int localFrameCount = 0;
+    int consecutiveFailures = 0;
+    const maxConsecutiveFailures = 300; // ~15s at 20fps before giving up
 
     while (isCapturing) {
       try {
@@ -165,6 +167,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
         final captureMs = DateTime.now().difference(screenshotStart).inMilliseconds;
 
         if (screenshotData != null) {
+          consecutiveFailures = 0; // Reset on success
           final sendStart = DateTime.now();
           
           // captureFrame() already returns folded 90×50 (13500 bytes)
@@ -184,8 +187,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
           final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
 
           if (!sentPrimary) {
-            debugPrint("[MIRRORING] Failed to send frame $localFrameCount");
-            break;
+            // Send failure — don't exit loop, just log and retry next frame
+            debugPrint("[MIRRORING] Send failed for frame $localFrameCount, will retry");
+            consecutiveFailures++;
+            await Future.delayed(const Duration(milliseconds: 100));
+            continue;
           }
 
           localFrameCount++;
@@ -206,7 +212,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
           totalMsAcc += totalMs;
 
           // Update UI less frequently (every 20 frames) to avoid throttling when app is backgrounded
-          if (localFrameCount % 20 == 0) {
+          if (localFrameCount % 20 == 0 && mounted) {
             final avgFps = 20000 / totalMsAcc;
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
@@ -214,31 +220,46 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
             captureMsAcc = 0;
             sendMsAcc = 0;
 
-            // Only update widget state if still mounted (app hasn't been disposed)
-            if (mounted) {
-              setState(() {
-                frameCount = localFrameCount;
-                currentFps = avgFps;
-                statusMessage = "📺 ${avgFps.toStringAsFixed(1)} FPS | Capture: ${avgCaptureMs}ms | Send: ${avgSendMs}ms";
-              });
-            }
+            setState(() {
+              frameCount = localFrameCount;
+              currentFps = avgFps;
+              statusMessage = "📺 ${avgFps.toStringAsFixed(1)} FPS | Capture: ${avgCaptureMs}ms | Send: ${avgSendMs}ms";
+            });
           }
         } else {
+          // Null frame — don't break! The app may be minimized or capture
+          // temporarily stalled.  Back off briefly and retry.
+          consecutiveFailures++;
+          if (consecutiveFailures >= maxConsecutiveFailures) {
+            debugPrint('[MIRRORING] Too many consecutive failures ($consecutiveFailures), stopping');
+            if (mounted) {
+              setState(() { statusMessage = "❌ Capture stalled — stopped"; });
+            }
+            break;
+          }
+          // Try reinitializing capture after sustained failures
+          if (consecutiveFailures == 50 || consecutiveFailures == 150) {
+            debugPrint('[MIRRORING] Attempting capture reinit after $consecutiveFailures failures');
+            await PlatformScreenCaptureService.stopCapture();
+            await Future.delayed(const Duration(milliseconds: 200));
+            await PlatformScreenCaptureService.startCapture();
+          }
+          await Future.delayed(const Duration(milliseconds: 50));
+          continue;
+        }
+      } catch (e) {
+        // Transient errors (e.g. FFI hiccup during minimize) — don't kill the
+        // loop; back off and retry.
+        consecutiveFailures++;
+        debugPrint("[MIRRORING] Transient error ($consecutiveFailures): $e");
+        if (consecutiveFailures >= maxConsecutiveFailures) {
           if (mounted) {
-            setState(() {
-              statusMessage = "⚠️ No frame data - check FFmpeg";
-            });
+            setState(() { statusMessage = "❌ Error: $e"; });
           }
           break;
         }
-      } catch (e) {
-        debugPrint("[MIRRORING] Error: $e");
-        if (mounted) {
-          setState(() {
-            statusMessage = "❌ Error: $e";
-          });
-        }
-        break;
+        await Future.delayed(const Duration(milliseconds: 100));
+        continue;
       }
     }
     
