@@ -44,7 +44,7 @@ class MirroringPage extends ConsumerStatefulWidget {
   ConsumerState<MirroringPage> createState() => _MirroringPageState();
 }
 
-class _MirroringPageState extends ConsumerState<MirroringPage> {
+class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindingObserver {
   bool isCapturing = false;
   String statusMessage = "Ready";
   int frameCount = 0;
@@ -58,9 +58,28 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     capabilities = PlatformScreenCaptureService.getCapabilities();
     _initializeStatus();
     logger.info('Mirroring page initialized', module: 'UI');
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Log lifecycle changes but DO NOT stop capturing
+    // This allows screen mirroring to continue when app is in background/unfocused
+    logger.info('App lifecycle changed to: $state', module: 'UI');
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.inactive) {
+      logger.info('App backgrounded/unfocused - capture continues', module: 'UI');
+    } else if (state == AppLifecycleState.resumed) {
+      logger.info('App resumed/focused - capture continues', module: 'UI');
+    }
   }
 
   Future<void> _initializeStatus() async {
@@ -133,6 +152,9 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
     const targetIntervalMs = 50; // 20 FPS
     final stopwatch = Stopwatch()..start();
     int nextFrameTargetMs = targetIntervalMs;
+    
+    // Local frame counter to avoid race conditions with widget state
+    int localFrameCount = 0;
 
     while (isCapturing) {
       try {
@@ -162,11 +184,11 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           final sendMs = DateTime.now().difference(sendStart).inMilliseconds;
 
           if (!sentPrimary) {
-            debugPrint("[MIRRORING] Failed to send frame $frameCount");
+            debugPrint("[MIRRORING] Failed to send frame $localFrameCount");
             break;
           }
 
-          frameCount++;
+          localFrameCount++;
           captureMsAcc += captureMs;
           sendMsAcc += sendMs;
 
@@ -183,7 +205,8 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
           final totalMs = stopwatch.elapsedMilliseconds - frameStart;
           totalMsAcc += totalMs;
 
-          if (frameCount % 20 == 0) {
+          // Update UI less frequently (every 20 frames) to avoid throttling when app is backgrounded
+          if (localFrameCount % 20 == 0) {
             final avgFps = 20000 / totalMsAcc;
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
@@ -191,24 +214,39 @@ class _MirroringPageState extends ConsumerState<MirroringPage> {
             captureMsAcc = 0;
             sendMsAcc = 0;
 
-            setState(() {
-              currentFps = avgFps;
-              statusMessage = "📺 ${avgFps.toStringAsFixed(1)} FPS | Capture: ${avgCaptureMs}ms | Send: ${avgSendMs}ms";
-            });
+            // Only update widget state if still mounted (app hasn't been disposed)
+            if (mounted) {
+              setState(() {
+                frameCount = localFrameCount;
+                currentFps = avgFps;
+                statusMessage = "📺 ${avgFps.toStringAsFixed(1)} FPS | Capture: ${avgCaptureMs}ms | Send: ${avgSendMs}ms";
+              });
+            }
           }
         } else {
-          setState(() {
-            statusMessage = "⚠️ No frame data - check FFmpeg";
-          });
+          if (mounted) {
+            setState(() {
+              statusMessage = "⚠️ No frame data - check FFmpeg";
+            });
+          }
           break;
         }
       } catch (e) {
         debugPrint("[MIRRORING] Error: $e");
-        setState(() {
-          statusMessage = "❌ Error: $e";
-        });
+        if (mounted) {
+          setState(() {
+            statusMessage = "❌ Error: $e";
+          });
+        }
         break;
       }
+    }
+    
+    // Final sync of frame count when loop exits
+    if (mounted) {
+      setState(() {
+        frameCount = localFrameCount;
+      });
     }
   }
 
