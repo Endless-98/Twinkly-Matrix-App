@@ -52,19 +52,34 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
-  // ---- keep-alive: hide minimize / deactivation from the Flutter engine ----
-  // Flutter's embedder reacts to WM_SIZE(SIZE_MINIMIZED) by setting the view
-  // to "hidden", which transitions the engine to a paused lifecycle state and
-  // stops processing Dart timers, futures, and microtasks.  For our app this
-  // kills the background screen-capture loop.
+  // ---- keep-alive: hide minimize / focus-loss from the Flutter engine --------
   //
-  // Fix: swallow SIZE_MINIMIZED so the engine never sees it.  The window still
-  // minimizes visually (WM_SIZE is a notification, not a request), but Flutter
-  // keeps running as if the window were its previous size.  SIZE_RESTORED and
-  // SIZE_MAXIMIZED pass through normally so rendering resumes correctly.
+  // Flutter's Windows embedder reacts to two messages that throttle or pause
+  // the Dart event loop:
+  //
+  // 1. WM_SIZE  with SIZE_MINIMIZED → engine lifecycle becomes "hidden"
+  //    → Dart timers / futures / microtasks stop completely.
+  //
+  // 2. WM_ACTIVATE with WA_INACTIVE → engine lifecycle becomes "inactive"
+  //    → Dart event loop is throttled to ~5 FPS.
+  //
+  // Both kill the background screen-capture loop that must run at 20+ FPS.
+  //
+  // Fix: intercept these messages BEFORE HandleTopLevelWindowProc sees them.
+  // The window still minimizes / deactivates visually (these are notifications,
+  // not requests), but Flutter keeps running as if it were focused and visible.
+  // SIZE_RESTORED, SIZE_MAXIMIZED, and WA_ACTIVE / WA_CLICKACTIVE pass through
+  // normally so rendering and focus behaviour resume correctly.
+
+  // (a) Minimized → swallow entirely
   if (message == WM_SIZE && wparam == SIZE_MINIMIZED) {
-    // Acknowledge the message but do NOT forward to Flutter.
     return 0;
+  }
+
+  // (b) Focus lost → skip Flutter's handler but let the base Win32Window still
+  //     process the message (it sets keyboard focus on the child content).
+  if (message == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE) {
+    return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
   }
   // ---- end keep-alive -------------------------------------------------------
 
