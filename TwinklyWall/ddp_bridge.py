@@ -230,7 +230,7 @@ class DdpBridge:
             packets_this_loop = 0
             while packets_this_loop < self.batch_limit:
                 try:
-                    data, sender = self.sock.recvfrom(1500)
+                    data, sender = self.sock.recvfrom(65536)
                     packets_this_loop += 1
                     self._iv_packets += 1
                 except BlockingIOError:

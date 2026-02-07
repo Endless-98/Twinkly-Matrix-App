@@ -18,9 +18,12 @@ class DDPSender {
   // Keep UDP payloads below typical MTU to avoid fragmentation
   // DDP header is 10 bytes, keep data <= 1050 bytes for 1060 total packet size (safe for 1500-byte MTU with headroom)
   static const int _maxChunkData = 1050;
-  // Optionally send whole frame in a single UDP datagram (fastest; relies on local LAN handling fragmentation)
-  // Safer default: use chunked packets to avoid MTU-related drops; can re-enable if LAN path supports it
-  static const bool _useSinglePacket = false;
+  // Send whole frame in a single UDP datagram (13510 bytes).  The kernel
+  // handles IP fragmentation/reassembly transparently on the LAN.  This
+  // avoids the 13-packet burst that overwhelms WiFi when sent without
+  // inter-chunk delays (sleep() crashes Win32, await is throttled when
+  // unfocused).  One large send() per frame = reliable delivery.
+  static const bool _useSinglePacket = true;
   static File? _logFile;
   static int _framesSinceSocketRecreate = 0;
   static const int _socketRecreateInterval = 10000; // Recreate socket every 10000 frames to prevent buffer buildup (~8 min at 20fps)
