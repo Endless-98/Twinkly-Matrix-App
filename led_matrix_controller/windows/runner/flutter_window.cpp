@@ -52,34 +52,40 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
-  // ---- keep-alive: hide minimize / focus-loss from the Flutter engine --------
+  // ---- keep-alive: hide ALL minimize / focus-loss events from Flutter --------
   //
-  // Flutter's Windows embedder reacts to two messages that throttle or pause
-  // the Dart event loop:
+  // Flutter's Windows embedder throttles or pauses the Dart event loop when
+  // it detects these window messages:
   //
-  // 1. WM_SIZE  with SIZE_MINIMIZED → engine lifecycle becomes "hidden"
-  //    → Dart timers / futures / microtasks stop completely.
+  //   WM_SIZE(SIZE_MINIMIZED)   → engine lifecycle "hidden"  → Dart stops
+  //   WM_ACTIVATE(WA_INACTIVE)  → engine lifecycle "inactive" → 5 FPS throttle
+  //   WM_ACTIVATEAPP(FALSE)     → also signals deactivation
   //
-  // 2. WM_ACTIVATE with WA_INACTIVE → engine lifecycle becomes "inactive"
-  //    → Dart event loop is throttled to ~5 FPS.
+  // Any of these kill the 20+ FPS background screen-capture loop.
   //
-  // Both kill the background screen-capture loop that must run at 20+ FPS.
+  // Fix: swallow ALL of them before HandleTopLevelWindowProc or ANY child
+  // window sees them.  We must NOT route to Win32Window::MessageHandler
+  // either, because its WM_ACTIVATE handler calls SetFocus(child_content_)
+  // which generates WM_KILLFOCUS on the Flutter child view — and the engine
+  // processes that internally to trigger the same lifecycle transition.
   //
-  // Fix: intercept these messages BEFORE HandleTopLevelWindowProc sees them.
-  // The window still minimizes / deactivates visually (these are notifications,
-  // not requests), but Flutter keeps running as if it were focused and visible.
-  // SIZE_RESTORED, SIZE_MAXIMIZED, and WA_ACTIVE / WA_CLICKACTIVE pass through
-  // normally so rendering and focus behaviour resume correctly.
+  // The window still minimizes/deactivates visually (these are post-hoc
+  // notifications).  SIZE_RESTORED / WA_ACTIVE / WA_CLICKACTIVE pass through
+  // normally so rendering and focus resume on restore.
 
-  // (a) Minimized → swallow entirely
+  // (a) Window minimized
   if (message == WM_SIZE && wparam == SIZE_MINIMIZED) {
     return 0;
   }
 
-  // (b) Focus lost → skip Flutter's handler but let the base Win32Window still
-  //     process the message (it sets keyboard focus on the child content).
+  // (b) Window deactivated (focus lost to another window)
   if (message == WM_ACTIVATE && LOWORD(wparam) == WA_INACTIVE) {
-    return Win32Window::MessageHandler(hwnd, message, wparam, lparam);
+    return 0;
+  }
+
+  // (c) Application deactivated (another app came to foreground)
+  if (message == WM_ACTIVATEAPP && wparam == FALSE) {
+    return 0;
   }
   // ---- end keep-alive -------------------------------------------------------
 

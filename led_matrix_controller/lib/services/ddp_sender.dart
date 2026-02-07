@@ -245,18 +245,19 @@ class DDPSender {
         final isLast = sent + dataLen >= rgbData.length;
         final packet = _buildDdpPacketStaticChunk(rgbData, sent, dataLen, isLast, frameSeq);
         
-        // On Windows, non-blocking UDP send() returns 0 when the socket
-        // buffer is full.  Unlike the previous assumption, 0 means NOT sent.
-        // Retry with a brief yield to let the OS drain the buffer.
+        // Send this chunk.  Use synchronous sleep() for retries and
+        // inter-chunk pacing instead of await Future.delayed() — when the
+        // Dart event loop is throttled (app unfocused), each await takes
+        // ~200ms instead of 1ms, spreading 13 chunks over 2.6 seconds and
+        // causing the DDP bridge to time out every frame.
         int bytesSent = _staticSocket!.send(packet, addr, port);
         if (bytesSent == 0) {
-          // Yield to the event loop so the OS can flush the outgoing buffer
-          await Future.delayed(const Duration(milliseconds: 1));
+          // Socket buffer full — brief synchronous pause to let OS drain it
+          sleep(const Duration(microseconds: 500));
           bytesSent = _staticSocket!.send(packet, addr, port);
         }
         if (bytesSent == 0) {
-          // Second attempt also failed — one more back-off
-          await Future.delayed(const Duration(milliseconds: 2));
+          sleep(const Duration(milliseconds: 1));
           bytesSent = _staticSocket!.send(packet, addr, port);
         }
 
@@ -274,10 +275,11 @@ class DDPSender {
         sent += dataLen;
         packets++;
 
-        // Small yield between chunks to prevent socket buffer overflow.
-        // Without this, Windows drops all but the first UDP packet.
+        // Brief synchronous pause between chunks to prevent socket buffer
+        // overflow.  500µs is enough for the OS to flush one 1060-byte
+        // UDP packet and works regardless of event loop speed.
         if (!isLast) {
-          await Future.delayed(const Duration(milliseconds: 1));
+          sleep(const Duration(microseconds: 500));
         }
       }
 
