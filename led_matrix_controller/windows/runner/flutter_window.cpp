@@ -52,6 +52,22 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // ---- keep-alive: hide minimize / deactivation from the Flutter engine ----
+  // Flutter's embedder reacts to WM_SIZE(SIZE_MINIMIZED) by setting the view
+  // to "hidden", which transitions the engine to a paused lifecycle state and
+  // stops processing Dart timers, futures, and microtasks.  For our app this
+  // kills the background screen-capture loop.
+  //
+  // Fix: swallow SIZE_MINIMIZED so the engine never sees it.  The window still
+  // minimizes visually (WM_SIZE is a notification, not a request), but Flutter
+  // keeps running as if the window were its previous size.  SIZE_RESTORED and
+  // SIZE_MAXIMIZED pass through normally so rendering resumes correctly.
+  if (message == WM_SIZE && wparam == SIZE_MINIMIZED) {
+    // Acknowledge the message but do NOT forward to Flutter.
+    return 0;
+  }
+  // ---- end keep-alive -------------------------------------------------------
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
