@@ -162,19 +162,43 @@ if command -v curl >/dev/null 2>&1; then
             NEEDS_FPPD_RESTART=1
         else
             echo '⚠️  API did not persist alwaysTransmit, using settings-file fallback...'
-            mkdir -p /home/fpp/media/settings >/dev/null 2>&1 || true
-            if echo '1' > "$AT_FILE" 2>/dev/null || sudo sh -c "echo 1 > '$AT_FILE'" 2>/dev/null; then
+            # Diagnose the settings path first
+            AT_DIR="/home/fpp/media/settings"
+            if [ -f "$AT_DIR" ]; then
+                echo "⚠️  $AT_DIR exists as a FILE (not a directory) — FPP may use a different storage scheme"
+            elif [ ! -d "$AT_DIR" ]; then
+                mkdir -p "$AT_DIR" 2>/dev/null || sudo mkdir -p "$AT_DIR" 2>/dev/null || true
+            fi
+            # Try fpp CLI tool (FPP ships with /usr/local/bin/fpp or /usr/bin/fpp)
+            AT_WRITTEN=0
+            if command -v fpp >/dev/null 2>&1; then
+                if fpp -c setSetting alwaysTransmit 1 >/dev/null 2>&1 || \
+                   sudo fpp -c setSetting alwaysTransmit 1 >/dev/null 2>&1; then
+                    echo '✅ Always Transmit enabled via fpp CLI'
+                    AT_WRITTEN=1
+                    NEEDS_FPPD_RESTART=1
+                fi
+            fi
+            # Try writing the settings file directly (use brace-group so 2>/dev/null works)
+            if [ "$AT_WRITTEN" -eq 0 ] && [ -d "$AT_DIR" ]; then
+                { echo '1' > "$AT_FILE"; } 2>/dev/null || { sudo sh -c "echo 1 > '$AT_FILE'"; } 2>/dev/null || true
                 AT_FILE_VERIFY="$(tr -d '[:space:][]"' < "$AT_FILE" 2>/dev/null || echo '')"
                 if [ "$AT_FILE_VERIFY" = "1" ]; then
                     echo '✅ Always Transmit enabled successfully (settings file)'
+                    AT_WRITTEN=1
                     NEEDS_FPPD_RESTART=1
-                else
-                    echo '❌ WARNING: Could not verify alwaysTransmit settings file value'
-                    echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
                 fi
-            else
-                echo '❌ WARNING: Could not write /home/fpp/media/settings/alwaysTransmit'
-                echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
+            fi
+            if [ "$AT_WRITTEN" -eq 0 ]; then
+                echo ''
+                echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+                echo '❌  Could not set alwaysTransmit automatically.'
+                echo '   Settings path info:'
+                ls -la /home/fpp/media/ 2>/dev/null | grep -E 'settings|total' | head -5 || true
+                echo '   ▶  Enable manually: FPP UI → Input/Output Setup → Channel Outputs'
+                echo '                       → tick "Always Transmit Channel Data"'
+                echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+                echo ''
             fi
         fi
     fi

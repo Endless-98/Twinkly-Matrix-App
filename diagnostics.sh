@@ -481,8 +481,15 @@ if have_cmd curl && have_cmd jq; then
             info "Enabling Always Transmit Channel Data..."
             curl -sS -m 5 -X PUT 'http://localhost/api/settings/alwaysTransmit' \
                 -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
-            mkdir -p /home/fpp/media/settings 2>/dev/null || true
-            echo '1' > "$AT_FILE" 2>/dev/null || sudo sh -c "echo 1 > '$AT_FILE'" 2>/dev/null || true
+            # Try fpp CLI first
+            if command -v fpp >/dev/null 2>&1; then
+                fpp -c setSetting alwaysTransmit 1 >/dev/null 2>&1 || \
+                sudo fpp -c setSetting alwaysTransmit 1 >/dev/null 2>&1 || true
+            fi
+            # Fall back to settings file
+            AT_DIR="/home/fpp/media/settings"
+            [[ ! -d "$AT_DIR" ]] && { mkdir -p "$AT_DIR" 2>/dev/null || sudo mkdir -p "$AT_DIR" 2>/dev/null || true; }
+            { echo '1' > "$AT_FILE"; } 2>/dev/null || { sudo sh -c "echo 1 > '$AT_FILE'"; } 2>/dev/null || true
             info "Restarting fppd..."
             if have_cmd systemctl; then
                 sudo systemctl restart fppd 2>/dev/null || true
