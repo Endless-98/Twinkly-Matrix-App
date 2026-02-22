@@ -184,6 +184,25 @@ check_port_listen() {
     fi
 }
 
+parse_overlay_state() {
+    local body="$1"
+    local state=""
+
+    if have_cmd jq; then
+        state="$(echo "$body" | jq -r 'if type=="object" then (.State // .state // empty) elif type=="number" then tostring elif type=="string" then . else empty end' 2>/dev/null || true)"
+    fi
+
+    if [[ -z "$state" ]]; then
+        state="$(echo "$body" | tr -d '[:space:]' | grep -oE '^[0-9]+$' | head -n1 || true)"
+    fi
+
+    if [[ -z "$state" ]]; then
+        state="$(echo "$body" | grep -oE '"(State|state)"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -n1 || true)"
+    fi
+
+    echo "$state"
+}
+
 section "Input Parameters"
 kv "Model" "$MODEL_NAME"
 kv "Safe model" "$SAFE_MODEL_NAME"
@@ -263,6 +282,7 @@ fi
 section "Overlay Model + State"
 OVERLAY_ENDPOINT=""
 MODEL_ENCODED="$(url_encode_spaces "$MODEL_NAME")"
+OVERLAY_STATE=""
 STATE_ENDPOINTS=(
     "/api/overlays/model/${SAFE_MODEL_NAME}/state"
     "/api/overlays/model/${MODEL_ENCODED}/state"
@@ -277,14 +297,10 @@ if have_cmd curl; then
             OVERLAY_ENDPOINT="$ep"
             pass "Overlay state endpoint available: ${ep}"
 
-            state=""
-            if have_cmd jq; then
-                state="$(echo "$body" | jq -r '.State // .state // empty' 2>/dev/null || true)"
-            else
-                state="$(echo "$body" | grep -oE '"(State|state)"[[:space:]]*:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | head -n1 || true)"
-            fi
+            state="$(parse_overlay_state "$body")"
 
             if [[ -n "$state" ]]; then
+                OVERLAY_STATE="$state"
                 kv "Detected overlay state" "$state"
                 if [[ "$state" == "3" ]]; then
                     pass "Overlay state is 3 (always transmitting)"
@@ -380,7 +396,7 @@ if [[ -d "$SETTINGS_DIR" ]]; then
         fi
     done
 else
-    fail "Settings directory missing: $SETTINGS_DIR"
+    warn "Settings directory missing: $SETTINGS_DIR (common on newer FPP versions using API/config-backed settings)"
 fi
 
 section "FPP Config Inventory"
@@ -435,8 +451,32 @@ else
     warn "TwinklyWall app directory not found at ${TW_APP}"
 fi
 
-check_port_listen "udp" "$DDP_PORT" "DDP bridge"
 check_port_listen "tcp" "$API_PORT" "TwinklyWall API"
+
+DDP_UDP_LISTENING=0
+if have_cmd ss; then
+    if ss -lun | awk '{print $5}' | grep -qE "(^|:)${DDP_PORT}$"; then
+        DDP_UDP_LISTENING=1
+    fi
+fi
+
+if [[ "$DDP_UDP_LISTENING" -eq 1 ]]; then
+    pass "DDP bridge listening on UDP ${DDP_PORT}"
+else
+    if have_cmd systemctl && systemctl list-unit-files ddp_bridge.service --no-pager 2>/dev/null | grep -q ddp_bridge.service; then
+        if systemctl is-active --quiet ddp_bridge; then
+            fail "ddp_bridge service is active but UDP ${DDP_PORT} is not listening"
+        else
+            warn "ddp_bridge service exists but is not active; UDP ${DDP_PORT} not listening"
+        fi
+    else
+        if [[ -e "$MMAP_FILE" ]] && [[ "$OVERLAY_STATE" == "3" ]]; then
+            pass "DDP UDP ${DDP_PORT} not listening, but TwinklyWall/FPP overlay path is ready (embedded bridge mode)"
+        else
+            warn "DDP UDP ${DDP_PORT} not listening (may be expected if bridge is embedded or idle)"
+        fi
+    fi
+fi
 
 if have_cmd systemctl; then
     if systemctl list-unit-files twinklywall.service --no-pager 2>/dev/null | grep -q twinklywall.service; then
