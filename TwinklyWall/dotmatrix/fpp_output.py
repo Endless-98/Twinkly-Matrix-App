@@ -126,22 +126,45 @@ class FPPOutput:
         - 1 = Enabled (transparent)
         - 2 = Enabled (transparent RGB)
         - 3 = Enabled (always on - sends buffer data to outputs)
+        
+        Retries up to 3 times with readback verification.
         """
-        try:
-            url = f"http://localhost/api/overlays/model/{model_name}/state"
-            data = json.dumps({"State": state}).encode('utf-8')
-            req = urllib.request.Request(url, data=data, method='PUT')
-            req.add_header('Content-Type', 'application/json')
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                result = resp.read().decode('utf-8')
-                print(f"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' set to state {state}", flush=True)
-                print(f"[FPP_OVERLAY] Response: {result}", flush=True)
-        except urllib.error.URLError as e:
-            print(f"[FPP_OVERLAY] ERROR: Could not reach FPP API: {e}", flush=True)
-            print(f"[FPP_OVERLAY] Is FPPD running? Try: sudo systemctl status fppd", flush=True)
-        except Exception as e:
-            print(f"[FPP_OVERLAY] WARNING: Could not set overlay state: {e}", flush=True)
-            print(f"[FPP_OVERLAY] Overlay may need manual activation via FPP UI", flush=True)
+        url_set = f"http://localhost/api/overlays/model/{model_name}/state"
+        url_get = f"http://localhost/api/overlays/model/{model_name}"
+        max_attempts = 3
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                data = json.dumps({"State": state}).encode('utf-8')
+                req = urllib.request.Request(url_set, data=data, method='PUT')
+                req.add_header('Content-Type', 'application/json')
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    resp.read()
+            except Exception as e:
+                print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: PUT failed: {e}", flush=True)
+                if attempt < max_attempts:
+                    import time as _t; _t.sleep(1)
+                continue
+
+            # Readback verification
+            try:
+                with urllib.request.urlopen(url_get, timeout=5) as resp:
+                    body = json.loads(resp.read().decode('utf-8'))
+                    current = body.get("State", body.get("state", None))
+                    if current == state:
+                        print(f"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' confirmed state {state}", flush=True)
+                        return True
+                    else:
+                        print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: readback state={current}, expected {state}", flush=True)
+            except Exception as e:
+                print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: readback failed: {e}", flush=True)
+
+            if attempt < max_attempts:
+                import time as _t; _t.sleep(1)
+
+        print(f"[FPP_OVERLAY] WARNING: Could not confirm overlay state {state} after {max_attempts} attempts", flush=True)
+        print(f"[FPP_OVERLAY] Overlay may need manual activation via FPP UI", flush=True)
+        return False
 
     def _build_routing_table(self):
         """Pre-compute routing from visual grid to FPP buffer positions.

@@ -305,6 +305,118 @@ fi
 
 echo '✅ Setup/update complete!'
 echo ''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# POST-SETUP VERIFICATION — overlay state, controller reachability, smoke test
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if command -v curl >/dev/null 2>&1; then
+    # 1) Force Pixel Overlay state 3 (always-on) — fppd resets overlays to 0
+    #    on restart, so we must re-set it AFTER fppd + twinklywall are up.
+    echo ''
+    echo '🔧 Ensuring Pixel Overlay is in state 3 (always on)...'
+    sleep 2  # give twinklywall + fppd a moment to settle
+    OVERLAY_OK=0
+    for attempt in 1 2 3; do
+        curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
+            -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
+        sleep 0.5
+        OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>/dev/null \
+            | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
+        if [ "$OV_STATE" = "3" ]; then
+            echo "✅ Pixel Overlay '${SAFE_MODEL_NAME}' is in state 3 (always on)"
+            OVERLAY_OK=1
+            break
+        fi
+        echo "   attempt $attempt: overlay state = '$OV_STATE', retrying..."
+        sleep 1
+    done
+    if [ "$OVERLAY_OK" -eq 0 ]; then
+        echo "⚠️  Could not confirm overlay state 3 — fppd may not have the model yet"
+        echo "   Check FPP UI → Pixel Overlay Models → ${MODEL}"
+    fi
+
+    # 2) Verify Twinkly controller reachability
+    if [ -f "$CO_CONFIG" ] && command -v jq >/dev/null 2>&1; then
+        echo ''
+        echo '🔍 Checking Twinkly controller reachability...'
+        CONTROLLER_IPS="$(jq -r '.channelOutputs[0].universes[]?.address // empty' "$CO_CONFIG" 2>/dev/null | sort -u)"
+        if [ -n "$CONTROLLER_IPS" ]; then
+            ALL_OK=1
+            for ip in $CONTROLLER_IPS; do
+                if ping -c1 -W1 "$ip" >/dev/null 2>&1; then
+                    echo "   ✅ $ip — reachable"
+                else
+                    echo "   ❌ $ip — NOT reachable"
+                    ALL_OK=0
+                fi
+            done
+            if [ "$ALL_OK" -eq 1 ]; then
+                echo "✅ All $(echo "$CONTROLLER_IPS" | wc -l) Twinkly controllers are reachable"
+            else
+                echo "⚠️  Some controllers are unreachable — verify IPs and power"
+            fi
+        else
+            echo "⚠️  No controller IPs found in co-universes.json"
+        fi
+    fi
+
+    # 3) End-to-end smoke test — write a bright test pattern into the mmap
+    #    and verify fppd is transmitting UDP to the controllers.
+    if [ -e "$FPP_MMAP_FILE" ] && [ -w "$FPP_MMAP_FILE" ]; then
+        echo ''
+        echo '🧪 Running end-to-end smoke test...'
+        MMAP_SIZE=$(( WIDTH * HEIGHT * 3 ))
+
+        # Write a bright red test pattern directly into the mmap
+        python3 -c "
+import os, time
+path = '$FPP_MMAP_FILE'
+size = $MMAP_SIZE
+# Bright red pattern
+pattern = (b'\\xff\\x00\\x00') * (size // 3)
+with open(path, 'r+b') as f:
+    f.seek(0)
+    f.write(pattern[:size])
+    f.flush()
+    os.fsync(f.fileno())
+print(f'Wrote {size} bytes of RED test pattern to {path}')
+" 2>/dev/null && echo '   ✅ Test pattern written to mmap' || echo '   ⚠️  Could not write test pattern'
+
+        # Check if UDP packets are going to any controller
+        if command -v timeout >/dev/null 2>&1; then
+            FIRST_IP="$(echo "$CONTROLLER_IPS" | head -1)"
+            if [ -n "$FIRST_IP" ]; then
+                echo "   ⏳ Listening for UDP packets to $FIRST_IP for 3 seconds..."
+                PKT_COUNT="$(sudo timeout 3 tcpdump -ni eth0 "udp and dst host $FIRST_IP" 2>/dev/null | wc -l || echo '0')"
+                if [ "$PKT_COUNT" -gt 0 ]; then
+                    echo "   ✅ Captured $PKT_COUNT UDP packets → fppd IS transmitting to controllers"
+                    echo ''
+                    echo '   🎉 THE PIPELINE IS LIVE!'
+                    echo '   If the wall is still dark, the Twinkly controllers may need power-cycling'
+                    echo '   or they may need to be set to external-control mode in the Twinkly app.'
+                else
+                    echo "   ⚠️  0 UDP packets captured — fppd may not be outputting"
+                    echo "   Check: sudo journalctl -u fppd -n 40 --no-pager"
+                fi
+            fi
+        fi
+
+        # Restore mmap to black (so the test flash doesn't stay on)
+        python3 -c "
+import os
+path = '$FPP_MMAP_FILE'
+size = $MMAP_SIZE
+with open(path, 'r+b') as f:
+    f.seek(0)
+    f.write(b'\\x00' * size)
+    f.flush()
+    os.fsync(f.fileno())
+" 2>/dev/null || true
+    fi
+fi
+
+echo ''
 echo '📊 Service Status:'
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo '📡 TwinklyWall (API server + DDP bridge on ports 5000 & 4049):'
