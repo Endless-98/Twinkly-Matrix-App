@@ -117,6 +117,37 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
+# Ensure fppd is in Bridge mode (mode 1)
+# Player mode (mode 2) only outputs during active sequence playback.
+# Bridge mode continuously runs the output loop, which is required for
+# TwinklyWall's Pixel Overlay writes to reach the controllers.
+echo '🔧 Checking fppd operating mode...'
+if command -v curl >/dev/null 2>&1; then
+    FPPD_MODE="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("mode",""))' 2>/dev/null || echo '')"
+    if [ "$FPPD_MODE" = "1" ]; then
+        echo '✅ fppd is in Bridge mode (continuous output)'
+    elif [ "$FPPD_MODE" = "2" ]; then
+        echo '⚠️  fppd is in Player mode — overlays only output during active playback'
+        echo '   Switching to Bridge mode for continuous Pixel Overlay output...'
+        curl -sS -m 5 -X PUT 'http://localhost/api/settings/fppMode' \
+            -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
+        echo '♻️ Restarting fppd in Bridge mode...'
+        sudo systemctl restart fppd || true
+        sleep 3
+        NEW_MODE="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("mode",""))' 2>/dev/null || echo '')"
+        if [ "$NEW_MODE" = "1" ]; then
+            echo '✅ fppd switched to Bridge mode successfully'
+        else
+            echo '❌ Could not switch to Bridge mode (current mode: '"$NEW_MODE"')'
+            echo '   Switch manually: FPP UI → Status/Control → FPP Mode → Bridge'
+        fi
+    else
+        echo "⚠️  Unexpected fppd mode: $FPPD_MODE"
+    fi
+else
+    echo '⚠️  curl not available — cannot check fppd mode'
+fi
+
 # Ensure FPP channel outputs master switch is enabled
 # The "Enable Output" toggle is stored in co-universes.json, not in /api/settings/
 CO_CONFIG="/home/fpp/media/config/co-universes.json"
