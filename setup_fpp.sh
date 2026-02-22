@@ -117,6 +117,31 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
+# Ensure FPP channel outputs master switch is enabled
+# Without this, FPP will not transmit any data to controllers/universes
+echo '🔧 Ensuring FPP channel outputs are enabled...'
+CO_STATUS="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
+CO_CLEAN="$(echo "$CO_STATUS" | tr -d '[:space:][]"')"
+if [ "$CO_CLEAN" = "1" ] || [ "$CO_CLEAN" = "true" ]; then
+    echo '✅ Channel outputs already enabled'
+else
+    echo '⚠️  Channel outputs are OFF — enabling now...'
+    curl -sS -m 5 -X PUT "http://localhost/api/settings/channelOutputsEnabled" \
+        -H "Content-Type: application/json" -d '{"value":"1"}' >/dev/null 2>&1 || true
+    # Verify it took effect
+    CO_VERIFY="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
+    CO_VERIFY_CLEAN="$(echo "$CO_VERIFY" | tr -d '[:space:][]"')"
+    if [ "$CO_VERIFY_CLEAN" = "1" ] || [ "$CO_VERIFY_CLEAN" = "true" ]; then
+        echo '✅ Channel outputs enabled successfully'
+        echo '♻️ Restarting fppd to apply output changes...'
+        sudo systemctl restart fppd || true
+        sleep 3
+    else
+        echo '❌ WARNING: Could not enable channel outputs via API'
+        echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs'
+    fi
+fi
+
 # Check FPP frame buffer permissions
 SAFE_MODEL_NAME="${MODEL// /_}"
 FPP_MMAP_FILE="/dev/shm/FPP-Model-Data-${SAFE_MODEL_NAME}"

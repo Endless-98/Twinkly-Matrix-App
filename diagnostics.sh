@@ -8,6 +8,7 @@ HEIGHT=50
 DDP_PORT=4049
 API_PORT=5000
 FIX_OVERLAY_STATE=0
+FIX_CHANNEL_OUTPUTS=0
 VERBOSE=1
 RUN_LIVE_FLOW_TEST=1
 REQUIRE_VISUAL_CONFIRM=0
@@ -38,6 +39,7 @@ Options:
   --ddp-port N           DDP UDP listen port (default: 4049)
   --api-port N           TwinklyWall API port (default: 5000)
   --fix-overlay-state    Attempt to set overlay state to 3 (always on)
+  --fix-channel-outputs  Enable channelOutputsEnabled if off (restarts fppd)
     --skip-live-flow-test  Skip active live pixel flow probe
     --require-visual-confirm  Prompt for visual LED confirmation (interactive)
     --live-test-seconds N  Hold each test frame N seconds (default: 1.5)
@@ -76,6 +78,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --fix-overlay-state)
             FIX_OVERLAY_STATE=1
+            shift
+            ;;
+        --fix-channel-outputs)
+            FIX_CHANNEL_OUTPUTS=1
             shift
             ;;
         --quiet)
@@ -433,6 +439,44 @@ else
     fail "curl is required for API checks"
 fi
 
+section "Channel Outputs Master Switch"
+if have_cmd curl; then
+    co_raw="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
+    co_clean="$(echo "$co_raw" | tr -d '[:space:][]\"')"
+    kv "channelOutputsEnabled raw" "$co_raw"
+    if [[ "$co_clean" == "1" || "$co_clean" == "true" ]]; then
+        CHANNEL_OUTPUTS_ENABLED="true"
+        pass "Channel outputs master switch is ON"
+    else
+        CHANNEL_OUTPUTS_ENABLED="false"
+        fail "Channel outputs master switch is OFF (raw: ${co_raw})"
+        echo "       FPP will NOT send any data to controllers until this is enabled."
+        echo "       Fix:  --fix-channel-outputs  or via FPP UI → Input/Output Setup → Channel Outputs → Enable"
+        if [[ "$FIX_CHANNEL_OUTPUTS" -eq 1 ]]; then
+            put_result="$(curl -sS -m 5 -X PUT 'http://localhost/api/settings/channelOutputsEnabled' \
+                -H 'Content-Type: application/json' -d '{"value":"1"}' 2>/dev/null || true)"
+            if echo "$put_result" | grep -qi 'ok'; then
+                pass "channelOutputsEnabled set to 1 via API"
+                info "Restarting fppd to apply channel output changes..."
+                if have_cmd systemctl; then
+                    sudo systemctl restart fppd 2>/dev/null || true
+                    sleep 3
+                    if systemctl is-active --quiet fppd; then
+                        pass "fppd restarted successfully after enabling channel outputs"
+                        CHANNEL_OUTPUTS_ENABLED="true"
+                    else
+                        fail "fppd did not restart cleanly"
+                    fi
+                fi
+            else
+                fail "Could not enable channelOutputsEnabled via API: ${put_result}"
+            fi
+        fi
+    fi
+else
+    warn "curl not available; cannot check channelOutputsEnabled"
+fi
+
 section "Overlay Model + State"
 OVERLAY_ENDPOINT=""
 MODEL_ENCODED="$(url_encode_spaces "$MODEL_NAME")"
@@ -651,7 +695,8 @@ kv "Hold seconds" "$LIVE_TEST_SECONDS"
 
 if [[ "$RUN_LIVE_FLOW_TEST" -eq 1 ]]; then
     if [[ "$CHANNEL_OUTPUTS_ENABLED" == "false" ]]; then
-        fail "Skipping live flow probe because channel outputs are disabled"
+        fail "Skipping live flow probe because channel outputs master switch is OFF"
+        echo "       Run with --fix-channel-outputs to enable, or enable via FPP UI."
     else
         run_live_flow_test "$MMAP_FILE" "$WIDTH" "$HEIGHT" "$LIVE_TEST_SECONDS"
 
