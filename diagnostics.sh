@@ -9,7 +9,7 @@ DDP_PORT=4049
 API_PORT=5000
 FIX_OVERLAY_STATE=0
 FIX_CHANNEL_OUTPUTS=0
-FIX_FPP_MODE=0
+FIX_ALWAYS_TRANSMIT=0
 VERBOSE=1
 RUN_LIVE_FLOW_TEST=1
 REQUIRE_VISUAL_CONFIRM=0
@@ -41,7 +41,7 @@ Options:
   --api-port N           TwinklyWall API port (default: 5000)
   --fix-overlay-state    Attempt to set overlay state to 3 (always on)
   --fix-channel-outputs  Enable output in co-universes.json if off (restarts fppd)
-  --fix-fpp-mode         Switch fppd from Player to Bridge mode (restarts fppd)
+  --fix-always-transmit  Enable "Always Transmit Channel Data" if off (restarts fppd)
     --skip-live-flow-test  Skip active live pixel flow probe
     --require-visual-confirm  Prompt for visual LED confirmation (interactive)
     --live-test-seconds N  Hold each test frame N seconds (default: 1.5)
@@ -86,8 +86,8 @@ while [[ $# -gt 0 ]]; do
             FIX_CHANNEL_OUTPUTS=1
             shift
             ;;
-        --fix-fpp-mode)
-            FIX_FPP_MODE=1
+        --fix-always-transmit)
+            FIX_ALWAYS_TRANSMIT=1
             shift
             ;;
         --quiet)
@@ -439,9 +439,9 @@ else
     fail "curl is required for API checks"
 fi
 
-section "FPPD Operating Mode"
-# Player mode (2) only transmits during active sequence playback.
-# Bridge mode (1) continuously runs the output loop — required for TwinklyWall.
+section "FPPD Operating Mode & Always Transmit"
+# Modern FPP v7+ uses Player mode with "Always Transmit Channel Data" to
+# keep the output loop running when idle.  Bridge mode is deprecated.
 if have_cmd curl && have_cmd jq; then
     fppd_json="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null || echo '{}')"
     fppd_mode="$(echo "$fppd_json" | jq -r '.mode // empty' 2>/dev/null || true)"
@@ -449,34 +449,45 @@ if have_cmd curl && have_cmd jq; then
     fppd_status="$(echo "$fppd_json" | jq -r '.status_name // empty' 2>/dev/null || true)"
     kv "fppd mode" "${fppd_mode} (${fppd_mode_name})"
     kv "fppd status" "$fppd_status"
-    if [[ "$fppd_mode" == "1" ]]; then
-        pass "fppd is in Bridge mode (continuous output loop)"
-    elif [[ "$fppd_mode" == "2" ]]; then
-        fail "fppd is in Player mode — output loop only runs during active sequence playback"
-        echo "       TwinklyWall writes to the Pixel Overlay buffer, but fppd will NOT"
-        echo "       transmit that data unless it is in Bridge mode."
-        echo "       Fix:  --fix-fpp-mode  or FPP UI → Status/Control → FPP Mode → Bridge"
-        if [[ "$FIX_FPP_MODE" -eq 1 ]]; then
-            info "Switching fppd to Bridge mode..."
-            curl -sS -m 5 -X PUT 'http://localhost/api/settings/fppMode' \
+    if [[ "$fppd_mode" == "2" ]]; then
+        pass "fppd is in Player mode (correct for FPP v7+)"
+    else
+        warn "fppd in unexpected mode ${fppd_mode} (${fppd_mode_name}) — expected Player (2)"
+        echo "       If fppd was accidentally set to a deprecated mode, restore with:"
+        echo "       curl -X PUT http://localhost/api/settings/fppMode -H 'Content-Type: application/json' -d '{\"value\":\"2\"}'"
+    fi
+
+    # "Always Transmit Channel Data" is the keep-alive that prevents fppd
+    # from sleeping its output loop when the player is idle.
+    at_raw="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null || true)"
+    at_clean="$(echo "$at_raw" | tr -d '[:space:][]\"')"
+    kv "alwaysTransmit raw" "$at_raw"
+    if [[ "$at_clean" == "1" || "$at_clean" == "true" ]]; then
+        pass "Always Transmit Channel Data is ON"
+    else
+        fail "Always Transmit Channel Data is OFF"
+        echo "       Without this, fppd stops sending data to controllers when idle."
+        echo "       Pixel Overlay data will NOT reach the lights unless a sequence is playing."
+        echo "       Fix:  --fix-always-transmit  or FPP UI → Input/Output Setup → Channel Outputs"
+        if [[ "$FIX_ALWAYS_TRANSMIT" -eq 1 ]]; then
+            info "Enabling Always Transmit Channel Data..."
+            curl -sS -m 5 -X PUT 'http://localhost/api/settings/alwaysTransmit' \
                 -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
             info "Restarting fppd..."
             if have_cmd systemctl; then
                 sudo systemctl restart fppd 2>/dev/null || true
                 sleep 3
-                new_mode="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null | jq -r '.mode // empty' 2>/dev/null || true)"
-                if [[ "$new_mode" == "1" ]]; then
-                    pass "fppd switched to Bridge mode successfully"
+                at_verify="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]\"' || true)"
+                if [[ "$at_verify" == "1" || "$at_verify" == "true" ]]; then
+                    pass "Always Transmit enabled successfully"
                 else
-                    fail "Could not switch fppd to Bridge mode (mode=${new_mode})"
+                    fail "Could not enable Always Transmit via API"
                 fi
             fi
         fi
-    else
-        warn "Unexpected fppd mode: ${fppd_mode} (${fppd_mode_name})"
     fi
 else
-    warn "curl or jq not available; cannot check fppd mode"
+    warn "curl or jq not available; cannot check fppd mode / Always Transmit"
 fi
 
 section "Channel Outputs Master Switch"

@@ -117,32 +117,49 @@ if [ $DEBUG_MODE -eq 0 ]; then
     fi
 fi
 
-# Ensure fppd is in Bridge mode (mode 1)
-# Player mode (mode 2) only outputs during active sequence playback.
-# Bridge mode continuously runs the output loop, which is required for
-# TwinklyWall's Pixel Overlay writes to reach the controllers.
+# Modern FPP v7+ "Virtual Bridge" setup (Bridge mode is deprecated):
+# 1. Stay in Player mode (mode 2)
+# 2. Enable "Always Transmit" so fppd keeps outputting when idle
+# 3. Overlay state 3 (handled by fpp_output.py at runtime)
+# 4. Channel outputs enabled (checked below)
 echo '🔧 Checking fppd operating mode...'
+NEEDS_FPPD_RESTART=0
 if command -v curl >/dev/null 2>&1; then
     FPPD_MODE="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("mode",""))' 2>/dev/null || echo '')"
-    if [ "$FPPD_MODE" = "1" ]; then
-        echo '✅ fppd is in Bridge mode (continuous output)'
-    elif [ "$FPPD_MODE" = "2" ]; then
-        echo '⚠️  fppd is in Player mode — overlays only output during active playback'
-        echo '   Switching to Bridge mode for continuous Pixel Overlay output...'
+    if [ "$FPPD_MODE" = "2" ]; then
+        echo '✅ fppd is in Player mode (correct for FPP v9.x)'
+    else
+        echo "⚠️  fppd in unexpected mode $FPPD_MODE — restoring Player mode (2)..."
         curl -sS -m 5 -X PUT 'http://localhost/api/settings/fppMode' \
+            -H 'Content-Type: application/json' -d '{"value":"2"}' >/dev/null 2>&1 || true
+        NEEDS_FPPD_RESTART=1
+    fi
+
+    # "Always Transmit Channel Data" keeps the output loop running even when
+    # the player is idle, so Pixel Overlay data reaches the controllers.
+    echo '🔧 Ensuring "Always Transmit Channel Data" is enabled...'
+    ALWAYS_TX="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
+    if [ "$ALWAYS_TX" = "1" ] || [ "$ALWAYS_TX" = "true" ]; then
+        echo '✅ Always Transmit is already enabled'
+    else
+        echo '⚠️  Always Transmit is OFF — enabling now...'
+        curl -sS -m 5 -X PUT 'http://localhost/api/settings/alwaysTransmit' \
             -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
-        echo '♻️ Restarting fppd in Bridge mode...'
+        NEEDS_FPPD_RESTART=1
+        # Verify
+        AT_VERIFY="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
+        if [ "$AT_VERIFY" = "1" ] || [ "$AT_VERIFY" = "true" ]; then
+            echo '✅ Always Transmit enabled successfully'
+        else
+            echo '❌ WARNING: Could not enable Always Transmit via API'
+            echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
+        fi
+    fi
+
+    if [ "$NEEDS_FPPD_RESTART" -eq 1 ]; then
+        echo '♻️ Restarting fppd to apply mode/transmit changes...'
         sudo systemctl restart fppd || true
         sleep 3
-        NEW_MODE="$(curl -sS -m 5 'http://localhost/api/fppd/status' 2>/dev/null | python3 -c 'import sys,json; print(json.load(sys.stdin).get("mode",""))' 2>/dev/null || echo '')"
-        if [ "$NEW_MODE" = "1" ]; then
-            echo '✅ fppd switched to Bridge mode successfully'
-        else
-            echo '❌ Could not switch to Bridge mode (current mode: '"$NEW_MODE"')'
-            echo '   Switch manually: FPP UI → Status/Control → FPP Mode → Bridge'
-        fi
-    else
-        echo "⚠️  Unexpected fppd mode: $FPPD_MODE"
     fi
 else
     echo '⚠️  curl not available — cannot check fppd mode'
