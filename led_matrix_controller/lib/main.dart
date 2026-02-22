@@ -116,6 +116,7 @@ class HomePage extends ConsumerWidget {
                       _ModeButton(
                         label: 'Scenes',
                         icon: Icons.movie,
+                        iconSize: 5.6,
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
@@ -153,11 +154,13 @@ class _ModeButton extends StatelessWidget {
   final String label;
   final IconData icon;
   final VoidCallback onPressed;
+  final double iconSize;
 
   const _ModeButton({
     required this.label,
     required this.icon,
     required this.onPressed,
+    this.iconSize = 28,
   });
 
   @override
@@ -173,7 +176,7 @@ class _ModeButton extends StatelessWidget {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: Colors.white, size: 28),
+            Icon(icon, color: Colors.white, size: iconSize),
             const SizedBox(width: 12),
             Text(
               label,

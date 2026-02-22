@@ -200,6 +200,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                                           leading: Icon(
                                             Icons.movie,
                                             color: isPlaying ? Colors.green : Colors.blue,
+                                            size: 4.8,
                                           ),
                                           title: Text(scene),
                                           trailing: IconButton(
