@@ -36,6 +36,12 @@ class FPPOutput:
         # Precompute channel order indices
         self._channel_idx = self._make_channel_indices(self.color_order)
 
+        # Derive the overlay model name from the mmap file path
+        # e.g. "/dev/shm/FPP-Model-Data-Light_Wall" → "Light_Wall"
+        basename = os.path.basename(mapping_file)
+        prefix = "FPP-Model-Data-"
+        self._overlay_model_name = basename[len(prefix):] if basename.startswith(prefix) else "Light_Wall"
+
         # Load mapping and initialize
         self.mapping = load_light_wall_mapping()
         self._initialize_memory_map(mapping_file)
@@ -109,7 +115,7 @@ class FPPOutput:
             print(f"[FPP_INIT] Memory map created successfully", flush=True)
             print(f"[FPP_INIT] ========================================", flush=True)
             # Enable overlay to always transmit (state 3)
-            self._enable_overlay_state()
+            self._enable_overlay_state(model_name=self._overlay_model_name)
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
             print(f"Fix: sudo chmod 666 {fpp_file}")
@@ -118,7 +124,7 @@ class FPPOutput:
             print(f"FPP Error: {e}")
             self._cleanup()
 
-    def _enable_overlay_state(self, model_name="Light_Wall", state=3):
+    def _enable_overlay_state(self, model_name=None, state=3):
         """Enable the Pixel Overlay Model to always transmit (state 3).
         
         State values:
@@ -127,11 +133,13 @@ class FPPOutput:
         - 2 = Enabled (transparent RGB)
         - 3 = Enabled (always on - sends buffer data to outputs)
         
-        Retries up to 3 times with readback verification.
+        Retries up to 5 times with readback verification.
         """
+        if model_name is None:
+            model_name = getattr(self, '_overlay_model_name', 'Light_Wall')
         url_set = f"http://localhost/api/overlays/model/{model_name}/state"
         url_get = f"http://localhost/api/overlays/model/{model_name}"
-        max_attempts = 3
+        max_attempts = 5
 
         for attempt in range(1, max_attempts + 1):
             try:

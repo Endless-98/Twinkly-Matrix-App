@@ -253,21 +253,25 @@ fi
 # Check FPP frame buffer permissions
 SAFE_MODEL_NAME="${MODEL// /_}"
 FPP_MMAP_FILE="/dev/shm/FPP-Model-Data-${SAFE_MODEL_NAME}"
+MMAP_PERM_CMD="sudo chmod 666 ${FPP_MMAP_FILE}"
+MMAP_PERMS_SET=0
 echo '🔍 Checking FPP frame buffer permissions...'
 if [ ! -e "$FPP_MMAP_FILE" ]; then
     echo "⚠️  Frame buffer file does not exist yet: $FPP_MMAP_FILE"
     echo "   (This is normal; FPP will create it when the model is activated)"
+    echo "   Run after model is active: $MMAP_PERM_CMD"
 else
+    echo "🔧 Applying write permissions: $MMAP_PERM_CMD"
+    sudo chmod 666 "$FPP_MMAP_FILE" || {
+        echo "❌ Failed to set permissions on $FPP_MMAP_FILE"
+        echo "   Try running: $MMAP_PERM_CMD"
+        exit 1
+    }
     if [ -w "$FPP_MMAP_FILE" ]; then
-        echo "✅ Frame buffer exists and is writable: $FPP_MMAP_FILE"
+        MMAP_PERMS_SET=1
+        echo "✅ Frame buffer is writable: $FPP_MMAP_FILE"
     else
-        echo "⚠️  Frame buffer exists but is NOT writable, fixing permissions..."
-        sudo chmod 666 "$FPP_MMAP_FILE" || {
-            echo "❌ Failed to set permissions on $FPP_MMAP_FILE"
-            echo "   Try running: sudo chmod 666 $FPP_MMAP_FILE"
-            exit 1
-        }
-        echo "✅ Frame buffer permissions fixed"
+        echo "⚠️  chmod completed but file still not writable: $FPP_MMAP_FILE"
     fi
 fi
 
@@ -315,16 +319,29 @@ if command -v curl >/dev/null 2>&1; then
     #    on restart, so we must re-set it AFTER fppd + twinklywall are up.
     echo ''
     echo '🔧 Ensuring Pixel Overlay is in state 3 (always on)...'
-    sleep 5  # give fppd time to fully initialise overlay models (RPi is slow)
 
-    # FPP overlay API uses the display name (with spaces), URL-encoded.
-    # The mmap file uses underscores, but the REST API does NOT.
-    URL_MODEL_NAME="$(echo "$MODEL" | sed 's/ /%20/g')"
+    # Wait for fppd to be fully ready (overlay models load after startup)
+    echo '   Waiting for fppd to be ready...'
+    FPPD_READY=0
+    for i in $(seq 1 15); do
+        FPPD_STATUS="$(curl -sS -m 3 'http://localhost/api/fppd/status' 2>/dev/null \
+            | python3 -c 'import sys,json; print(json.load(sys.stdin).get("status_name",""))' 2>/dev/null || echo '')"
+        if [ -n "$FPPD_STATUS" ] && [ "$FPPD_STATUS" != "" ]; then
+            echo "   fppd status: $FPPD_STATUS (ready after ${i}s)"
+            FPPD_READY=1
+            break
+        fi
+        sleep 1
+    done
+    if [ "$FPPD_READY" -eq 0 ]; then
+        echo '   ⚠️  fppd did not respond to status check within 15s'
+    fi
 
-    # Debug: list available overlay models so we can see what fppd knows about
+    # List available overlay models for diagnostics
     echo '   Available overlay models:'
-    curl -sS -m 5 'http://localhost/api/overlays/models' 2>/dev/null \
-        | python3 -c '
+    MODELS_RAW="$(curl -sS -m 5 'http://localhost/api/overlays/models' 2>/dev/null || echo '')"
+    if [ -n "$MODELS_RAW" ]; then
+        echo "$MODELS_RAW" | python3 -c '
 import sys, json
 try:
     data = json.load(sys.stdin)
@@ -332,46 +349,47 @@ try:
         for m in data:
             name = m if isinstance(m, str) else m.get("Name", m.get("name", str(m)))
             print(f"     - {name}")
+        if not data:
+            print("     (empty list — no models registered)")
+    elif isinstance(data, dict):
+        for k, v in data.items():
+            print(f"     - {k}: {v}")
     else:
-        print(f"     (unexpected response: {data})")
+        print(f"     (unexpected: {data})")
 except Exception as e:
-    print(f"     (could not parse: {e})")
-' 2>/dev/null || echo '     (no response from overlay API)'
+    print(f"     (parse error: {e})")
+' 2>/dev/null || echo "     (raw: ${MODELS_RAW:0:200})"
+    else
+        echo '     (no response from overlay API)'
+    fi
 
     OVERLAY_OK=0
-    for attempt in 1 2 3 4 5; do
-        # Try URL-encoded display name (correct for FPP API)
-        curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${URL_MODEL_NAME}/state" \
-            -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
+    for attempt in 1 2 3 4 5 6; do
+        # PUT the state
+        PUT_RESP="$(curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
+            -H 'Content-Type: application/json' -d '{"State":3}' 2>&1 || echo 'CURL_FAILED')"
+
         sleep 1
-        OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${URL_MODEL_NAME}" 2>/dev/null \
-            | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
+
+        # GET and verify
+        GET_RESP="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>&1 || echo '')"
+        OV_STATE="$(echo "$GET_RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
+
         if [ "$OV_STATE" = "3" ]; then
-            echo "✅ Pixel Overlay '${MODEL}' is in state 3 (always on)"
+            echo "✅ Pixel Overlay '${SAFE_MODEL_NAME}' is in state 3 (always on)"
             OVERLAY_OK=1
             break
         fi
-        # Fallback: also try the underscored name in case this FPP version uses it
-        if [ "$attempt" -ge 3 ] && [ "$URL_MODEL_NAME" != "$SAFE_MODEL_NAME" ]; then
-            curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
-                -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
-            sleep 0.5
-            OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>/dev/null \
-                | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
-            if [ "$OV_STATE" = "3" ]; then
-                echo "✅ Pixel Overlay '${MODEL}' is in state 3 (always on)"
-                OVERLAY_OK=1
-                break
-            fi
-        fi
-        echo "   attempt $attempt: overlay state = '$OV_STATE', retrying..."
-        sleep 2
+
+        echo "   attempt $attempt: state='$OV_STATE' PUT='${PUT_RESP:0:120}' GET='${GET_RESP:0:120}'"
+        sleep 3
     done
     if [ "$OVERLAY_OK" -eq 0 ]; then
         echo "⚠️  Could not confirm overlay state 3 — fppd may not have the model yet"
         echo "   Check FPP UI → Pixel Overlay Models → ${MODEL}"
-        echo "   You can also try manually:"
-        echo "     curl -X PUT 'http://localhost/api/overlays/model/${URL_MODEL_NAME}/state' -H 'Content-Type: application/json' -d '{\"State\":3}'"
+        echo "   Manual test:"
+        echo "     curl -v -X PUT 'http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state' -H 'Content-Type: application/json' -d '{\"State\":3}'"
+        echo "     curl -v 'http://localhost/api/overlays/model/${SAFE_MODEL_NAME}'"
     fi
 
     # 2) Verify Twinkly controller reachability
@@ -460,6 +478,17 @@ echo '━━━━━━━━━━━━━━━━━━━━━━━━�
 echo '📡 TwinklyWall (API server + DDP bridge on ports 5000 & 4049):'
 sudo systemctl status twinklywall --no-pager -l || true
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+echo ''
+echo '✅ Enabled / enforced by setup:'
+echo "   • mmap write permission command: $MMAP_PERM_CMD"
+echo '   • fppd mode: Player (mode 2)'
+echo '   • alwaysTransmit: enabled'
+echo '   • channel outputs: enabled'
+if [ "$MMAP_PERMS_SET" -eq 1 ]; then
+    echo '   • mmap file is writable now'
+else
+    echo '   • mmap file writability could not be confirmed yet'
+fi
 echo ''
 echo '💡 To view logs:'
 echo '   sudo journalctl -u twinklywall -f'

@@ -459,7 +459,7 @@ def main():
         # Start the DDP bridge inside this process so screen-mirroring
         # traffic is handled by the same service (visible via
         # journalctl -u twinklywall).
-        model_name = os.environ.get('FPP_MODEL_NAME', 'Light_Wall')
+        model_name = os.environ.get('FPP_MODEL_NAME', 'Light Wall')
         if ON_PI:
             from ddp_bridge import start_bridge_thread
             try:
