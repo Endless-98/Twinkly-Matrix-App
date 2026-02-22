@@ -39,7 +39,7 @@ Options:
   --ddp-port N           DDP UDP listen port (default: 4049)
   --api-port N           TwinklyWall API port (default: 5000)
   --fix-overlay-state    Attempt to set overlay state to 3 (always on)
-  --fix-channel-outputs  Enable channelOutputsEnabled if off (restarts fppd)
+  --fix-channel-outputs  Enable output in co-universes.json if off (restarts fppd)
     --skip-live-flow-test  Skip active live pixel flow probe
     --require-visual-confirm  Prompt for visual LED confirmation (interactive)
     --live-test-seconds N  Hold each test frame N seconds (default: 1.5)
@@ -412,13 +412,7 @@ if have_cmd curl; then
                 if have_cmd jq && echo "$body" | jq . >/dev/null 2>&1; then
                     channel_out="$(echo "$body" | jq -r '.channelOutputsEnabled // empty' 2>/dev/null || true)"
                     if [[ -n "$channel_out" ]]; then
-                        CHANNEL_OUTPUTS_ENABLED="$channel_out"
-                        kv "channelOutputsEnabled" "$CHANNEL_OUTPUTS_ENABLED"
-                        if [[ "$CHANNEL_OUTPUTS_ENABLED" == "true" ]]; then
-                            pass "FPP channel outputs are enabled"
-                        else
-                            fail "FPP channel outputs are disabled"
-                        fi
+                        kv "system/status channelOutputsEnabled" "$channel_out"
                     fi
                 fi
             fi
@@ -440,23 +434,28 @@ else
 fi
 
 section "Channel Outputs Master Switch"
-if have_cmd curl; then
-    co_raw="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
-    co_clean="$(echo "$co_raw" | tr -d '[:space:][]\"')"
-    kv "channelOutputsEnabled raw" "$co_raw"
-    if [[ "$co_clean" == "1" || "$co_clean" == "true" ]]; then
+# The "Enable Output" toggle lives inside co-universes.json, NOT in /api/settings/
+CO_CONFIG="/home/fpp/media/config/co-universes.json"
+if [[ -f "$CO_CONFIG" ]] && have_cmd jq; then
+    co_enabled="$(jq -r '.channelOutputs[0].enabled // 0' "$CO_CONFIG" 2>/dev/null || echo '0')"
+    co_type="$(jq -r '.channelOutputs[0].type // "unknown"' "$CO_CONFIG" 2>/dev/null || echo 'unknown')"
+    co_count="$(jq -r '.channelOutputs[0].universes | length // 0' "$CO_CONFIG" 2>/dev/null || echo '0')"
+    kv "co-universes enabled" "$co_enabled"
+    kv "co-universes type" "$co_type"
+    kv "co-universes count" "$co_count"
+    if [[ "$co_enabled" == "1" ]]; then
         CHANNEL_OUTPUTS_ENABLED="true"
-        pass "Channel outputs master switch is ON"
+        pass "Channel outputs master switch is ON (co-universes.json)"
     else
         CHANNEL_OUTPUTS_ENABLED="false"
-        fail "Channel outputs master switch is OFF (raw: ${co_raw})"
+        fail "Channel outputs master switch is OFF in co-universes.json (enabled=${co_enabled})"
         echo "       FPP will NOT send any data to controllers until this is enabled."
-        echo "       Fix:  --fix-channel-outputs  or via FPP UI → Input/Output Setup → Channel Outputs → Enable"
+        echo "       Fix:  --fix-channel-outputs  or FPP UI → Input/Output Setup → Channel Outputs → Enable Output"
         if [[ "$FIX_CHANNEL_OUTPUTS" -eq 1 ]]; then
-            put_result="$(curl -sS -m 5 -X PUT 'http://localhost/api/settings/channelOutputsEnabled' \
-                -H 'Content-Type: application/json' -d '{"value":"1"}' 2>/dev/null || true)"
-            if echo "$put_result" | grep -qi 'ok'; then
-                pass "channelOutputsEnabled set to 1 via API"
+            info "Enabling channel outputs in co-universes.json..."
+            if jq '.channelOutputs[0].enabled = 1' "$CO_CONFIG" > "${CO_CONFIG}.tmp" 2>/dev/null && \
+               mv "${CO_CONFIG}.tmp" "$CO_CONFIG"; then
+                pass "Set enabled=1 in co-universes.json"
                 info "Restarting fppd to apply channel output changes..."
                 if have_cmd systemctl; then
                     sudo systemctl restart fppd 2>/dev/null || true
@@ -469,12 +468,15 @@ if have_cmd curl; then
                     fi
                 fi
             else
-                fail "Could not enable channelOutputsEnabled via API: ${put_result}"
+                fail "Could not update co-universes.json"
+                rm -f "${CO_CONFIG}.tmp" 2>/dev/null || true
             fi
         fi
     fi
+elif [[ ! -f "$CO_CONFIG" ]]; then
+    warn "co-universes.json not found at ${CO_CONFIG} — no E1.31/ArtNet/DDP outputs configured"
 else
-    warn "curl not available; cannot check channelOutputsEnabled"
+    warn "jq not available; cannot parse co-universes.json"
 fi
 
 section "Overlay Model + State"

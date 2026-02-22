@@ -118,28 +118,30 @@ if [ $DEBUG_MODE -eq 0 ]; then
 fi
 
 # Ensure FPP channel outputs master switch is enabled
-# Without this, FPP will not transmit any data to controllers/universes
+# The "Enable Output" toggle is stored in co-universes.json, not in /api/settings/
+CO_CONFIG="/home/fpp/media/config/co-universes.json"
 echo '🔧 Ensuring FPP channel outputs are enabled...'
-CO_STATUS="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
-CO_CLEAN="$(echo "$CO_STATUS" | tr -d '[:space:][]"')"
-if [ "$CO_CLEAN" = "1" ] || [ "$CO_CLEAN" = "true" ]; then
-    echo '✅ Channel outputs already enabled'
-else
-    echo '⚠️  Channel outputs are OFF — enabling now...'
-    curl -sS -m 5 -X PUT "http://localhost/api/settings/channelOutputsEnabled" \
-        -H "Content-Type: application/json" -d '{"value":"1"}' >/dev/null 2>&1 || true
-    # Verify it took effect
-    CO_VERIFY="$(curl -sS -m 5 'http://localhost/api/settings/channelOutputsEnabled' 2>/dev/null || true)"
-    CO_VERIFY_CLEAN="$(echo "$CO_VERIFY" | tr -d '[:space:][]"')"
-    if [ "$CO_VERIFY_CLEAN" = "1" ] || [ "$CO_VERIFY_CLEAN" = "true" ]; then
-        echo '✅ Channel outputs enabled successfully'
-        echo '♻️ Restarting fppd to apply output changes...'
-        sudo systemctl restart fppd || true
-        sleep 3
+if [ -f "$CO_CONFIG" ] && command -v jq >/dev/null 2>&1; then
+    CO_ENABLED="$(jq -r '.channelOutputs[0].enabled // 0' "$CO_CONFIG" 2>/dev/null || echo '0')"
+    if [ "$CO_ENABLED" = "1" ]; then
+        echo '✅ Channel outputs already enabled (co-universes.json)'
     else
-        echo '❌ WARNING: Could not enable channel outputs via API'
-        echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs'
+        echo '⚠️  Channel outputs are OFF in co-universes.json — enabling now...'
+        if jq '.channelOutputs[0].enabled = 1' "$CO_CONFIG" > "${CO_CONFIG}.tmp" 2>/dev/null && \
+           mv "${CO_CONFIG}.tmp" "$CO_CONFIG"; then
+            echo '✅ Channel outputs enabled in co-universes.json'
+            echo '♻️ Restarting fppd to apply output changes...'
+            sudo systemctl restart fppd || true
+            sleep 3
+        else
+            echo '❌ WARNING: Could not update co-universes.json'
+            echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Enable Output'
+            rm -f "${CO_CONFIG}.tmp" 2>/dev/null || true
+        fi
     fi
+else
+    echo '⚠️  co-universes.json not found or jq not available — skipping channel output check'
+    echo '   Verify manually in FPP UI → Input/Output Setup → Channel Outputs'
 fi
 
 # Check FPP frame buffer permissions
