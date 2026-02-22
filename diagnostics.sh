@@ -9,10 +9,15 @@ DDP_PORT=4049
 API_PORT=5000
 FIX_OVERLAY_STATE=0
 VERBOSE=1
+RUN_LIVE_FLOW_TEST=1
+REQUIRE_VISUAL_CONFIRM=0
+LIVE_TEST_SECONDS=1.5
 
 PASS_COUNT=0
 WARN_COUNT=0
 FAIL_COUNT=0
+
+CHANNEL_OUTPUTS_ENABLED="unknown"
 
 usage() {
     cat <<'EOF'
@@ -33,6 +38,9 @@ Options:
   --ddp-port N           DDP UDP listen port (default: 4049)
   --api-port N           TwinklyWall API port (default: 5000)
   --fix-overlay-state    Attempt to set overlay state to 3 (always on)
+    --skip-live-flow-test  Skip active live pixel flow probe
+    --require-visual-confirm  Prompt for visual LED confirmation (interactive)
+    --live-test-seconds N  Hold each test frame N seconds (default: 1.5)
   --quiet                Less verbose output
   -h, --help             Show this help
 
@@ -40,6 +48,7 @@ Examples:
   ./diagnostics.sh
   ./diagnostics.sh --model "Light Wall" --width 90 --height 50
   ./diagnostics.sh --fix-overlay-state
+    ./diagnostics.sh --require-visual-confirm --live-test-seconds 2
 EOF
 }
 
@@ -72,6 +81,18 @@ while [[ $# -gt 0 ]]; do
         --quiet)
             VERBOSE=0
             shift
+            ;;
+        --skip-live-flow-test)
+            RUN_LIVE_FLOW_TEST=0
+            shift
+            ;;
+        --require-visual-confirm)
+            REQUIRE_VISUAL_CONFIRM=1
+            shift
+            ;;
+        --live-test-seconds)
+            LIVE_TEST_SECONDS="${2:-}"
+            shift 2
             ;;
         -h|--help)
             usage
@@ -203,6 +224,125 @@ parse_overlay_state() {
     echo "$state"
 }
 
+run_live_flow_test() {
+    local mmap_file="$1"
+    local width="$2"
+    local height="$3"
+    local hold_seconds="$4"
+
+    if [[ ! -e "$mmap_file" ]]; then
+        fail "Live flow test: mmap file missing (${mmap_file})"
+        return 1
+    fi
+
+    if ! have_cmd python3; then
+        fail "Live flow test requires python3"
+        return 1
+    fi
+
+    local before_hash=""
+    if have_cmd sha256sum; then
+        before_hash="$(sha256sum "$mmap_file" | awk '{print $1}')"
+    fi
+
+    local py_out
+    py_out="$(python3 - "$mmap_file" "$width" "$height" "$hold_seconds" <<'PY'
+import hashlib
+import os
+import sys
+import time
+
+path = sys.argv[1]
+width = int(sys.argv[2])
+height = int(sys.argv[3])
+hold = float(sys.argv[4])
+size = width * height * 3
+
+with open(path, 'r+b') as f:
+    original = f.read(size)
+    if len(original) != size:
+        raise RuntimeError(f"mmap size mismatch: expected {size}, got {len(original)}")
+
+    frame1 = bytearray(size)
+    frame2 = bytearray(size)
+
+    for px in range(width * height):
+        base = px * 3
+        x = px % width
+        y = px // width
+
+        # Frame 1: strong red/blue diagonal test pattern
+        frame1[base] = (x * 255) // max(1, (width - 1))
+        frame1[base + 1] = 0
+        frame1[base + 2] = (y * 255) // max(1, (height - 1))
+
+        # Frame 2: strong green checker pattern
+        frame2[base] = 0
+        frame2[base + 1] = 255 if ((x + y) % 2 == 0) else 20
+        frame2[base + 2] = 0
+
+    f.seek(0)
+    f.write(frame1)
+    f.flush()
+    os.fsync(f.fileno())
+    h1 = hashlib.sha256(frame1).hexdigest()
+    print(f"HASH_FRAME1={h1}")
+    time.sleep(hold)
+
+    f.seek(0)
+    f.write(frame2)
+    f.flush()
+    os.fsync(f.fileno())
+    h2 = hashlib.sha256(frame2).hexdigest()
+    print(f"HASH_FRAME2={h2}")
+    time.sleep(hold)
+
+    f.seek(0)
+    f.write(original)
+    f.flush()
+    os.fsync(f.fileno())
+    print("RESTORE_OK=1")
+PY
+    )"
+
+    local py_code=$?
+    if [[ $py_code -ne 0 ]]; then
+        fail "Live flow test failed while writing probe frames to mmap"
+        [[ -n "$py_out" ]] && echo "$py_out"
+        return 1
+    fi
+
+    local hash1 hash2 restore_ok
+    hash1="$(echo "$py_out" | awk -F= '/^HASH_FRAME1=/{print $2}' | head -n1)"
+    hash2="$(echo "$py_out" | awk -F= '/^HASH_FRAME2=/{print $2}' | head -n1)"
+    restore_ok="$(echo "$py_out" | awk -F= '/^RESTORE_OK=/{print $2}' | head -n1)"
+
+    if [[ -n "$hash1" && -n "$hash2" && "$hash1" != "$hash2" ]]; then
+        pass "Live flow test wrote two distinct probe frames into mmap"
+    else
+        fail "Live flow test did not produce distinct frame writes"
+        return 1
+    fi
+
+    if [[ "$restore_ok" == "1" ]]; then
+        pass "Live flow test restored original mmap frame"
+    else
+        warn "Live flow test may not have restored original mmap frame"
+    fi
+
+    if [[ -n "$before_hash" ]] && have_cmd sha256sum; then
+        local after_hash
+        after_hash="$(sha256sum "$mmap_file" | awk '{print $1}')"
+        if [[ "$before_hash" == "$after_hash" ]]; then
+            pass "mmap hash returned to original after probe"
+        else
+            warn "mmap hash differs after probe (live writer may have updated frame concurrently)"
+        fi
+    fi
+
+    return 0
+}
+
 section "Input Parameters"
 kv "Model" "$MODEL_NAME"
 kv "Safe model" "$SAFE_MODEL_NAME"
@@ -262,6 +402,20 @@ if have_cmd curl; then
 
         if [[ "$code" =~ ^2[0-9][0-9]$ ]]; then
             pass "API ${ep} returned HTTP ${code}"
+            if [[ "$ep" == "/api/system/status" ]]; then
+                if have_cmd jq && echo "$body" | jq . >/dev/null 2>&1; then
+                    channel_out="$(echo "$body" | jq -r '.channelOutputsEnabled // empty' 2>/dev/null || true)"
+                    if [[ -n "$channel_out" ]]; then
+                        CHANNEL_OUTPUTS_ENABLED="$channel_out"
+                        kv "channelOutputsEnabled" "$CHANNEL_OUTPUTS_ENABLED"
+                        if [[ "$CHANNEL_OUTPUTS_ENABLED" == "true" ]]; then
+                            pass "FPP channel outputs are enabled"
+                        else
+                            fail "FPP channel outputs are disabled"
+                        fi
+                    fi
+                fi
+            fi
             if [[ $VERBOSE -eq 1 ]]; then
                 if have_cmd jq && echo "$body" | jq . >/dev/null 2>&1; then
                     echo "$body" | jq . 2>/dev/null | head -n 20
@@ -487,6 +641,34 @@ if have_cmd systemctl; then
             [[ -n "$model_line" ]] && echo "$model_line"
         else
             warn "twinklywall service does not explicitly set FPP_MODEL_NAME"
+        fi
+    fi
+fi
+
+section "End-to-End Live Pixel Flow"
+kv "Live flow test" "$([[ "$RUN_LIVE_FLOW_TEST" -eq 1 ]] && echo enabled || echo skipped)"
+kv "Hold seconds" "$LIVE_TEST_SECONDS"
+
+if [[ "$RUN_LIVE_FLOW_TEST" -eq 1 ]]; then
+    if [[ "$CHANNEL_OUTPUTS_ENABLED" == "false" ]]; then
+        fail "Skipping live flow probe because channel outputs are disabled"
+    else
+        run_live_flow_test "$MMAP_FILE" "$WIDTH" "$HEIGHT" "$LIVE_TEST_SECONDS"
+
+        if [[ "$REQUIRE_VISUAL_CONFIRM" -eq 1 ]]; then
+            if [[ -t 0 ]]; then
+                echo "Did the wall visibly show two test frames (red/blue gradient then green checker)? [y/N]"
+                read -r visual_ok
+                if [[ "$visual_ok" =~ ^[Yy]$ ]]; then
+                    pass "Operator confirmed physical LED output"
+                else
+                    fail "Operator did not confirm physical LED output"
+                fi
+            else
+                warn "Visual confirmation requested, but no interactive TTY available"
+            fi
+        else
+            info "Physical output confirmation not requested (use --require-visual-confirm)"
         fi
     fi
 fi
