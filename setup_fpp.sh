@@ -315,25 +315,63 @@ if command -v curl >/dev/null 2>&1; then
     #    on restart, so we must re-set it AFTER fppd + twinklywall are up.
     echo ''
     echo '🔧 Ensuring Pixel Overlay is in state 3 (always on)...'
-    sleep 2  # give twinklywall + fppd a moment to settle
+    sleep 5  # give fppd time to fully initialise overlay models (RPi is slow)
+
+    # FPP overlay API uses the display name (with spaces), URL-encoded.
+    # The mmap file uses underscores, but the REST API does NOT.
+    URL_MODEL_NAME="$(echo "$MODEL" | sed 's/ /%20/g')"
+
+    # Debug: list available overlay models so we can see what fppd knows about
+    echo '   Available overlay models:'
+    curl -sS -m 5 'http://localhost/api/overlays/models' 2>/dev/null \
+        | python3 -c '
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    if isinstance(data, list):
+        for m in data:
+            name = m if isinstance(m, str) else m.get("Name", m.get("name", str(m)))
+            print(f"     - {name}")
+    else:
+        print(f"     (unexpected response: {data})")
+except Exception as e:
+    print(f"     (could not parse: {e})")
+' 2>/dev/null || echo '     (no response from overlay API)'
+
     OVERLAY_OK=0
-    for attempt in 1 2 3; do
-        curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
+    for attempt in 1 2 3 4 5; do
+        # Try URL-encoded display name (correct for FPP API)
+        curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${URL_MODEL_NAME}/state" \
             -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
-        sleep 0.5
-        OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>/dev/null \
+        sleep 1
+        OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${URL_MODEL_NAME}" 2>/dev/null \
             | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
         if [ "$OV_STATE" = "3" ]; then
-            echo "✅ Pixel Overlay '${SAFE_MODEL_NAME}' is in state 3 (always on)"
+            echo "✅ Pixel Overlay '${MODEL}' is in state 3 (always on)"
             OVERLAY_OK=1
             break
         fi
+        # Fallback: also try the underscored name in case this FPP version uses it
+        if [ "$attempt" -ge 3 ] && [ "$URL_MODEL_NAME" != "$SAFE_MODEL_NAME" ]; then
+            curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
+                -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
+            sleep 0.5
+            OV_STATE="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>/dev/null \
+                | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
+            if [ "$OV_STATE" = "3" ]; then
+                echo "✅ Pixel Overlay '${MODEL}' is in state 3 (always on)"
+                OVERLAY_OK=1
+                break
+            fi
+        fi
         echo "   attempt $attempt: overlay state = '$OV_STATE', retrying..."
-        sleep 1
+        sleep 2
     done
     if [ "$OVERLAY_OK" -eq 0 ]; then
         echo "⚠️  Could not confirm overlay state 3 — fppd may not have the model yet"
         echo "   Check FPP UI → Pixel Overlay Models → ${MODEL}"
+        echo "   You can also try manually:"
+        echo "     curl -X PUT 'http://localhost/api/overlays/model/${URL_MODEL_NAME}/state' -H 'Content-Type: application/json' -d '{\"State\":3}'"
     fi
 
     # 2) Verify Twinkly controller reachability
