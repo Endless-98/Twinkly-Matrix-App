@@ -459,10 +459,18 @@ if have_cmd curl && have_cmd jq; then
 
     # "Always Transmit Channel Data" is the keep-alive that prevents fppd
     # from sleeping its output loop when the player is idle.
+    AT_FILE="/home/fpp/media/settings/alwaysTransmit"
     at_raw="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null || true)"
     at_clean="$(echo "$at_raw" | tr -d '[:space:][]\"')"
-    kv "alwaysTransmit raw" "$at_raw"
-    if [[ "$at_clean" == "1" || "$at_clean" == "true" ]]; then
+    at_file_raw=""
+    at_file_clean=""
+    if [[ -f "$AT_FILE" ]]; then
+        at_file_raw="$(cat "$AT_FILE" 2>/dev/null || true)"
+        at_file_clean="$(echo "$at_file_raw" | tr -d '[:space:][]\"')"
+    fi
+    kv "alwaysTransmit raw(api)" "$at_raw"
+    kv "alwaysTransmit raw(file)" "${at_file_raw:-<missing>}"
+    if [[ "$at_clean" == "1" || "$at_clean" == "true" || "$at_file_clean" == "1" || "$at_file_clean" == "true" ]]; then
         pass "Always Transmit Channel Data is ON"
     else
         fail "Always Transmit Channel Data is OFF"
@@ -473,15 +481,18 @@ if have_cmd curl && have_cmd jq; then
             info "Enabling Always Transmit Channel Data..."
             curl -sS -m 5 -X PUT 'http://localhost/api/settings/alwaysTransmit' \
                 -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
+            mkdir -p /home/fpp/media/settings 2>/dev/null || true
+            echo '1' > "$AT_FILE" 2>/dev/null || sudo sh -c "echo 1 > '$AT_FILE'" 2>/dev/null || true
             info "Restarting fppd..."
             if have_cmd systemctl; then
                 sudo systemctl restart fppd 2>/dev/null || true
                 sleep 3
                 at_verify="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]\"' || true)"
-                if [[ "$at_verify" == "1" || "$at_verify" == "true" ]]; then
+                at_verify_file="$(cat "$AT_FILE" 2>/dev/null | tr -d '[:space:][]\"' || true)"
+                if [[ "$at_verify" == "1" || "$at_verify" == "true" || "$at_verify_file" == "1" || "$at_verify_file" == "true" ]]; then
                     pass "Always Transmit enabled successfully"
                 else
-                    fail "Could not enable Always Transmit via API"
+                    fail "Could not enable Always Transmit via API or settings file"
                 fi
             fi
         fi

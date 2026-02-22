@@ -138,21 +138,44 @@ if command -v curl >/dev/null 2>&1; then
     # "Always Transmit Channel Data" keeps the output loop running even when
     # the player is idle, so Pixel Overlay data reaches the controllers.
     echo '🔧 Ensuring "Always Transmit Channel Data" is enabled...'
-    ALWAYS_TX="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
+    AT_FILE="/home/fpp/media/settings/alwaysTransmit"
+    ALWAYS_TX_API="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
+    ALWAYS_TX_FILE=""
+    if [ -f "$AT_FILE" ]; then
+        ALWAYS_TX_FILE="$(tr -d '[:space:][]"' < "$AT_FILE" 2>/dev/null || echo '')"
+    fi
+    ALWAYS_TX="$ALWAYS_TX_API"
+    if [ -z "$ALWAYS_TX" ]; then
+        ALWAYS_TX="$ALWAYS_TX_FILE"
+    fi
+
     if [ "$ALWAYS_TX" = "1" ] || [ "$ALWAYS_TX" = "true" ]; then
         echo '✅ Always Transmit is already enabled'
     else
         echo '⚠️  Always Transmit is OFF — enabling now...'
         curl -sS -m 5 -X PUT 'http://localhost/api/settings/alwaysTransmit' \
             -H 'Content-Type: application/json' -d '{"value":"1"}' >/dev/null 2>&1 || true
-        NEEDS_FPPD_RESTART=1
-        # Verify
+        # Verify API first
         AT_VERIFY="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
         if [ "$AT_VERIFY" = "1" ] || [ "$AT_VERIFY" = "true" ]; then
-            echo '✅ Always Transmit enabled successfully'
+            echo '✅ Always Transmit enabled successfully (API)'
+            NEEDS_FPPD_RESTART=1
         else
-            echo '❌ WARNING: Could not enable Always Transmit via API'
-            echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
+            echo '⚠️  API did not persist alwaysTransmit, using settings-file fallback...'
+            mkdir -p /home/fpp/media/settings >/dev/null 2>&1 || true
+            if echo '1' > "$AT_FILE" 2>/dev/null || sudo sh -c "echo 1 > '$AT_FILE'" 2>/dev/null; then
+                AT_FILE_VERIFY="$(tr -d '[:space:][]"' < "$AT_FILE" 2>/dev/null || echo '')"
+                if [ "$AT_FILE_VERIFY" = "1" ]; then
+                    echo '✅ Always Transmit enabled successfully (settings file)'
+                    NEEDS_FPPD_RESTART=1
+                else
+                    echo '❌ WARNING: Could not verify alwaysTransmit settings file value'
+                    echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
+                fi
+            else
+                echo '❌ WARNING: Could not write /home/fpp/media/settings/alwaysTransmit'
+                echo '   Enable manually in FPP UI → Input/Output Setup → Channel Outputs → Always Transmit'
+            fi
         fi
     fi
 
