@@ -153,18 +153,10 @@ TwinklyWall/assets/source_videos/
 logs/
 
 # ============================================
-# Documentation (KEEP THESE)
+# Documentation
 # ============================================
-!README.md
-!*.md
-!TwinklyWall/README.md
-!led_matrix_controller/README.md
-!COMMUNICATION_GUIDE.md
-!IMPLEMENTATION_CHECKLIST.md
-!QUICKSTART.md
-!README_VIDEO_CONTROL.md
-!RUNNING_ON_FPP.md
-!SETUP_INSTRUCTIONS.md
+# Ignore Markdown files
+*.md
 
 # ============================================
 # Assets to Keep
