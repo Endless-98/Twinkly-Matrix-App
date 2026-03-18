@@ -593,7 +593,32 @@ except Exception as e:
             echo ''
             if [ "$CTRL_APPEARED" -eq 0 ]; then
                 echo "   ❌ Control block STILL absent after fppd restart"
-                echo "   --- Full fppd tail (last 40 lines) ---"
+                echo ''
+                echo '   --- fppd log files (fppd logs to files, NOT journald) ---'
+                FPPD_LOG_DIR='/home/fpp/media/logs'
+                if [ -d "$FPPD_LOG_DIR" ]; then
+                    echo "   Log directory: $FPPD_LOG_DIR"
+                    ls -lhtr "$FPPD_LOG_DIR" 2>/dev/null | tail -10 | sed 's/^/     /' || true
+                    echo ''
+                    # Find the most recent fppd log file
+                    FPPD_LOG="$(ls -t "$FPPD_LOG_DIR"/fppd* 2>/dev/null | head -1 || echo '')"
+                    if [ -z "$FPPD_LOG" ]; then
+                        FPPD_LOG="$(ls -t "$FPPD_LOG_DIR"/*.log 2>/dev/null | head -1 || echo '')"
+                    fi
+                    if [ -n "$FPPD_LOG" ]; then
+                        echo "   Latest log file: $FPPD_LOG ($(wc -l <"$FPPD_LOG" 2>/dev/null || echo '?') lines)"
+                        echo '   --- Overlay/model/pixel related lines: ---'
+                        grep -ni 'overlay\|pixel\|model\|shm\|FPP-Model\|FPP-Pixel\|DefaultState\|control.block' "$FPPD_LOG" 2>/dev/null | tail -20 | sed 's/^/     /' || echo '     (none found)'
+                        echo '   --- Last 40 lines of fppd log: ---'
+                        tail -40 "$FPPD_LOG" 2>/dev/null | sed 's/^/     /' || true
+                    else
+                        echo '   ⚠️  No fppd log file found in log directory'
+                    fi
+                else
+                    echo "   ⚠️  Log directory $FPPD_LOG_DIR not found"
+                fi
+                echo ''
+                echo "   --- Full fppd journal tail (last 40 lines) ---"
                 sudo journalctl -u fppd -n 40 --no-pager 2>/dev/null | sed 's/^/     /' || true
             fi
             # fppd recreates the mmap file on restart — re-apply write permissions
@@ -651,26 +676,37 @@ except Exception as e:
     #     whether fppd is sending to the right universe that Twinkly listens on.
     if [ -f "$CO_CONFIG" ]; then
         echo ''
-        echo '🔍 E1.31 universe configuration (co-universes.json):'
+        echo '🔍 Channel output configuration (co-universes.json):'
         python3 -c "
 import json, sys
 with open('$CO_CONFIG') as f:
     d = json.load(f)
-universes = d.get('channelOutputs',[{}])[0].get('universes',[])
-if not universes:
-    print('   (no universes found in co-universes.json)')
-for i, u in enumerate(universes):
-    ip = u.get('address','?')
-    uni = u.get('universe','?')
-    ch_s = u.get('startChannel','?')
-    ch_c = u.get('channelCount','?')
-    try:
-        ch_end = int(ch_s) + int(ch_c) - 1
-    except Exception:
-        ch_end = '?'
-    active = u.get('active', u.get('enabled', '?'))
-    typ = u.get('type', u.get('unicast', ''))
-    print(f'   [{i}] {ip}  universe={uni}  channels={ch_s}-{ch_end}  active={active}  type={typ}')
+outputs = d.get('channelOutputs',[])
+if not outputs:
+    print('   (no channelOutputs found)')
+for oi, out in enumerate(outputs):
+    proto = out.get('type','?')
+    sub = out.get('subType', '')
+    out_en = out.get('enabled', '?')
+    out_sc = out.get('startChannel','?')
+    out_cc = out.get('channelCount','?')
+    label = f'{proto}' + (f'/{sub}' if sub and sub != proto else '')
+    print(f'   Output [{oi}]: protocol={label}  enabled={out_en}  startCh={out_sc}  chCount={out_cc}')
+    universes = out.get('universes',[])
+    for i, u in enumerate(universes):
+        ip = u.get('address','?')
+        uni = u.get('universe', u.get('id', '-'))
+        ch_s = u.get('startChannel','?')
+        ch_c = u.get('channelCount','?')
+        try:
+            ch_end = int(ch_s) + int(ch_c) - 1
+        except Exception:
+            ch_end = '?'
+        active = u.get('active', u.get('enabled', '?'))
+        typ = u.get('type', '')
+        desc = u.get('description', '')
+        extra = f'  desc={desc}' if desc else ''
+        print(f'      [{i}] {ip}  universe={uni}  channels={ch_s}-{ch_end}  active={active}  subtype={typ}{extra}')
 " 2>/dev/null || echo '   (could not parse co-universes.json)'
     fi
 
@@ -866,57 +902,76 @@ print(sum(1 for b in all_bytes if b == 'ff'))
             echo "       (Render a video first via the Flutter app, then re-run setup_fpp.sh)"
         fi
 
-        # --- FPP channel test: fill ALL output channels with value 200 for 4 seconds.
-        #     This is the DEFINITIVE test of fppd → E1.31 → Twinkly:
+        # --- FPP channel/test mode: fill ALL output channels with value 200 for 4 seconds.
+        #     This is the DEFINITIVE test of fppd → output → Twinkly:
         #       ✅ Lights come on  → fppd output works; problem is only Pixel Overlay
-        #       ❌ Lights stay off → fppd E1.31 universe mapping / Twinkly config broken
+        #       ❌ Lights stay off → fppd output mapping / Twinkly config broken
         echo ''
-        echo '🧪 FPP channel test (sending value=200 to all channels for 4 seconds)...'
-        echo '   *** LOOK AT THE LIGHTS NOW — they should be dimly lit if fppd→E1.31 works ***'
-        CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
+        echo '🧪 FPP test mode (sending value=200 to all channels for 4 seconds)...'
+        echo '   *** LOOK AT THE LIGHTS NOW — they should be dimly lit if fppd output works ***'
+        # FPP v9 test mode API: PUT /api/testmode
+        CH_TEST_OK=0
+        CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/testmode' \
             -H 'Content-Type: application/json' \
-            -d '{"Type":"SingleValue","SValue":200,"Channel":1,"Count":13500}' 2>/dev/null \
-            || echo 'API_UNAVAILABLE')"
-        if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|unavailable\|html\)'; then
-            # Try alternate FPP endpoint format
-            CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
+            -d '{"Enabled":1,"Mode":"SingleChase","CycleMS":1000,"ColorPattern":"C8C8C8","StartChannel":1,"EndChannel":13500}' \
+            2>/dev/null || echo 'API_FAIL')"
+        # Check if FPP accepted the request (JSON with success or "OK")
+        if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|html\|API_FAIL\)'; then
+            # Fallback: try POST /api/testmode
+            CH_TEST_RESP="$(curl -sS -m 5 -X POST 'http://localhost/api/testmode' \
                 -H 'Content-Type: application/json' \
-                -d '{"TestType":"SingleValue","Value":200,"StartChannel":1,"EndChannel":13500}' \
-                2>/dev/null || echo 'NOT_SUPPORTED')"
+                -d '{"enabled":1,"mode":"RGBFill","cycleMS":1000,"colorPattern":"c8c8c8","startChannel":1,"endChannel":13500}' \
+                2>/dev/null || echo 'API_FAIL_2')"
+            if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|html\|API_FAIL\)'; then
+                # Last resort: try the FPPD command socket directly
+                CH_TEST_RESP="$(echo 'T,ENABLED,RGBFill,1000,c8c8c8' | nc -w2 localhost 32322 2>/dev/null || echo 'SOCKET_FAIL')"
+            fi
+        else
+            CH_TEST_OK=1
         fi
-        echo "   Channel test API response: ${CH_TEST_RESP:-no response}"
-        # Also capture packets during channel test to verify fppd sends non-zero
+        echo "   Test mode API response: $(echo "$CH_TEST_RESP" | head -3)"
+        # Capture packets during test to verify fppd sends non-zero DATA (not just headers)
         if [ -n "${FIRST_IP:-}" ]; then
+            sleep 1  # let test mode take effect
             CT_HEX="$(sudo timeout 4 tcpdump -ni eth0 -xx \
                 "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
-            CT_FF="$(echo "$CT_HEX" | python3 -c "
+            CT_PKTS="$(echo "$CT_HEX" | grep -c '0x0000:' || echo '0')"
+            # Count non-zero bytes in DATA portion only (skip first 60 bytes = ETH+IP+UDP+protocol headers)
+            CT_DATA="$(echo "$CT_HEX" | python3 -c "
 import sys, re
 data = sys.stdin.read()
-words = re.findall(r'[0-9a-f]{4}', data.lower())
-all_bytes = [c for w in words for c in (w[:2], w[2:])]
-print(sum(1 for b in all_bytes if b == 'c8' or b == 'ff' or b == 'cd' or b == 'ca' or b == 'c9'))
+# Split into packets at '0x0000:' boundaries
+packets = re.split(r'(?=\s+0x0000:)', data)
+total_nonzero = 0
+for pkt in packets:
+    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    all_bytes = [c for w in words for c in (w[:2], w[2:])]
+    # Skip first 60 bytes (ethernet 14 + IP 20 + UDP 8 + protocol header ~18)
+    payload = all_bytes[60:]
+    total_nonzero += sum(1 for b in payload if b != '00')
+print(total_nonzero)
 " 2>/dev/null || echo '0')"
-            CT_PKTS="$(echo "$CT_HEX" | grep -c '0x0000:' || echo '0')"
-            if [ "${CT_FF:-0}" -gt 20 ]; then
-                echo "   ✅ Channel test: ${CT_PKTS} packets, ${CT_FF} non-zero bytes"
-                echo '   ✅ fppd → E1.31 is working! Problem is ONLY with Pixel Overlay.'
-                echo '   → Fix: ensure DefaultState=3 is IN the model entry (see above),'
-                echo '          restart fppd, then re-run setup_fpp.sh'
+            if [ "${CT_DATA:-0}" -gt 50 ]; then
+                echo "   ✅ Test mode: ${CT_PKTS} packets, ${CT_DATA} non-zero DATA bytes"
+                echo '   ✅ fppd → output is working! Problem is ONLY with Pixel Overlay.'
+                echo '   → Fix: ensure Pixel Overlay control block appears (see fppd logs above)'
+                CH_TEST_OK=1
             else
-                echo "   ⚠️  Channel test: ${CT_PKTS} packets, only ${CT_FF} non-zero bytes"
-                echo '   ❌ fppd is NOT injecting channel test data into E1.31'
-                echo '   → Possible causes:'
-                echo '     1) fppd channel test API format changed in this version'
-                echo '     2) E1.31 universe numbers in co-universes.json are wrong (see above)'
-                echo '     3) Twinkly is listening on different universe than fppd sends'
-                echo '   → Check FPP UI → Testing → Channel Tester → fill channels 1-13500 with 200'
+                echo "   ⚠️  Test mode: ${CT_PKTS} packets, only ${CT_DATA} non-zero DATA bytes"
+                if ! echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|html\|API_FAIL\|SOCKET_FAIL\)'; then
+                    echo '   ❌ fppd accepted test mode but is NOT outputting data'
+                    echo '   → Check fppd logs above for errors'
+                else
+                    echo '   ❌ Test mode API not found — try manually:'
+                    echo '   → FPP UI → Display Testing → fill channels 1-13500 with value 200'
+                fi
             fi
         fi
-        # Stop channel test
-        curl -sS -m 5 -X DELETE 'http://localhost/api/channel/startChannelTest' >/dev/null 2>&1 || true
-        curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
-            -H 'Content-Type: application/json' \
-            -d '{"Type":"off"}' >/dev/null 2>&1 || true
+        # Stop test mode
+        curl -sS -m 5 -X PUT 'http://localhost/api/testmode' \
+            -H 'Content-Type: application/json' -d '{"Enabled":0}' >/dev/null 2>&1 || true
+        curl -sS -m 5 -X POST 'http://localhost/api/testmode' \
+            -H 'Content-Type: application/json' -d '{"enabled":0}' >/dev/null 2>&1 || true
     fi
 fi
 
