@@ -645,6 +645,7 @@ print(sum(1 for b in all_bytes if b == 'ff'))
             echo "       (Render a video first via the Flutter app, then re-run setup_fpp.sh)"
         fi
     fi
+fi
 
 echo ''
 echo '📊 Service Status:'
