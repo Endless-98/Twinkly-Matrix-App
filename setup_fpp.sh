@@ -267,6 +267,51 @@ else
     echo '   Verify manually in FPP UI → Input/Output Setup → Channel Outputs'
 fi
 
+# ── DDP universe count normalization: all identical controllers should have the
+#    same universe count.  A mismatch (e.g. universe=10 vs 2) sends differently-
+#    sized DDP packets that the Twinkly controller may silently ignore.
+if [ -f "$CO_CONFIG" ]; then
+    echo '🔧 Checking DDP universe counts for consistency...'
+    CO_UNI_CHANGED=0
+    python3 -c "
+import json, sys
+from collections import Counter
+co_path = '$CO_CONFIG'
+with open(co_path) as f:
+    d = json.load(f)
+changed = False
+for out in d.get('channelOutputs', []):
+    unis = out.get('universes', [])
+    ddp = [u for u in unis if u.get('type') == 8]
+    if len(ddp) < 2:
+        continue
+    counts = [u.get('universe', 0) for u in ddp]
+    target = Counter(counts).most_common(1)[0][0]
+    for u in ddp:
+        if u.get('universe') != target:
+            desc = u.get('description', u.get('address', '?'))
+            old_val = u['universe']
+            u['universe'] = target
+            changed = True
+            print(f'   Fixed {desc} ({u.get(\"address\",\"?\")}): DDP universes {old_val} -> {target}')
+if changed:
+    with open(co_path, 'w') as f:
+        json.dump(d, f, indent=2)
+    print('   Saved updated co-universes.json')
+    sys.exit(0)
+else:
+    print('   All DDP entries have consistent universe counts')
+    sys.exit(2)
+" 2>/dev/null && CO_UNI_CHANGED=1 || true
+    if [ "$CO_UNI_CHANGED" -eq 1 ]; then
+        echo '♻️ Restarting fppd to apply DDP universe fix...'
+        sudo systemctl stop twinklywall 2>/dev/null || true
+        sudo rm -f /dev/shm/FPP-Model-Data-* /dev/shm/FPP-PixelOverlay-* 2>/dev/null || true
+        sudo systemctl restart fppd || true
+        sleep 3
+    fi
+fi
+
 # Check FPP frame buffer permissions
 SAFE_MODEL_NAME="${MODEL// /_}"
 FPP_MMAP_FILE="/dev/shm/FPP-Model-Data-${SAFE_MODEL_NAME}"
@@ -274,6 +319,14 @@ CONTROL_FILE="/dev/shm/FPP-PixelOverlay-${SAFE_MODEL_NAME}"
 MMAP_PERM_CMD="sudo chmod 666 ${FPP_MMAP_FILE}"
 MMAP_PERMS_SET=0
 MMAP_SIZE=$(( WIDTH * HEIGHT * 3 ))
+
+# Stop twinklywall BEFORE touching SHM — the Python service recreates SHM files
+# via mmap and races with fppd's shm_open() if running while we delete + restart.
+if systemctl is-active --quiet twinklywall 2>/dev/null; then
+    echo '   Stopping twinklywall temporarily (prevents SHM race with fppd)...'
+    sudo systemctl stop twinklywall 2>/dev/null || true
+    sleep 0.5
+fi
 
 # ── CRITICAL FIX: fppd needs to create the SHM files itself via shm_open().
 # If the files already exist (from a previous Python run or stale fppd), fppd gets
@@ -750,54 +803,60 @@ for oi, out in enumerate(outputs):
     # 2b) Check Twinkly controller mode — they must not be in their own movie/effect mode.
     if [ -n "${CONTROLLER_IPS:-}" ]; then
         echo ''
-        echo '🔍 Checking Twinkly controller mode (first controller)...'
-        FIRST_CTRL="$(echo "$CONTROLLER_IPS" | head -1)"
+        echo '🔍 Checking Twinkly controller modes (all 9 controllers)...'
+        ALL_RT=1
         python3 -c "
 import urllib.request, json, base64, os
-ip = '$FIRST_CTRL'
-try:
-    # Step 1: Login
-    challenge = base64.b64encode(os.urandom(16)).decode()
-    req = urllib.request.Request(
-        'http://' + ip + '/xled/v1/login',
-        data=json.dumps({'challenge': challenge}).encode(),
-        headers={'Content-Type': 'application/json'},
-        method='POST'
-    )
-    with urllib.request.urlopen(req, timeout=4) as r:
-        login = json.loads(r.read())
-    token = login.get('authentication_token', '')
-    chalresp = login.get('challenge_response', '')
-    # Step 2: Verify — REQUIRED to activate the token (skipping this causes 401)
-    req_v = urllib.request.Request(
-        'http://' + ip + '/xled/v1/verify',
-        data=json.dumps({'challenge-response': chalresp}).encode(),
-        headers={'Content-Type': 'application/json', 'X-Auth-Token': token},
-        method='POST'
-    )
-    with urllib.request.urlopen(req_v, timeout=4) as r:
-        r.read()
-    # Step 3: Get current mode
-    req2 = urllib.request.Request('http://' + ip + '/xled/v1/led/mode')
-    req2.add_header('X-Auth-Token', token)
-    with urllib.request.urlopen(req2, timeout=4) as r:
-        mode_data = json.loads(r.read())
-    mode = mode_data.get('mode', 'unknown')
-    if mode == 'movie':
-        print(f'   {ip}: mode=movie  ⚠️  Controllers playing own effects — light wall WILL NOT respond to FPP')
-        print('   FIX: Open Twinkly app → tap device → Music/External tab → enable sACN/E1.31 External Control')
-        print('   OR: each device: Menu ☰ → Go to device → Settings → External Control → On')
-    elif mode in ('rt', 'realtime'):
-        print(f'   {ip}: mode={mode}  ✅ Real-time mode active')
-    elif mode == 'off':
-        print(f'   {ip}: mode=off  ❌ Lights are off — set to External Control in Twinkly app')
-    elif mode == 'effect':
-        print(f'   {ip}: mode=effect  ℹ️  Running built-in effect (not responding to E1.31)')
-    else:
-        print(f'   {ip}: mode={mode}  (check Twinkly app External Control setting)')
-except Exception as e:
-    print(f'   Could not query {ip}: {e}')
-" 2>/dev/null || true
+ips = '''$CONTROLLER_IPS'''.strip().split('\n')
+not_rt = 0
+for ip in ips:
+    ip = ip.strip()
+    if not ip:
+        continue
+    try:
+        challenge = base64.b64encode(os.urandom(16)).decode()
+        req = urllib.request.Request(
+            'http://' + ip + '/xled/v1/login',
+            data=json.dumps({'challenge': challenge}).encode(),
+            headers={'Content-Type': 'application/json'}, method='POST')
+        with urllib.request.urlopen(req, timeout=4) as r:
+            login = json.loads(r.read())
+        token = login.get('authentication_token', '')
+        chalresp = login.get('challenge_response', '')
+        req_v = urllib.request.Request(
+            'http://' + ip + '/xled/v1/verify',
+            data=json.dumps({'challenge-response': chalresp}).encode(),
+            headers={'Content-Type': 'application/json', 'X-Auth-Token': token},
+            method='POST')
+        with urllib.request.urlopen(req_v, timeout=4) as r:
+            r.read()
+        req2 = urllib.request.Request('http://' + ip + '/xled/v1/led/mode')
+        req2.add_header('X-Auth-Token', token)
+        with urllib.request.urlopen(req2, timeout=4) as r:
+            mode_data = json.loads(r.read())
+        mode = mode_data.get('mode', 'unknown')
+        if mode in ('rt', 'realtime'):
+            print(f'   {ip}: mode={mode}  ✅')
+        elif mode == 'movie':
+            print(f'   {ip}: mode=movie  ⚠️  Playing own effect')
+            not_rt += 1
+        elif mode == 'off':
+            print(f'   {ip}: mode=off  ❌  Lights OFF')
+            not_rt += 1
+        else:
+            print(f'   {ip}: mode={mode}')
+            not_rt += 1
+    except Exception as e:
+        print(f'   {ip}: error — {e}')
+        not_rt += 1
+if not_rt > 0:
+    print(f'   ⚠️  {not_rt} controller(s) NOT in rt mode — those curtains will stay DARK')
+    print('   FIX: Twinkly app → each device → Settings → External Control → On')
+    import sys; sys.exit(1)
+" 2>/dev/null && ALL_RT=1 || ALL_RT=0
+        if [ "$ALL_RT" -eq 1 ]; then
+            echo '   ✅ All controllers in real-time mode'
+        fi
     fi
     #    then inspect the actual E1.31 packet CONTENT to verify fppd is forwarding
     #    mmap data (non-zero) rather than its own empty (all-zero) stream.
@@ -869,6 +928,38 @@ print(sum(1 for b in all_bytes if b == 'ff'))
             fi
         fi
 
+        # Per-controller packet check — verify ALL controllers receive data
+        if command -v timeout >/dev/null 2>&1 && [ -n "${CONTROLLER_IPS:-}" ]; then
+            echo ''
+            echo '   📊 Per-controller packet check (RED pattern still in mmap)...'
+            _FILTER="udp and ("
+            _FIRST=1
+            for _ip in $CONTROLLER_IPS; do
+                [ $_FIRST -eq 1 ] && _FIRST=0 || _FILTER="$_FILTER or "
+                _FILTER="${_FILTER}dst host $_ip"
+            done
+            _FILTER="$_FILTER)"
+            _ALL_RAW="$(sudo timeout 2 tcpdump -ni eth0 -t "$_FILTER" 2>/dev/null || echo '')"
+            _ALL_OK=1
+            for _ip in $CONTROLLER_IPS; do
+                _IP_CT="$(echo "$_ALL_RAW" | grep -c "$_ip" || echo '0')"
+                _DESC="$(jq -r '.channelOutputs[0].universes[] | select(.address=="'"$_ip"'") | .description' "$CO_CONFIG" 2>/dev/null || echo '')"
+                _LABEL="$_ip"
+                [ -n "$_DESC" ] && _LABEL="$_ip ($_DESC)"
+                if [ "${_IP_CT:-0}" -gt 0 ]; then
+                    echo "     $_LABEL: $_IP_CT packets ✅"
+                else
+                    echo "     $_LABEL: 0 packets ❌ NO DATA"
+                    _ALL_OK=0
+                fi
+            done
+            if [ "$_ALL_OK" -eq 1 ]; then
+                echo '   ✅ All controllers receiving data from fppd'
+            else
+                echo '   ⚠️  Some controllers NOT receiving data — check co-universes.json'
+            fi
+        fi
+
         # Restore mmap to black (so the test flash doesn't stay on)
         python3 -c "
 import os
@@ -901,12 +992,19 @@ with open(path, 'r+b') as f:
             PLAY_HEX="$(sudo timeout 2 tcpdump -ni eth0 -xx \
                 "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
             PLAY_PKTS="$(echo "$PLAY_HEX" | grep -c '0x0000:' || echo '0')"
-            PLAY_FF="$(echo "$PLAY_HEX" | python3 -c "
+            # Count non-zero DATA bytes (skip headers).  Video data has natural
+            # colors (not 0xFF), so we count ANY non-zero payload byte.
+            PLAY_DATA="$(echo "$PLAY_HEX" | python3 -c "
 import sys, re
 data = sys.stdin.read()
-words = re.findall(r'[0-9a-f]{4}', data.lower())
-all_bytes = [c for w in words for c in (w[:2], w[2:])]
-print(sum(1 for b in all_bytes if b == 'ff'))
+packets = re.split(r'(?=\\s+0x0000:)', data)
+total_nz = 0
+for pkt in packets:
+    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    ab = [c for w in words for c in (w[:2], w[2:])]
+    payload = ab[60:]  # skip ETH+IP+UDP+protocol headers
+    total_nz += sum(1 for b in payload if b != '00')
+print(total_nz)
 " 2>/dev/null || echo '0')"
 
             # Stop playback
@@ -914,25 +1012,19 @@ print(sum(1 for b in all_bytes if b == 'ff'))
 
             if [ "${PLAY_PKTS:-0}" -eq 0 ]; then
                 echo '   ⚠️  No packets captured during playback — fppd not transmitting'
-            elif [ "${PLAY_FF:-0}" -gt 20 ]; then
-                echo "   ✅ Captured $PLAY_PKTS packets with ${PLAY_FF} × 0xFF bytes"
-                echo '   ✅ FPP Pixel Overlay IS forwarding mmap → E1.31 during video playback'
+            elif [ "${PLAY_DATA:-0}" -gt 50 ]; then
+                echo "   ✅ Captured $PLAY_PKTS packets, ${PLAY_DATA} non-zero DATA bytes"
+                echo '   ✅ FPP IS forwarding video data → controllers during playback'
                 echo ''
-                echo '   🎉 FPP PIPELINE CONFIRMED WORKING!'
-                echo '   Lights should be ON when a video is playing via the app.'
-                echo "   (If they are not, check: sudo journalctl -u twinklywall -f)"
+                echo '   🎉 FULL PIPELINE CONFIRMED WORKING!'
             else
-                echo "   ⚠️  $PLAY_PKTS packets captured but only ${PLAY_FF} × 0xFF bytes — still zeros"
-                echo '   ❌ FPP Pixel Overlay NOT forwarding mmap data even during video playback'
+                echo "   ⚠️  $PLAY_PKTS packets but only ${PLAY_DATA} non-zero DATA bytes"
+                echo '   ❌ FPP not forwarding video data during playback'
                 echo ''
                 echo '   Root-cause check:'
-                echo '   1) Check fppd overlay state via FPP UI → Pixel Overlay Models → Light_Wall'
-                echo '      → Set "Default State" to "Always On" and save'
-                echo '   2) After saving in UI, run: sudo systemctl restart fppd'
-                echo '   3) Then restart twinklywall: sudo systemctl restart twinklywall'
-                echo ''
-                echo '   fppd overlay log (last 20 lines):'
-                sudo journalctl -u fppd -n 20 --no-pager 2>/dev/null | grep -i 'overlay\|pixel\|model' | head -10 || true
+                echo '   1) FPP UI → Pixel Overlay Models → Light_Wall → Default State = Always On'
+                echo '   2) sudo systemctl restart fppd'
+                echo '   3) sudo systemctl restart twinklywall'
             fi
         else
             echo '   ℹ️  No rendered videos found — skipping play-based test'
