@@ -423,9 +423,165 @@ except Exception as e:
     print(f'   ⚠️  Could not write control block: {e}')
 " 2>/dev/null || true
     else
-        echo "   ℹ️  $CONTROL_FILE not present yet (fppd creates it on first use)"
-        echo '   Available /dev/shm/FPP-* files:'
-        ls /dev/shm/FPP-* 2>/dev/null | sed 's/^/      /' || echo '      (none found)'
+        echo "   ℹ️  $CONTROL_FILE not present — fppd creates it when DefaultState >= 1"
+        echo '   All /dev/shm/ files (checking for alternate naming):'
+        ls -la /dev/shm/ 2>/dev/null | grep -v "^total" | awk '{print "      "$0}' | head -30 \
+            || echo '      (cannot list /dev/shm/)'
+    fi
+
+    # 1c) Show full overlay model config from FPP API (StartChannel, DefaultState, etc.)
+    echo ''
+    echo '🔍 Overlay model details from FPP API:'
+    curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>/dev/null | \
+        python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    for k in ('Name','StartChannel','ChannelCount','StringCount','StrandsPerString',
+              'DefaultState','defaultState','State','state','Enabled','Type'):
+        if k in d:
+            print(f'   {k}: {d[k]}')
+except Exception:
+    pass
+" 2>/dev/null || true
+
+    # 1d) If the SHM control block is absent, fppd's DefaultState in model-overlays.json is
+    #     probably 0.  Set it to 3 and restart fppd so it creates the control block.
+    #     Without the control block, fppd CANNOT forward mmap data to E1.31 — this is the
+    #     root cause of all-zero E1.31 packets.
+    if [ ! -f "$CONTROL_FILE" ]; then
+        echo ''
+        echo '🔧 Control block absent — locating FPP overlay config to set DefaultState=3...'
+        FPP_OVERLAY_CFG=""
+        for _try_path in \
+            "/home/fpp/media/config/model-overlays.json" \
+            "/home/fpp/media/config/pixelOverlayModels.json" \
+            "/home/fpp/media/config/overlayModels.json" \
+            "/home/fpp/media/config/models.json"
+        do
+            if [ -f "$_try_path" ]; then FPP_OVERLAY_CFG="$_try_path"; break; fi
+        done
+        if [ -z "$FPP_OVERLAY_CFG" ]; then
+            FPP_OVERLAY_CFG="$(find /home/fpp/media/config/ -name "*.json" 2>/dev/null | \
+                xargs grep -l "Light" 2>/dev/null | head -1 || echo '')"
+        fi
+
+        if [ -n "$FPP_OVERLAY_CFG" ]; then
+            echo "   Config file: $FPP_OVERLAY_CFG"
+        else
+            echo '   ⚠️  Overlay config not found.  /home/fpp/media/config/ contents:'
+            ls /home/fpp/media/config/ 2>/dev/null | sed 's/^/     /' | head -20 \
+                || echo '     (none)'
+        fi
+
+        OVERLAY_CFG_FIXED=0
+        if [ -n "$FPP_OVERLAY_CFG" ]; then
+            export _FPP_OVERLAY_CFG="$FPP_OVERLAY_CFG"
+            export _SAFE_MODEL_NAME="$SAFE_MODEL_NAME"
+            # Patch DefaultState=3 in the config file.
+            # Exit 0 = changed+saved, exit 2 = already 3 (no write needed), exit 1 = error.
+            if python3 - << 'PYEOF'
+import json, sys, os
+path = os.environ['_FPP_OVERLAY_CFG']
+safe_name = os.environ['_SAFE_MODEL_NAME']
+display_name = safe_name.replace('_', ' ')
+try:
+    with open(path) as f:
+        d = json.load(f)
+except Exception as e:
+    print(f'   ERROR reading {path}: {e}')
+    sys.exit(1)
+changed = False
+def patch(obj):
+    global changed
+    if not isinstance(obj, dict):
+        return
+    name = obj.get('Name', obj.get('name', ''))
+    if name in (safe_name, display_name, ''):
+        cur = obj.get('DefaultState', obj.get('defaultState', 0))
+        if str(cur) != '3':
+            obj['DefaultState'] = 3
+            changed = True
+            print(f'   Updated DefaultState: {cur!r} → 3  (model: {name!r})')
+        else:
+            print(f'   DefaultState already 3 for: {name!r}')
+if isinstance(d, list):
+    for m in d: patch(m)
+elif isinstance(d, dict):
+    for v in d.values():
+        if isinstance(v, dict): patch(v)
+    patch(d)
+if changed:
+    with open(path, 'w') as f:
+        json.dump(d, f, indent=2)
+    print(f'   ✅ Saved {path}')
+    sys.exit(0)
+else:
+    sys.exit(2)
+PYEOF
+            then
+                OVERLAY_CFG_FIXED=1
+            else
+                _PY_EXIT=$?
+                # exit 2 = DefaultState was already 3 but control block still missing
+                # → restart fppd anyway to force control block creation
+                if [ "$_PY_EXIT" -eq 2 ]; then
+                    echo '   ℹ️  DefaultState already 3 — restarting fppd to force control block creation'
+                    OVERLAY_CFG_FIXED=1
+                fi
+            fi
+        fi
+
+        if [ "$OVERLAY_CFG_FIXED" -eq 1 ]; then
+            echo '♻️  Restarting fppd (DefaultState=3 takes effect on restart)...'
+            sudo systemctl restart fppd || true
+            echo '   Waiting for SHM control block to appear (up to 15s)...'
+            CTRL_APPEARED=0
+            for i in $(seq 1 15); do
+                sleep 1
+                if [ -f "$CONTROL_FILE" ]; then
+                    echo "   ✅ Control block appeared after ${i}s: $CONTROL_FILE"
+                    python3 -c "
+import struct
+try:
+    with open('$CONTROL_FILE', 'r+b') as f:
+        f.seek(0); f.write(struct.pack('<i', 3)); f.flush()
+    print('   ✅ isActive written to 3 in control block')
+except Exception as e:
+    print(f'   ⚠️  Write failed: {e}')
+" 2>/dev/null || true
+                    CTRL_APPEARED=1
+                    break
+                fi
+            done
+            if [ "$CTRL_APPEARED" -eq 0 ]; then
+                echo "   ❌ Control block STILL absent after fppd restart"
+                echo "   Check: sudo journalctl -u fppd -n 40 --no-pager | grep -i overlay"
+            fi
+            # fppd recreates the mmap file on restart — re-apply write permissions
+            sudo chmod 666 "$FPP_MMAP_FILE" 2>/dev/null || true
+            # Re-assert state 3 via HTTP after restart
+            curl -sS -m 5 -X PUT \
+                "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
+                -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
+            # Restart twinklywall so FPPOutput re-initialises with the now-active overlay SHM
+            echo '♻️  Restarting twinklywall to sync with updated fppd...'
+            sudo systemctl restart twinklywall || true
+            sleep 3
+        elif [ -z "$FPP_OVERLAY_CFG" ]; then
+            echo ''
+            echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+            echo '❌  FPP overlay config not found — manual fix required:'
+            echo '   1. Open FPP Web UI (http://FPP-LW)'
+            echo '      → Overlays  (or Status/Control → Pixel Overlay Models)'
+            echo '   2. Find "Light_Wall" row → set Default State = "Always On" → Save'
+            echo '   3. Run:'
+            echo '        sudo systemctl restart fppd'
+            echo '        sudo chmod 666 /dev/shm/FPP-Model-Data-Light_Wall'
+            echo '        sudo systemctl restart twinklywall'
+            echo "   4. Re-run: bash ~/TwinklyWall_Project/setup_fpp.sh"
+            echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+        fi
     fi
 
     # 2) Verify Twinkly controller reachability
