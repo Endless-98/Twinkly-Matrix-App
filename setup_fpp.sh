@@ -230,6 +230,8 @@ if command -v curl >/dev/null 2>&1; then
 
     if [ "$NEEDS_FPPD_RESTART" -eq 1 ]; then
         echo '♻️ Restarting fppd to apply mode/transmit changes...'
+        # Remove existing SHM files so fppd can shm_open() them fresh (avoids Permission denied)
+        sudo rm -f /dev/shm/FPP-Model-Data-* /dev/shm/FPP-PixelOverlay-* 2>/dev/null || true
         sudo systemctl restart fppd || true
         sleep 3
     fi
@@ -251,6 +253,7 @@ if [ -f "$CO_CONFIG" ] && command -v jq >/dev/null 2>&1; then
            mv "${CO_CONFIG}.tmp" "$CO_CONFIG"; then
             echo '✅ Channel outputs enabled in co-universes.json'
             echo '♻️ Restarting fppd to apply output changes...'
+            sudo rm -f /dev/shm/FPP-Model-Data-* /dev/shm/FPP-PixelOverlay-* 2>/dev/null || true
             sudo systemctl restart fppd || true
             sleep 3
         else
@@ -267,26 +270,56 @@ fi
 # Check FPP frame buffer permissions
 SAFE_MODEL_NAME="${MODEL// /_}"
 FPP_MMAP_FILE="/dev/shm/FPP-Model-Data-${SAFE_MODEL_NAME}"
+CONTROL_FILE="/dev/shm/FPP-PixelOverlay-${SAFE_MODEL_NAME}"
 MMAP_PERM_CMD="sudo chmod 666 ${FPP_MMAP_FILE}"
 MMAP_PERMS_SET=0
-echo '🔍 Checking FPP frame buffer permissions...'
-if [ ! -e "$FPP_MMAP_FILE" ]; then
-    echo "⚠️  Frame buffer file does not exist yet: $FPP_MMAP_FILE"
-    echo "   (This is normal; FPP will create it when the model is activated)"
-    echo "   Run after model is active: $MMAP_PERM_CMD"
+MMAP_SIZE=$(( WIDTH * HEIGHT * 3 ))
+
+# ── CRITICAL FIX: fppd needs to create the SHM files itself via shm_open().
+# If the files already exist (from a previous Python run or stale fppd), fppd gets
+# "Permission denied" on shm_open(), fails to initialise the overlay, and crashes.
+# Fix: delete any existing SHM files, restart fppd so it creates them fresh, then
+# chmod 666 so our Python service can also write to them.
+echo '🔍 Checking FPP shared memory...'
+if [ -e "$FPP_MMAP_FILE" ]; then
+    echo "   Existing SHM file found: $FPP_MMAP_FILE"
+    echo '   Removing stale SHM so fppd can recreate it via shm_open()...'
+    sudo rm -f "$FPP_MMAP_FILE" "$CONTROL_FILE" 2>/dev/null || true
+    echo '   Restarting fppd to recreate SHM files...'
+    sudo systemctl restart fppd || true
+    # Wait for fppd to create the SHM files (up to 10s)
+    echo '   Waiting for fppd to create SHM files...'
+    for _i in $(seq 1 10); do
+        sleep 1
+        if [ -e "$FPP_MMAP_FILE" ]; then
+            echo "   ✅ fppd created $FPP_MMAP_FILE after ${_i}s"
+            break
+        fi
+    done
 else
+    echo '   No existing SHM file — fppd should create it on next start'
+fi
+if [ -e "$FPP_MMAP_FILE" ]; then
     echo "🔧 Applying write permissions: $MMAP_PERM_CMD"
-    sudo chmod 666 "$FPP_MMAP_FILE" || {
-        echo "❌ Failed to set permissions on $FPP_MMAP_FILE"
-        echo "   Try running: $MMAP_PERM_CMD"
-        exit 1
-    }
+    sudo chmod 666 "$FPP_MMAP_FILE" || true
+    sudo chmod 666 "$CONTROL_FILE" 2>/dev/null || true
     if [ -w "$FPP_MMAP_FILE" ]; then
         MMAP_PERMS_SET=1
         echo "✅ Frame buffer is writable: $FPP_MMAP_FILE"
     else
         echo "⚠️  chmod completed but file still not writable: $FPP_MMAP_FILE"
     fi
+    # Check if control block was also created
+    if [ -e "$CONTROL_FILE" ]; then
+        echo "✅ Control block exists: $CONTROL_FILE"
+    else
+        echo "⚠️  Control block not yet created: $CONTROL_FILE"
+        echo '   (Will attempt fix in verification section below)'
+    fi
+else
+    echo "⚠️  fppd did not create $FPP_MMAP_FILE"
+    echo "   Check: sudo journalctl -u fppd -n 20 --no-pager"
+    echo '   Or check: /home/fpp/media/logs/fppd.log'
 fi
 
 # Ensure services are running (and no duplicate manual processes)
@@ -566,6 +599,10 @@ PYEOF
 
         if [ "$OVERLAY_CFG_FIXED" -eq 1 ]; then
             echo '♻️  Restarting fppd (DefaultState=3 takes effect on restart)...'
+            # Stop twinklywall first so it doesn't recreate the SHM file
+            sudo systemctl stop twinklywall 2>/dev/null || true
+            # Remove existing SHM files so fppd can shm_open() them fresh
+            sudo rm -f /dev/shm/FPP-Model-Data-* /dev/shm/FPP-PixelOverlay-* 2>/dev/null || true
             sudo systemctl restart fppd || true
             echo '   Waiting for SHM control block to appear (up to 15s)...'
             CTRL_APPEARED=0
