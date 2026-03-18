@@ -154,7 +154,9 @@ if command -v curl >/dev/null 2>&1; then
     #   /home/fpp/media/settings       (NOT a directory!)
     echo '🔧 Ensuring "Always Transmit Channel Data" is enabled...'
     SETTINGS_FILE="/home/fpp/media/settings"
-    ALWAYS_TX_API="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | tr -d '[:space:][]"' || echo '')"
+    # FPP v9 returns {"value":"1"} — parse with python3 to handle all formats
+    ALWAYS_TX_API="$(curl -sS -m 5 'http://localhost/api/settings/alwaysTransmit' 2>/dev/null | \
+        python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("value","") if isinstance(d,dict) else str(d).strip())' 2>/dev/null || echo '')"
     ALWAYS_TX_FILE=""
     if [ -f "$SETTINGS_FILE" ]; then
         # Extract value from  alwaysTransmit = "1"  style line
@@ -460,7 +462,7 @@ except Exception as e:
 import urllib.request, json, base64, os
 ip = '$FIRST_CTRL'
 try:
-    # Authenticate
+    # Step 1: Login
     challenge = base64.b64encode(os.urandom(16)).decode()
     req = urllib.request.Request(
         'http://' + ip + '/xled/v1/login',
@@ -471,21 +473,34 @@ try:
     with urllib.request.urlopen(req, timeout=4) as r:
         login = json.loads(r.read())
     token = login.get('authentication_token', '')
-    # Get mode
+    chalresp = login.get('challenge_response', '')
+    # Step 2: Verify — REQUIRED to activate the token (skipping this causes 401)
+    req_v = urllib.request.Request(
+        'http://' + ip + '/xled/v1/verify',
+        data=json.dumps({'challenge-response': chalresp}).encode(),
+        headers={'Content-Type': 'application/json', 'X-Auth-Token': token},
+        method='POST'
+    )
+    with urllib.request.urlopen(req_v, timeout=4) as r:
+        r.read()
+    # Step 3: Get current mode
     req2 = urllib.request.Request('http://' + ip + '/xled/v1/led/mode')
     req2.add_header('X-Auth-Token', token)
     with urllib.request.urlopen(req2, timeout=4) as r:
         mode_data = json.loads(r.read())
     mode = mode_data.get('mode', 'unknown')
     if mode == 'movie':
-        print(f'   {ip}: mode=movie  ⚠️  Playing own effects — will IGNORE E1.31 from FPP')
-        print('   FIX: Open Twinkly app → device → Settings → enable External Control (sACN/E1.31)')
+        print(f'   {ip}: mode=movie  ⚠️  Controllers playing own effects — light wall WILL NOT respond to FPP')
+        print('   FIX: Open Twinkly app → tap device → Music/External tab → enable sACN/E1.31 External Control')
+        print('   OR: each device: Menu ☰ → Go to device → Settings → External Control → On')
     elif mode in ('rt', 'realtime'):
-        print(f'   {ip}: mode={mode}  ✅ Accepts real-time data')
+        print(f'   {ip}: mode={mode}  ✅ Real-time mode active')
     elif mode == 'off':
-        print(f'   {ip}: mode=off  ❌ Lights are off')
+        print(f'   {ip}: mode=off  ❌ Lights are off — set to External Control in Twinkly app')
+    elif mode == 'effect':
+        print(f'   {ip}: mode=effect  ℹ️  Running built-in effect (not responding to E1.31)')
     else:
-        print(f'   {ip}: mode={mode}')
+        print(f'   {ip}: mode={mode}  (check Twinkly app External Control setting)')
 except Exception as e:
     print(f'   Could not query {ip}: {e}')
 " 2>/dev/null || true
@@ -516,21 +531,27 @@ print(f'Wrote {size} bytes of RED test pattern to {path}')
         if command -v timeout >/dev/null 2>&1; then
             FIRST_IP="$(echo "${CONTROLLER_IPS:-}" | head -1)"
             if [ -n "$FIRST_IP" ]; then
-                echo "   ⏳ Capturing packets to $FIRST_IP for 3 s (checking content)..."
-                HEX_OUT="$(sudo timeout 3 tcpdump -ni eth0 -xx -c 20 \
+                echo "   ⏳ Capturing packets to $FIRST_IP (2s, checking content)..."
+                # Sleep briefly so fppd has time to pick up our mmap write
+                sleep 0.2
+                HEX_OUT="$(sudo timeout 2 tcpdump -ni eth0 -xx \
                     "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
                 PKT_COUNT="$(echo "$HEX_OUT" | grep -c '0x0000:' || echo '0')"
 
                 if [ "${PKT_COUNT:-0}" -gt 0 ]; then
                     echo "   ✅ Captured $PKT_COUNT UDP packets → fppd IS transmitting"
 
-                    # Count 0xFF bytes in the hex dump (our red pattern = 0xFF per R channel).
-                    # An all-zero stream yields 0; a live mmap stream yields hundreds.
+                    # Count 0xFF bytes in the hex dump.
+                    # tcpdump -xx outputs hex as 4-char big-endian words (e.g. 'ff00 1b4a').
+                    # We split every 4-char word into two 2-char bytes to count correctly.
+                    # An all-zero stream → ~0 FF bytes; our RED pattern → hundreds per packet.
                     FF_COUNT="$(echo "$HEX_OUT" | python3 -c "
 import sys, re
 data = sys.stdin.read()
-# Extract individual hex bytes from tcpdump -xx lines (e.g. '0x0010:  4500 ...')
-all_bytes = re.findall(r'(?:^|\s)([0-9a-f]{2})(?=\s|\\n|$)', data.lower(), re.MULTILINE)
+# Each tcpdump data line: '\t0x0010:  4500 002b c2f6 ...'
+# Extract 4-char hex words, then split each into two 2-char bytes
+words = re.findall(r'[0-9a-f]{4}', data.lower())
+all_bytes = [c for w in words for c in (w[:2], w[2:])]
 print(sum(1 for b in all_bytes if b == 'ff'))
 " 2>/dev/null || echo '0')"
 
