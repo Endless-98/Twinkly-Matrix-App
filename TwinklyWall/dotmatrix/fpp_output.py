@@ -138,7 +138,6 @@ class FPPOutput:
         if model_name is None:
             model_name = getattr(self, '_overlay_model_name', 'Light_Wall')
         url_set = f"http://localhost/api/overlays/model/{model_name}/state"
-        url_get = f"http://localhost/api/overlays/model/{model_name}"
         max_attempts = 5
 
         for attempt in range(1, max_attempts + 1):
@@ -146,26 +145,17 @@ class FPPOutput:
                 data = json.dumps({"State": state}).encode('utf-8')
                 req = urllib.request.Request(url_set, data=data, method='PUT')
                 req.add_header('Content-Type', 'application/json')
+                # FPP's GET /api/overlays/model/{name} returns model config only
+                # (no runtime State field), so verify success from the PUT response.
                 with urllib.request.urlopen(req, timeout=5) as resp:
-                    resp.read()
+                    put_body = json.loads(resp.read().decode('utf-8'))
+                if put_body.get('Status') == 'OK':
+                    print(f"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' state {state} accepted by FPP", flush=True)
+                    return True
+                else:
+                    print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: PUT returned: {put_body}", flush=True)
             except Exception as e:
                 print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: PUT failed: {e}", flush=True)
-                if attempt < max_attempts:
-                    import time as _t; _t.sleep(1)
-                continue
-
-            # Readback verification
-            try:
-                with urllib.request.urlopen(url_get, timeout=5) as resp:
-                    body = json.loads(resp.read().decode('utf-8'))
-                    current = body.get("State", body.get("state", None))
-                    if current == state:
-                        print(f"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' confirmed state {state}", flush=True)
-                        return True
-                    else:
-                        print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: readback state={current}, expected {state}", flush=True)
-            except Exception as e:
-                print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: readback failed: {e}", flush=True)
 
             if attempt < max_attempts:
                 import time as _t; _t.sleep(1)

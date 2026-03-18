@@ -364,32 +364,28 @@ except Exception as e:
     fi
 
     OVERLAY_OK=0
-    for attempt in 1 2 3 4 5 6; do
-        # PUT the state
+    for attempt in 1 2 3; do
+        # PUT the state; FPP's GET /api/overlays/model/{name} returns model config only
+        # (no runtime State field), so we verify success directly from the PUT response.
         PUT_RESP="$(curl -sS -m 5 -X PUT "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state" \
             -H 'Content-Type: application/json' -d '{"State":3}' 2>&1 || echo 'CURL_FAILED')"
 
-        sleep 1
+        PUT_OK="$(echo "$PUT_RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("yes" if d.get("Status")=="OK" else "no")' 2>/dev/null || echo 'no')"
 
-        # GET and verify
-        GET_RESP="$(curl -sS -m 5 "http://localhost/api/overlays/model/${SAFE_MODEL_NAME}" 2>&1 || echo '')"
-        OV_STATE="$(echo "$GET_RESP" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d.get("State",d.get("state","")))' 2>/dev/null || echo '')"
-
-        if [ "$OV_STATE" = "3" ]; then
-            echo "✅ Pixel Overlay '${SAFE_MODEL_NAME}' is in state 3 (always on)"
+        if [ "$PUT_OK" = "yes" ]; then
+            echo "✅ Pixel Overlay '${SAFE_MODEL_NAME}' state 3 accepted by FPP (always on)"
             OVERLAY_OK=1
             break
         fi
 
-        echo "   attempt $attempt: state='$OV_STATE' PUT='${PUT_RESP:0:120}' GET='${GET_RESP:0:120}'"
+        echo "   attempt $attempt: PUT='${PUT_RESP:0:200}'"
         sleep 3
     done
     if [ "$OVERLAY_OK" -eq 0 ]; then
-        echo "⚠️  Could not confirm overlay state 3 — fppd may not have the model yet"
+        echo "⚠️  Could not set overlay state 3 — fppd may not have the model yet"
         echo "   Check FPP UI → Pixel Overlay Models → ${MODEL}"
         echo "   Manual test:"
         echo "     curl -v -X PUT 'http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state' -H 'Content-Type: application/json' -d '{\"State\":3}'"
-        echo "     curl -v 'http://localhost/api/overlays/model/${SAFE_MODEL_NAME}'"
     fi
 
     # 2) Verify Twinkly controller reachability
