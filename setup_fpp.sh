@@ -282,7 +282,7 @@ with open(co_path) as f:
 changed = False
 for out in d.get('channelOutputs', []):
     unis = out.get('universes', [])
-    ddp = [u for u in unis if u.get('type') == 8]
+    ddp = [u for u in unis if str(u.get('type', '')) == '8']
     if len(ddp) < 2:
         continue
     counts = [u.get('universe', 0) for u in ddp]
@@ -328,19 +328,19 @@ if systemctl is-active --quiet twinklywall 2>/dev/null; then
     sleep 0.5
 fi
 
-# ── CRITICAL FIX: fppd needs to create the SHM files itself via shm_open().
-# If the files already exist (from a previous Python run or stale fppd), fppd gets
-# "Permission denied" on shm_open(), fails to initialise the overlay, and crashes.
-# Fix: delete any existing SHM files, restart fppd so it creates them fresh, then
-# chmod 666 so our Python service can also write to them.
+# ── SHM check: fppd creates the SHM files via shm_open() on startup.
+# We only need to ensure they exist and are writable by our Python service.
+# If SHM exists and is writable, skip the restart — fppd is already managing it.
 echo '🔍 Checking FPP shared memory...'
-if [ -e "$FPP_MMAP_FILE" ]; then
-    echo "   Existing SHM file found: $FPP_MMAP_FILE"
-    echo '   Removing stale SHM so fppd can recreate it via shm_open()...'
-    sudo rm -f "$FPP_MMAP_FILE" "$CONTROL_FILE" 2>/dev/null || true
-    echo '   Restarting fppd to recreate SHM files...'
+if [ -e "$FPP_MMAP_FILE" ] && [ -w "$FPP_MMAP_FILE" ]; then
+    echo "   ✅ SHM file exists and is writable: $FPP_MMAP_FILE"
+elif [ -e "$FPP_MMAP_FILE" ]; then
+    echo "   SHM file exists but not writable — fixing permissions..."
+    sudo chmod 666 "$FPP_MMAP_FILE" 2>/dev/null || true
+else
+    echo '   No SHM file found — restarting fppd to create it...'
+    sudo rm -f "$CONTROL_FILE" 2>/dev/null || true
     sudo systemctl restart fppd || true
-    # Wait for fppd to create the SHM files (up to 10s)
     echo '   Waiting for fppd to create SHM files...'
     for _i in $(seq 1 10); do
         sleep 1
@@ -349,8 +349,6 @@ if [ -e "$FPP_MMAP_FILE" ]; then
             break
         fi
     done
-else
-    echo '   No existing SHM file — fppd should create it on next start'
 fi
 if [ -e "$FPP_MMAP_FILE" ]; then
     echo "🔧 Applying write permissions: $MMAP_PERM_CMD"
@@ -361,13 +359,6 @@ if [ -e "$FPP_MMAP_FILE" ]; then
         echo "✅ Frame buffer is writable: $FPP_MMAP_FILE"
     else
         echo "⚠️  chmod completed but file still not writable: $FPP_MMAP_FILE"
-    fi
-    # Check if control block was also created
-    if [ -e "$CONTROL_FILE" ]; then
-        echo "✅ Control block exists: $CONTROL_FILE"
-    else
-        echo "⚠️  Control block not yet created: $CONTROL_FILE"
-        echo '   (Will attempt fix in verification section below)'
     fi
 else
     echo "⚠️  fppd did not create $FPP_MMAP_FILE"
@@ -922,22 +913,21 @@ print(total_nz)
         echo ''
         echo '🧪 FPP test mode (sending value=200 to all channels for 4 seconds)...'
         echo '   *** LOOK AT THE LIGHTS NOW — they should be dimly lit if fppd output works ***'
-        # FPP v9 test mode API: PUT /api/testmode
+        # FPP v9 test mode API — use form-encoded data (JSON body triggers PHP bug in v9.4)
         CH_TEST_OK=0
         CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/testmode' \
-            -H 'Content-Type: application/json' \
-            -d '{"Enabled":1,"Mode":"SingleChase","CycleMS":1000,"ColorPattern":"C8C8C8","StartChannel":1,"EndChannel":13500}' \
+            -d 'Enabled=1&Mode=SingleChase&CycleMS=1000&ColorPattern=C8C8C8&StartChannel=1&EndChannel=13500' \
             2>/dev/null || echo 'API_FAIL')"
         # Check if FPP accepted the request (JSON with success or "OK")
         if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|html\|API_FAIL\)'; then
-            # Fallback: try POST /api/testmode
-            CH_TEST_RESP="$(curl -sS -m 5 -X POST 'http://localhost/api/testmode' \
-                -H 'Content-Type: application/json' \
-                -d '{"enabled":1,"mode":"RGBFill","cycleMS":1000,"colorPattern":"c8c8c8","startChannel":1,"endChannel":13500}' \
-                2>/dev/null || echo 'API_FAIL_2')"
-            if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|html\|API_FAIL\)'; then
-                # Last resort: try the FPPD command socket directly
-                CH_TEST_RESP="$(echo 'T,ENABLED,RGBFill,1000,c8c8c8' | nc -w2 localhost 32322 2>/dev/null || echo 'SOCKET_FAIL')"
+            # Fallback: try FPPD command socket directly (bypasses PHP entirely)
+            CH_TEST_RESP="$(echo 'T,ENABLED,RGBFill,1000,c8c8c8' | nc -w2 localhost 32322 2>/dev/null || echo 'SOCKET_FAIL')"
+            if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|SOCKET_FAIL\)'; then
+                # Last fallback: POST with JSON
+                CH_TEST_RESP="$(curl -sS -m 5 -X POST 'http://localhost/api/testmode' \
+                    -H 'Content-Type: application/json' \
+                    -d '{"enabled":1,"mode":"RGBFill","cycleMS":1000,"colorPattern":"c8c8c8","startChannel":1,"endChannel":13500}' \
+                    2>/dev/null || echo 'API_FAIL_2')"
             fi
         else
             CH_TEST_OK=1
@@ -966,8 +956,7 @@ print(total_nonzero)
 " 2>/dev/null || echo '0')"
             if [ "${CT_DATA:-0}" -gt 50 ]; then
                 echo "   ✅ Test mode: ${CT_PKTS} packets, ${CT_DATA} non-zero DATA bytes"
-                echo '   ✅ fppd → output is working! Problem is ONLY with Pixel Overlay.'
-                echo '   → Fix: ensure Pixel Overlay control block appears (see fppd logs above)'
+                echo '   ✅ fppd test mode output confirmed — data is flowing to controllers'
                 CH_TEST_OK=1
             else
                 echo "   ⚠️  Test mode: ${CT_PKTS} packets, only ${CT_DATA} non-zero DATA bytes"
@@ -980,9 +969,9 @@ print(total_nonzero)
                 fi
             fi
         fi
-        # Stop test mode
+        # Stop test mode (form-encoded to avoid PHP json_decode bug)
         curl -sS -m 5 -X PUT 'http://localhost/api/testmode' \
-            -H 'Content-Type: application/json' -d '{"Enabled":0}' >/dev/null 2>&1 || true
+            -d 'Enabled=0' >/dev/null 2>&1 || true
         curl -sS -m 5 -X POST 'http://localhost/api/testmode' \
             -H 'Content-Type: application/json' -d '{"enabled":0}' >/dev/null 2>&1 || true
         # Re-assert overlay state 3 — test mode may have reset it
