@@ -400,6 +400,32 @@ except Exception as e:
         echo "     curl -v -X PUT 'http://localhost/api/overlays/model/${SAFE_MODEL_NAME}/state' -H 'Content-Type: application/json' -d '{\"State\":3}'"
     fi
 
+    # 1b) Write overlay state directly to FPP's SHM control block.
+    #     fppd reads isActive (int32 LE at offset 0) from /dev/shm/FPP-PixelOverlay-<name>.
+    #     This bypasses the HTTP API layer entirely and is the most reliable activation path.
+    CONTROL_FILE="/dev/shm/FPP-PixelOverlay-${SAFE_MODEL_NAME}"
+    echo '🔧 Writing overlay state directly to FPP control block...'
+    if [ -f "$CONTROL_FILE" ]; then
+        python3 -c "
+import struct
+cf = '$CONTROL_FILE'
+try:
+    with open(cf, 'r+b') as f:
+        cur_bytes = f.read(4)
+        cur = struct.unpack('<i', cur_bytes)[0] if len(cur_bytes) == 4 else -1
+        f.seek(0)
+        f.write(struct.pack('<i', 3))
+        f.flush()
+    print(f'   ✅ isActive: {cur} → 3  ({cf})')
+except Exception as e:
+    print(f'   ⚠️  Could not write control block: {e}')
+" 2>/dev/null || true
+    else
+        echo "   ℹ️  $CONTROL_FILE not present yet (fppd creates it on first use)"
+        echo '   Available /dev/shm/FPP-* files:'
+        ls /dev/shm/FPP-* 2>/dev/null | sed 's/^/      /' || echo '      (none found)'
+    fi
+
     # 2) Verify Twinkly controller reachability
     if [ -f "$CO_CONFIG" ] && command -v jq >/dev/null 2>&1; then
         echo ''
@@ -425,8 +451,47 @@ except Exception as e:
         fi
     fi
 
-    # 3) End-to-end smoke test — write a bright test pattern into the mmap
-    #    and verify fppd is transmitting UDP to the controllers.
+    # 2b) Check Twinkly controller mode — they must not be in their own movie/effect mode.
+    if [ -n "${CONTROLLER_IPS:-}" ]; then
+        echo ''
+        echo '🔍 Checking Twinkly controller mode (first controller)...'
+        FIRST_CTRL="$(echo "$CONTROLLER_IPS" | head -1)"
+        python3 -c "
+import urllib.request, json, base64, os
+ip = '$FIRST_CTRL'
+try:
+    # Authenticate
+    challenge = base64.b64encode(os.urandom(16)).decode()
+    req = urllib.request.Request(
+        'http://' + ip + '/xled/v1/login',
+        data=json.dumps({'challenge': challenge}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST'
+    )
+    with urllib.request.urlopen(req, timeout=4) as r:
+        login = json.loads(r.read())
+    token = login.get('authentication_token', '')
+    # Get mode
+    req2 = urllib.request.Request('http://' + ip + '/xled/v1/led/mode')
+    req2.add_header('X-Auth-Token', token)
+    with urllib.request.urlopen(req2, timeout=4) as r:
+        mode_data = json.loads(r.read())
+    mode = mode_data.get('mode', 'unknown')
+    if mode == 'movie':
+        print(f'   {ip}: mode=movie  ⚠️  Playing own effects — will IGNORE E1.31 from FPP')
+        print('   FIX: Open Twinkly app → device → Settings → enable External Control (sACN/E1.31)')
+    elif mode in ('rt', 'realtime'):
+        print(f'   {ip}: mode={mode}  ✅ Accepts real-time data')
+    elif mode == 'off':
+        print(f'   {ip}: mode=off  ❌ Lights are off')
+    else:
+        print(f'   {ip}: mode={mode}')
+except Exception as e:
+    print(f'   Could not query {ip}: {e}')
+" 2>/dev/null || true
+    fi
+    #    then inspect the actual E1.31 packet CONTENT to verify fppd is forwarding
+    #    mmap data (non-zero) rather than its own empty (all-zero) stream.
     if [ -e "$FPP_MMAP_FILE" ] && [ -w "$FPP_MMAP_FILE" ]; then
         echo ''
         echo '🧪 Running end-to-end smoke test...'
@@ -447,21 +512,44 @@ with open(path, 'r+b') as f:
 print(f'Wrote {size} bytes of RED test pattern to {path}')
 " 2>/dev/null && echo '   ✅ Test pattern written to mmap' || echo '   ⚠️  Could not write test pattern'
 
-        # Check if UDP packets are going to any controller
+        # Check if UDP packets are going to any controller and inspect their content.
         if command -v timeout >/dev/null 2>&1; then
-            FIRST_IP="$(echo "$CONTROLLER_IPS" | head -1)"
+            FIRST_IP="$(echo "${CONTROLLER_IPS:-}" | head -1)"
             if [ -n "$FIRST_IP" ]; then
-                echo "   ⏳ Listening for UDP packets to $FIRST_IP for 3 seconds..."
-                PKT_COUNT="$(sudo timeout 3 tcpdump -ni eth0 "udp and dst host $FIRST_IP" 2>/dev/null | wc -l || echo '0')"
-                if [ "$PKT_COUNT" -gt 0 ]; then
-                    echo "   ✅ Captured $PKT_COUNT UDP packets → fppd IS transmitting to controllers"
-                    echo ''
-                    echo '   🎉 THE PIPELINE IS LIVE!'
-                    echo '   If the wall is still dark, the Twinkly controllers may need power-cycling'
-                    echo '   or they may need to be set to external-control mode in the Twinkly app.'
+                echo "   ⏳ Capturing packets to $FIRST_IP for 3 s (checking content)..."
+                HEX_OUT="$(sudo timeout 3 tcpdump -ni eth0 -xx -c 20 \
+                    "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
+                PKT_COUNT="$(echo "$HEX_OUT" | grep -c '0x0000:' || echo '0')"
+
+                if [ "${PKT_COUNT:-0}" -gt 0 ]; then
+                    echo "   ✅ Captured $PKT_COUNT UDP packets → fppd IS transmitting"
+
+                    # Count 0xFF bytes in the hex dump (our red pattern = 0xFF per R channel).
+                    # An all-zero stream yields 0; a live mmap stream yields hundreds.
+                    FF_COUNT="$(echo "$HEX_OUT" | python3 -c "
+import sys, re
+data = sys.stdin.read()
+# Extract individual hex bytes from tcpdump -xx lines (e.g. '0x0010:  4500 ...')
+all_bytes = re.findall(r'(?:^|\s)([0-9a-f]{2})(?=\s|\\n|$)', data.lower(), re.MULTILINE)
+print(sum(1 for b in all_bytes if b == 'ff'))
+" 2>/dev/null || echo '0')"
+
+                    if [ "${FF_COUNT:-0}" -gt 50 ]; then
+                        echo "   ✅ Packets contain RED pixel data (${FF_COUNT} × 0xFF bytes)"
+                        echo '   ✅ FPP Pixel Overlay IS forwarding mmap → controllers'
+                        echo ''
+                        echo '   🎉 FPP PIPELINE CONFIRMED WORKING!'
+                        echo '   If lights are STILL dark → Twinkly controllers need E1.31 mode'
+                        echo '   configured in the Twinkly app (Settings → External Control / sACN)'
+                    else
+                        echo "   ⚠️  Packets contain ZEROS (only ${FF_COUNT} × 0xFF bytes in ${PKT_COUNT} packets)"
+                        echo '   → FPP Pixel Overlay state 3 is NOT active despite PUT returning OK'
+                        echo '   → Check the control block state above'
+                        echo '   → Or enable manually: FPP UI → Pixel Overlay Models → Light_Wall → Always On'
+                    fi
                 else
-                    echo "   ⚠️  0 UDP packets captured — fppd may not be outputting"
-                    echo "   Check: sudo journalctl -u fppd -n 40 --no-pager"
+                    echo '   ⚠️  0 UDP packets captured — fppd may not be outputting'
+                    echo '   Check: sudo journalctl -u fppd -n 40 --no-pager'
                 fi
             fi
         fi

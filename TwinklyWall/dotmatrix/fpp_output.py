@@ -114,8 +114,10 @@ class FPPOutput:
             self.memory_map = mmap.mmap(self.file_handle.fileno(), self.buffer_size)
             print(f"[FPP_INIT] Memory map created successfully", flush=True)
             print(f"[FPP_INIT] ========================================", flush=True)
-            # Enable overlay to always transmit (state 3)
+            # Enable overlay to always transmit (state 3) via SHM + HTTP
             self._enable_overlay_state(model_name=self._overlay_model_name)
+            # Keep reasserting state 3 so fppd state transitions don't kill it
+            self._start_overlay_keepalive(interval=30)
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
             print(f"Fix: sudo chmod 666 {fpp_file}")
@@ -126,43 +128,89 @@ class FPPOutput:
 
     def _enable_overlay_state(self, model_name=None, state=3):
         """Enable the Pixel Overlay Model to always transmit (state 3).
-        
-        State values:
-        - 0 = Disabled
-        - 1 = Enabled (transparent)
-        - 2 = Enabled (transparent RGB)
-        - 3 = Enabled (always on - sends buffer data to outputs)
-        
-        Retries up to 5 times with readback verification.
+
+        Uses two complementary approaches:
+          1. Write directly to FPP's SHM control block (/dev/shm/FPP-PixelOverlay-<name>)
+             which fppd reads in real time — most reliable path.
+          2. HTTP PUT to FPP's API as a secondary trigger.
         """
         if model_name is None:
             model_name = getattr(self, '_overlay_model_name', 'Light_Wall')
-        url_set = f"http://localhost/api/overlays/model/{model_name}/state"
-        max_attempts = 5
 
+        # ── Path 1: direct SHM control-block write ────────────────────────────
+        # FPP stores the overlay state as a 4-byte little-endian int32
+        # (isActive) at offset 0 of /dev/shm/FPP-PixelOverlay-<SafeName>.
+        import struct
+        control_file = f"/dev/shm/FPP-PixelOverlay-{model_name}"
+        shm_written = False
+        if os.path.exists(control_file):
+            try:
+                with open(control_file, 'r+b') as cf:
+                    cf.seek(0)
+                    cf.write(struct.pack('<i', state))
+                    cf.flush()
+                print(f"[FPP_OVERLAY] Wrote isActive={state} directly to {control_file}", flush=True)
+                shm_written = True
+            except Exception as e:
+                print(f"[FPP_OVERLAY] Control block direct write failed: {e}", flush=True)
+        else:
+            # List what FPP SHM files do exist the first time (one-shot diagnostic)
+            if not getattr(self, '_shm_listed', False):
+                self._shm_listed = True
+                try:
+                    import glob
+                    shm_files = glob.glob('/dev/shm/FPP-*')
+                    print(f"[FPP_OVERLAY] {control_file} not found. Available FPP SHM files: {shm_files}", flush=True)
+                except Exception:
+                    pass
+
+        # ── Path 2: HTTP PUT to FPP API ───────────────────────────────────────
+        url_set = f"http://localhost/api/overlays/model/{model_name}/state"
+        max_attempts = 3
         for attempt in range(1, max_attempts + 1):
             try:
                 data = json.dumps({"State": state}).encode('utf-8')
                 req = urllib.request.Request(url_set, data=data, method='PUT')
                 req.add_header('Content-Type', 'application/json')
-                # FPP's GET /api/overlays/model/{name} returns model config only
-                # (no runtime State field), so verify success from the PUT response.
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     put_body = json.loads(resp.read().decode('utf-8'))
                 if put_body.get('Status') == 'OK':
-                    print(f"[FPP_OVERLAY] SUCCESS: Overlay '{model_name}' state {state} accepted by FPP", flush=True)
+                    print(f"[FPP_OVERLAY] HTTP PUT accepted: overlay '{model_name}' state {state}", flush=True)
                     return True
                 else:
                     print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: PUT returned: {put_body}", flush=True)
             except Exception as e:
                 print(f"[FPP_OVERLAY] attempt {attempt}/{max_attempts}: PUT failed: {e}", flush=True)
-
             if attempt < max_attempts:
                 import time as _t; _t.sleep(1)
 
-        print(f"[FPP_OVERLAY] WARNING: Could not confirm overlay state {state} after {max_attempts} attempts", flush=True)
-        print(f"[FPP_OVERLAY] Overlay may need manual activation via FPP UI", flush=True)
+        if shm_written:
+            # SHM write succeeded even if HTTP failed
+            print(f"[FPP_OVERLAY] HTTP PUT failed but SHM control block was written — overlay should be active", flush=True)
+            return True
+
+        print(f"[FPP_OVERLAY] WARNING: both SHM write and HTTP PUT failed for overlay state {state}", flush=True)
         return False
+
+    def _start_overlay_keepalive(self, interval: int = 30):
+        """Daemon thread that re-asserts overlay state 3 every *interval* seconds.
+
+        fppd resets the overlay isActive to 0 on internal state transitions
+        (e.g. sequence load/stop).  This keeps the mmap path live continuously.
+        """
+        import threading
+        self._keepalive_stop = threading.Event()
+
+        def _loop():
+            while not self._keepalive_stop.wait(interval):
+                try:
+                    self._enable_overlay_state(state=3)
+                except Exception:
+                    pass
+
+        t = threading.Thread(target=_loop, daemon=True, name='fpp-overlay-keepalive')
+        t.start()
+        self._keepalive_thread = t
 
     def _build_routing_table(self):
         """Pre-compute routing from visual grid to FPP buffer positions.
@@ -307,6 +355,8 @@ class FPPOutput:
         self._cleanup()
 
     def _cleanup(self):
+        if hasattr(self, '_keepalive_stop'):
+            self._keepalive_stop.set()
         if self.memory_map:
             self.memory_map.close()
             self.memory_map = None
