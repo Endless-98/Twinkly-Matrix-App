@@ -1,22 +1,34 @@
 #!/bin/bash
 set -e
 
-echo '🚀 Setting up/updating TwinklyWall on FPP...'
-echo '🔄 Syncing with GitHub first...'
+# Resolve absolute path before any cd, so we can re-exec after git pull updates this file.
+SCRIPT_ABS="$(cd "$(dirname -- "$0")" && pwd)/$(basename -- "$0")"
 
-# Sync repository FIRST, before parsing args or doing anything else
-cd ~
-if [ ! -d "TwinklyWall_Project" ]; then
-    echo '📥 Cloning repository...'
-    git clone https://github.com/Endless-98/Twinkly-Matrix-App.git TwinklyWall_Project
-else
-    echo '📥 Pulling latest code from GitHub...'
-    cd TwinklyWall_Project
-    git pull origin master
+if [ -z "${_SETUP_REEXECED:-}" ]; then
+    echo '🚀 Setting up/updating TwinklyWall on FPP...'
+    echo '🔄 Syncing with GitHub first...'
+
+    # Sync repository FIRST, before parsing args or doing anything else
     cd ~
+    if [ ! -d "TwinklyWall_Project" ]; then
+        echo '📥 Cloning repository...'
+        git clone https://github.com/Endless-98/Twinkly-Matrix-App.git TwinklyWall_Project
+        cd ~
+    else
+        echo '📥 Pulling latest code from GitHub...'
+        cd TwinklyWall_Project
+        git pull origin master
+        cd ~
+    fi
+
+    # Re-exec with the freshly-pulled script so the rest of this run uses the
+    # latest code. _SETUP_REEXECED prevents an infinite loop.
+    export _SETUP_REEXECED=1
+    exec bash "$SCRIPT_ABS" "$@"
 fi
 
-cd TwinklyWall_Project
+# Working directory after re-exec is ~ — navigate to project
+cd ~/TwinklyWall_Project
 
 DEBUG_MODE=0
 WIDTH=90
