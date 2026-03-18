@@ -474,43 +474,69 @@ except Exception:
                 || echo '     (none)'
         fi
 
+        # Always dump the raw config so we can see exact structure
+        echo '   Raw config contents:'
+        cat "$FPP_OVERLAY_CFG" 2>/dev/null | head -60 | sed 's/^/     /' || true
+        echo ''
+
         OVERLAY_CFG_FIXED=0
         if [ -n "$FPP_OVERLAY_CFG" ]; then
             export _FPP_OVERLAY_CFG="$FPP_OVERLAY_CFG"
             export _SAFE_MODEL_NAME="$SAFE_MODEL_NAME"
             # Patch DefaultState=3 in the config file.
+            # FPP v9 model-overlays.json can be:
+            #   A) List of model dicts: [{"Name":"Light_Wall", "DefaultState":3, ...}, ...]
+            #   B) Dict keyed by model name: {"Light_Wall": {"DefaultState":3, ...}}
+            #   C) A single model dict (no Name): {"DefaultState":3, "StartChannel":1, ...}
+            # We handle all three and NEVER match anonymous/nameless objects (avoids
+            # patching container dicts).
             # Exit 0 = changed+saved, exit 2 = already 3 (no write needed), exit 1 = error.
             if python3 - << 'PYEOF'
 import json, sys, os
 path = os.environ['_FPP_OVERLAY_CFG']
 safe_name = os.environ['_SAFE_MODEL_NAME']
 display_name = safe_name.replace('_', ' ')
+print(f'   Parsing {path} ...')
 try:
     with open(path) as f:
         d = json.load(f)
 except Exception as e:
     print(f'   ERROR reading {path}: {e}')
     sys.exit(1)
+print(f'   Top-level type: {type(d).__name__}, keys/len: {list(d.keys()) if isinstance(d,dict) else len(d) if isinstance(d,list) else "?"}')
 changed = False
-def patch(obj):
+def patch_model(obj, context_name=''):
+    """Patch DefaultState in a single model dict.  context_name is the dict key if known."""
     global changed
     if not isinstance(obj, dict):
         return
-    name = obj.get('Name', obj.get('name', ''))
-    if name in (safe_name, display_name, ''):
-        cur = obj.get('DefaultState', obj.get('defaultState', 0))
-        if str(cur) != '3':
-            obj['DefaultState'] = 3
-            changed = True
-            print(f'   Updated DefaultState: {cur!r} → 3  (model: {name!r})')
-        else:
-            print(f'   DefaultState already 3 for: {name!r}')
+    # Determine the model name from the object itself or the dict key it was stored under
+    name_in_obj = obj.get('Name', obj.get('name', ''))
+    effective_name = name_in_obj or context_name
+    if effective_name not in (safe_name, display_name):
+        # Don't touch objects we can't identify as our model
+        return
+    cur = obj.get('DefaultState', obj.get('defaultState', None))
+    if str(cur) == '3':
+        print(f'   DefaultState already 3 for: {effective_name!r}')
+    else:
+        obj['DefaultState'] = 3
+        # Remove alternate-case key to avoid duplicates
+        obj.pop('defaultState', None)
+        changed = True
+        print(f'   Updated DefaultState: {cur!r} → 3  (model: {effective_name!r})')
 if isinstance(d, list):
-    for m in d: patch(m)
+    # Format A: list of model dicts
+    for m in d:
+        patch_model(m)
 elif isinstance(d, dict):
-    for v in d.values():
-        if isinstance(v, dict): patch(v)
-    patch(d)
+    # Format B: top-level dict keyed by model name
+    if safe_name in d or display_name in d:
+        key = safe_name if safe_name in d else display_name
+        patch_model(d[key], context_name=key)
+    else:
+        # Format C: the whole file IS the model dict (single model)
+        patch_model(d, context_name=safe_name)
 if changed:
     with open(path, 'w') as f:
         json.dump(d, f, indent=2)
@@ -554,9 +580,15 @@ except Exception as e:
                     break
                 fi
             done
+            echo '   fppd overlay-related log (last 30 lines):'
+            sudo journalctl -u fppd -n 30 --no-pager 2>/dev/null \
+                | grep -i 'overlay\|pixel\|model\|shm\|FPP-Model\|FPP-Pixel' \
+                | sed 's/^/     /' || true
+            echo ''
             if [ "$CTRL_APPEARED" -eq 0 ]; then
                 echo "   ❌ Control block STILL absent after fppd restart"
-                echo "   Check: sudo journalctl -u fppd -n 40 --no-pager | grep -i overlay"
+                echo "   --- Full fppd tail (last 40 lines) ---"
+                sudo journalctl -u fppd -n 40 --no-pager 2>/dev/null | sed 's/^/     /' || true
             fi
             # fppd recreates the mmap file on restart — re-apply write permissions
             sudo chmod 666 "$FPP_MMAP_FILE" 2>/dev/null || true
