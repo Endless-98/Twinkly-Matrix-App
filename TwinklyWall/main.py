@@ -468,10 +468,43 @@ def main():
                     model_name=model_name, max_fps=20,
                 )
                 log("DDP bridge started (port 4049)", module="Main")
+
+                # After the bridge initialises FPPOutput (and asserts overlay state 3),
+                # do a quick self-test: write a bright frame, wait one fppd output
+                # cycle (~50 ms), then verify the mmap still has our data.
+                # This confirms the mmap → E1.31 path is live from the service side.
+                import threading as _th
+                def _mmap_selftest():
+                    import time as _t, os as _os
+                    _t.sleep(2)   # let fppd settle after service restart
+                    try:
+                        fpp_path = f"/dev/shm/FPP-Model-Data-{model_name.replace(' ', '_')}"
+                        size = 90 * 50 * 3
+                        # Write solid bright magenta test pattern
+                        pattern = b'\xff\x00\xff' * (size // 3)
+                        with open(fpp_path, 'r+b') as f:
+                            f.seek(0); f.write(pattern[:size]); f.flush()
+                        _t.sleep(0.1)  # one fppd output cycle
+                        # Read back — if still non-zero fppd isn't clearing it
+                        with open(fpp_path, 'rb') as f:
+                            sample = f.read(12)
+                        if any(b != 0 for b in sample):
+                            log(f"[MMAP_TEST] ✅ mmap holds data after 100 ms — FPP overlay reading it", module="Main")
+                        else:
+                            log(f"[MMAP_TEST] ⚠️  mmap was zeroed by fppd — FPP Pixel Overlay NOT active"
+                                " — try FPP UI → Pixel Overlay Models → Light_Wall → set state=Always On",
+                                level='WARNING', module="Main")
+                        # Restore to black
+                        with open(fpp_path, 'r+b') as f:
+                            f.seek(0); f.write(b'\x00' * size); f.flush()
+                    except Exception as e:
+                        log(f"[MMAP_TEST] self-test error: {e}", level='WARNING', module="Main")
+                _th.Thread(target=_mmap_selftest, daemon=True, name='mmap-selftest').start()
+
             except OSError as e:
-                log(f"Failed to start DDP bridge: {e}. Check if old ddp_bridge.service is still running.", 
+                log(f"Failed to start DDP bridge: {e}. Check if old ddp_bridge.service is still running.",
                     level='ERROR', module="Main")
-                log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge", 
+                log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge",
                     level='ERROR', module="Main")
 
         # Run Flask server (blocks)

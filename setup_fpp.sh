@@ -586,8 +586,65 @@ with open(path, 'r+b') as f:
     f.flush()
     os.fsync(f.fileno())
 " 2>/dev/null || true
+
+        # --- Play-based smoke test: trigger actual video playback and verify
+        #     E1.31 packets carry real (non-zero) pixel data.
+        # This tests the FULL path: Python mmap writes -> FPP Pixel Overlay -> E1.31
+        echo ''
+        echo '\xf0\x9f\xa7\xaa Play-based E1.31 content test...'
+        RENDERED_DIR='/home/fpp/TwinklyWall_Project/media/rendered'
+        FIRST_NPZ="$(find "$RENDERED_DIR" -name '*.npz' 2>/dev/null | head -1 || echo '')"
+        if [ -n "$FIRST_NPZ" ] && [ -n "${FIRST_IP:-}" ]; then
+            VIDEO_NAME="$(basename "$FIRST_NPZ" .npz)"
+            echo "   Playing: $VIDEO_NAME"
+            # Start playback via the API
+            curl -sS -m 5 -X POST 'http://localhost:5000/api/play' \
+                -H 'Content-Type: application/json' \
+                -d "{\"video\":\"$VIDEO_NAME\",\"loop\":false}" >/dev/null 2>&1 || true
+            sleep 2   # let playback write a few frames
+
+            # Capture and inspect packets during active playback
+            PLAY_HEX="$(sudo timeout 2 tcpdump -ni eth0 -xx \
+                "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
+            PLAY_PKTS="$(echo "$PLAY_HEX" | grep -c '0x0000:' || echo '0')"
+            PLAY_FF="$(echo "$PLAY_HEX" | python3 -c "
+import sys, re
+data = sys.stdin.read()
+words = re.findall(r'[0-9a-f]{4}', data.lower())
+all_bytes = [c for w in words for c in (w[:2], w[2:])]
+print(sum(1 for b in all_bytes if b == 'ff'))
+" 2>/dev/null || echo '0')"
+
+            # Stop playback
+            curl -sS -m 5 -X POST 'http://localhost:5000/api/stop' >/dev/null 2>&1 || true
+
+            if [ "${PLAY_PKTS:-0}" -eq 0 ]; then
+                echo '   ⚠️  No packets captured during playback — fppd not transmitting'
+            elif [ "${PLAY_FF:-0}" -gt 20 ]; then
+                echo "   ✅ Captured $PLAY_PKTS packets with ${PLAY_FF} × 0xFF bytes"
+                echo '   ✅ FPP Pixel Overlay IS forwarding mmap → E1.31 during video playback'
+                echo ''
+                echo '   🎉 FPP PIPELINE CONFIRMED WORKING!'
+                echo '   Lights should be ON when a video is playing via the app.'
+                echo "   (If they are not, check: sudo journalctl -u twinklywall -f)"
+            else
+                echo "   ⚠️  $PLAY_PKTS packets captured but only ${PLAY_FF} × 0xFF bytes — still zeros"
+                echo '   ❌ FPP Pixel Overlay NOT forwarding mmap data even during video playback'
+                echo ''
+                echo '   Root-cause check:'
+                echo '   1) Check fppd overlay state via FPP UI → Pixel Overlay Models → Light_Wall'
+                echo '      → Set "Default State" to "Always On" and save'
+                echo '   2) After saving in UI, run: sudo systemctl restart fppd'
+                echo '   3) Then restart twinklywall: sudo systemctl restart twinklywall'
+                echo ''
+                echo '   fppd overlay log (last 20 lines):'
+                sudo journalctl -u fppd -n 20 --no-pager 2>/dev/null | grep -i 'overlay\|pixel\|model' | head -10 || true
+            fi
+        else
+            echo '   ℹ️  No rendered videos found — skipping play-based test'
+            echo "       (Render a video first via the Flutter app, then re-run setup_fpp.sh)"
+        fi
     fi
-fi
 
 echo ''
 echo '📊 Service Status:'
