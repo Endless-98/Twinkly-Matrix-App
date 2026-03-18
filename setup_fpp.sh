@@ -526,16 +526,22 @@ def patch_model(obj, context_name=''):
         changed = True
         print(f'   Updated DefaultState: {cur!r} → 3  (model: {effective_name!r})')
 if isinstance(d, list):
-    # Format A: list of model dicts
+    # Format A: list of model dicts [{"Name": "...", "DefaultState": ...}, ...]
     for m in d:
         patch_model(m)
 elif isinstance(d, dict):
-    # Format B: top-level dict keyed by model name
-    if safe_name in d or display_name in d:
+    if 'models' in d and isinstance(d['models'], list):
+        # Format D: FPP v9 wrapper {"models": [...], "autoCreate": ..., "DefaultState": ...}
+        # The top-level DefaultState is a UI/global default — per-model entry needs its OWN
+        # DefaultState field for fppd to activate the overlay at startup.
+        for m in d['models']:
+            patch_model(m)
+    elif safe_name in d or display_name in d:
+        # Format B: top-level dict keyed by model name {"Light_Wall": {...}}
         key = safe_name if safe_name in d else display_name
         patch_model(d[key], context_name=key)
     else:
-        # Format C: the whole file IS the model dict (single model)
+        # Format C: the whole file IS a single model dict
         patch_model(d, context_name=safe_name)
 if changed:
     with open(path, 'w') as f:
@@ -639,6 +645,33 @@ except Exception as e:
         else
             echo "⚠️  No controller IPs found in co-universes.json"
         fi
+    fi
+
+    # 2c) Show exact universe numbers from co-universes.json — critical for diagnosing
+    #     whether fppd is sending to the right universe that Twinkly listens on.
+    if [ -f "$CO_CONFIG" ]; then
+        echo ''
+        echo '🔍 E1.31 universe configuration (co-universes.json):'
+        python3 -c "
+import json, sys
+with open('$CO_CONFIG') as f:
+    d = json.load(f)
+universes = d.get('channelOutputs',[{}])[0].get('universes',[])
+if not universes:
+    print('   (no universes found in co-universes.json)')
+for i, u in enumerate(universes):
+    ip = u.get('address','?')
+    uni = u.get('universe','?')
+    ch_s = u.get('startChannel','?')
+    ch_c = u.get('channelCount','?')
+    try:
+        ch_end = int(ch_s) + int(ch_c) - 1
+    except Exception:
+        ch_end = '?'
+    active = u.get('active', u.get('enabled', '?'))
+    typ = u.get('type', u.get('unicast', ''))
+    print(f'   [{i}] {ip}  universe={uni}  channels={ch_s}-{ch_end}  active={active}  type={typ}')
+" 2>/dev/null || echo '   (could not parse co-universes.json)'
     fi
 
     # 2b) Check Twinkly controller mode — they must not be in their own movie/effect mode.
@@ -832,6 +865,58 @@ print(sum(1 for b in all_bytes if b == 'ff'))
             echo '   ℹ️  No rendered videos found — skipping play-based test'
             echo "       (Render a video first via the Flutter app, then re-run setup_fpp.sh)"
         fi
+
+        # --- FPP channel test: fill ALL output channels with value 200 for 4 seconds.
+        #     This is the DEFINITIVE test of fppd → E1.31 → Twinkly:
+        #       ✅ Lights come on  → fppd output works; problem is only Pixel Overlay
+        #       ❌ Lights stay off → fppd E1.31 universe mapping / Twinkly config broken
+        echo ''
+        echo '🧪 FPP channel test (sending value=200 to all channels for 4 seconds)...'
+        echo '   *** LOOK AT THE LIGHTS NOW — they should be dimly lit if fppd→E1.31 works ***'
+        CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
+            -H 'Content-Type: application/json' \
+            -d '{"Type":"SingleValue","SValue":200,"Channel":1,"Count":13500}' 2>/dev/null \
+            || echo 'API_UNAVAILABLE')"
+        if echo "$CH_TEST_RESP" | grep -qi '\(not found\|404\|unavailable\|html\)'; then
+            # Try alternate FPP endpoint format
+            CH_TEST_RESP="$(curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
+                -H 'Content-Type: application/json' \
+                -d '{"TestType":"SingleValue","Value":200,"StartChannel":1,"EndChannel":13500}' \
+                2>/dev/null || echo 'NOT_SUPPORTED')"
+        fi
+        echo "   Channel test API response: ${CH_TEST_RESP:-no response}"
+        # Also capture packets during channel test to verify fppd sends non-zero
+        if [ -n "${FIRST_IP:-}" ]; then
+            CT_HEX="$(sudo timeout 4 tcpdump -ni eth0 -xx \
+                "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
+            CT_FF="$(echo "$CT_HEX" | python3 -c "
+import sys, re
+data = sys.stdin.read()
+words = re.findall(r'[0-9a-f]{4}', data.lower())
+all_bytes = [c for w in words for c in (w[:2], w[2:])]
+print(sum(1 for b in all_bytes if b == 'c8' or b == 'ff' or b == 'cd' or b == 'ca' or b == 'c9'))
+" 2>/dev/null || echo '0')"
+            CT_PKTS="$(echo "$CT_HEX" | grep -c '0x0000:' || echo '0')"
+            if [ "${CT_FF:-0}" -gt 20 ]; then
+                echo "   ✅ Channel test: ${CT_PKTS} packets, ${CT_FF} non-zero bytes"
+                echo '   ✅ fppd → E1.31 is working! Problem is ONLY with Pixel Overlay.'
+                echo '   → Fix: ensure DefaultState=3 is IN the model entry (see above),'
+                echo '          restart fppd, then re-run setup_fpp.sh'
+            else
+                echo "   ⚠️  Channel test: ${CT_PKTS} packets, only ${CT_FF} non-zero bytes"
+                echo '   ❌ fppd is NOT injecting channel test data into E1.31'
+                echo '   → Possible causes:'
+                echo '     1) fppd channel test API format changed in this version'
+                echo '     2) E1.31 universe numbers in co-universes.json are wrong (see above)'
+                echo '     3) Twinkly is listening on different universe than fppd sends'
+                echo '   → Check FPP UI → Testing → Channel Tester → fill channels 1-13500 with 200'
+            fi
+        fi
+        # Stop channel test
+        curl -sS -m 5 -X DELETE 'http://localhost/api/channel/startChannelTest' >/dev/null 2>&1 || true
+        curl -sS -m 5 -X PUT 'http://localhost/api/channel/startChannelTest' \
+            -H 'Content-Type: application/json' \
+            -d '{"Type":"off"}' >/dev/null 2>&1 || true
     fi
 fi
 
@@ -840,6 +925,10 @@ echo '📊 Service Status:'
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo '📡 TwinklyWall (API server + DDP bridge on ports 5000 & 4049):'
 sudo systemctl status twinklywall --no-pager -l || true
+echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
+echo ''
+echo '📋 TwinklyWall recent log (look for [MMAP_TEST] / [FPP_OVERLAY] / [FPP_INIT]):'
+sudo journalctl -u twinklywall -n 80 --no-pager 2>/dev/null || true
 echo '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
 echo ''
 echo '✅ Enabled / enforced by setup:'
