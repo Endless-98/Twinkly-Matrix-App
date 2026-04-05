@@ -230,7 +230,7 @@ class Tetris:
             for local_x, grid_x in enumerate(range(test_position[0], test_position[0] + size)):
                 is_cell_filled = self.live_tetromino.shape_instance[-local_y + size - 1][local_x]
                 if is_cell_filled: 
-                    if grid_x < 0 or grid_y < 0 or grid_x >= GRID_WIDTH or grid_y > GRID_HEIGHT: 
+                    if grid_x < 0 or grid_y < 0 or grid_x >= GRID_WIDTH or grid_y >= GRID_HEIGHT: 
                         return False
                     if self.dead_grid[grid_y][grid_x] != 0:
                         return False
@@ -253,7 +253,7 @@ class Tetris:
             self.live_tetromino.rotation = desired_rot
             return True
 
-        piece_group = 1 if self.live_tetromino.type == TetrominoType.I_PIECE else 0
+        piece_group = 0 if self.live_tetromino.type == TetrominoType.I_PIECE else 1
         for offset in KICK_OFFSETS[piece_group][clockwise][desired_rot]:
             if self.__move_tetromino(offset):
                 return True
@@ -334,7 +334,7 @@ class Tetris:
                         frames_per_drop = 4
                     case level if 16 <= level < 19: 
                         frames_per_drop = 3
-                    case level if 19 <= level < 28: 
+                    case level if 19 <= level < 29: 
                         frames_per_drop = 2
                     case level if 29 <= level: 
                         frames_per_drop = 1
@@ -344,20 +344,20 @@ class Tetris:
                     self.drop_interval /= CLASSIC_SOFT_DROP_SPEED_DIVISOR
 
     def __clear_lines(self):
-        keep_clearing = True
-        while keep_clearing:
-            lines_cleared = 0 
-            for y, row in enumerate(self.dead_grid): 
-                if 0 not in row: # Row is full
-                    self.dead_grid.pop(y)
-                    self.dead_grid.insert(GRID_HEIGHT, [0 for element in range(GRID_WIDTH)])
-                    lines_cleared += 1
-                    self.fading_lines.append((y, 1.0, 0.0)) # TODO : Move magic number to constants
+        full_rows = [y for y, row in enumerate(self.dead_grid) if 0 not in row]
+        if not full_rows:
+            return
 
-            self.total_lines_cleared += lines_cleared
-                        
-            self.__score_lines(lines_cleared) 
-            keep_clearing = lines_cleared > 0
+        for y in sorted(full_rows, reverse=True):
+            self.dead_grid.pop(y)
+            self.fading_lines.append((y, 1.0, 0.0)) # TODO : Move magic number to constants
+
+        for _ in full_rows:
+            self.dead_grid.append([0 for element in range(GRID_WIDTH)])
+
+        lines_cleared = len(full_rows)
+        self.total_lines_cleared += lines_cleared
+        self.__score_lines(lines_cleared)
 
     def __animate_line_clears(self, delta_time): # Runs every tick
         for index, (line_y, alpha, time_elapsed) in enumerate(self.fading_lines):
@@ -400,7 +400,7 @@ class Tetris:
                     self.__level_up()
 
             case Gamemode.CLASSIC:
-                score_award = CLASSIC_LINES_CLEARED_SCORE_REWARD[lines_cleared] * self.level_index + CLASSIC_LEVEL_INDEX_SCORE_OFFSET
+                score_award = CLASSIC_LINES_CLEARED_SCORE_REWARD[lines_cleared] * (self.level_index + CLASSIC_LEVEL_INDEX_SCORE_OFFSET)
                 self.__award_score(score_award)
                 self.lines_cleared += lines_cleared
                 if self.lines_cleared >= self.next_level_goal:
@@ -413,7 +413,7 @@ class Tetris:
         match self.gamemode:
             case Gamemode.MODERN:
                 self.points -= self.next_level_goal
-                self.next_level_goal = self.base_goal * self.level_index
+                self.next_level_goal = MODERN_NEXT_LEVEL_BASE_GOAL * self.level_index
             case Gamemode.CLASSIC:
                 self.next_level_goal = CLASSIC_NEXT_LEVEL_BASE_GOAL
 
@@ -490,13 +490,13 @@ class Tetris:
                         case "MOVE_LEFT":  # TODO : Remove magic string, replace with constant
                             tetris.move_piece_left()
                         case "MOVE_RIGHT":
-                            tetris.__move_piece_right()
+                            tetris.move_piece_right()
                         case "ROTATE_RIGHT":
                             tetris.rotate_clockwise()
                         case "ROTATE_LEFT":
                             tetris.rotate_counterclockwise()
                         case "MOVE_DOWN":
-                            tetris.drop_piece()
+                            tetris.drop_piece(True)
                         case "HARD_DROP":
                             tetris.hard_drop_piece()
                 return handle_tetris_input

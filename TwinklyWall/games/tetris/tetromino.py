@@ -6,7 +6,7 @@ import copy
 class Tetromino:
     def __init__(self, type : TetrominoType, grid_position = (0,0), rotation = 0):
         self.grid_position = grid_position
-        self.rotation = 0 # TODO : Make this an enum 0: Up 1: Down
+        self.rotation = rotation # TODO : Make this an enum 0: Up 1: Down
         self.type = TetrominoType(type)
         self.shape_instance = copy.copy(type.shape)
 

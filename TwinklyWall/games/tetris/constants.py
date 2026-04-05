@@ -190,7 +190,7 @@ TETROMINO_J_GRID_SHAPE = [[FILLED,EMPTY,EMPTY],
 
 TETROMINO_L_GRID_SHAPE = [[EMPTY,EMPTY,FILLED],
                           [FILLED,FILLED,FILLED],
-                          [EMPTY,EMPTY,EMPTY]],
+                          [EMPTY,EMPTY,EMPTY]]
 
 TETROMINO_O_GRID_SHAPE = [[EMPTY,EMPTY,EMPTY,EMPTY],
                           [EMPTY,FILLED,FILLED,EMPTY],
@@ -203,7 +203,7 @@ TETROMINO_S_GRID_SHAPE = [[EMPTY,FILLED,FILLED],
 
 TETROMINO_Z_GRID_SHAPE = [[FILLED,FILLED,EMPTY],
                           [EMPTY,FILLED,FILLED],
-                          [EMPTY,EMPTY,EMPTY]],
+                          [EMPTY,EMPTY,EMPTY]]
 
 TETROMINO_T_GRID_SHAPE = [[EMPTY,FILLED,EMPTY],
                           [FILLED,FILLED,FILLED],

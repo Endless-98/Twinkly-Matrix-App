@@ -35,6 +35,7 @@ from game_players import (
 )
 from logger import log
 from players import handle_input
+from idle_pattern import IdlePattern
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -45,6 +46,7 @@ current_matrix = None
 playback_thread = None
 playback_active = False
 current_video_name = None
+idle_animation = None  # IdlePattern instance (runs when nothing else is active)
 # Global render progress tracking: {filename: {'progress': 0.0-1.0, 'status': 'rendering'/'complete'/'error'}}
 render_progress = {}
 MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
@@ -173,10 +175,34 @@ def initialize_matrix():
     return current_matrix
 
 
+def _start_idle():
+    """Start the idle twinkle pattern if nothing else is active."""
+    global idle_animation
+    if idle_animation and idle_animation.running:
+        return
+    try:
+        matrix = initialize_matrix()
+        if matrix:
+            idle_animation = IdlePattern(matrix)
+            idle_animation.start()
+            log("Idle twinkle started", module="Idle")
+    except Exception as e:
+        log(f"Failed to start idle pattern: {e}", level='WARNING', module="Idle")
+
+
+def _stop_idle():
+    """Stop the idle twinkle pattern."""
+    global idle_animation
+    if idle_animation:
+        idle_animation.stop()
+        idle_animation = None
+
+
 def stop_current_playback():
     """Stop the current playback if any."""
     global playback_active, current_player, playback_thread, current_video_name
     
+    _stop_idle()
     playback_active = False
     current_video_name = None
     
@@ -187,19 +213,6 @@ def stop_current_playback():
     if playback_thread and playback_thread.is_alive():
         playback_thread.join(timeout=2)
     playback_thread = None
-
-    # After stopping playback, explicitly clear the LEDs to black on FPP
-    try:
-        matrix = initialize_matrix()
-        if matrix:
-            # Set internal buffer to black
-            matrix.clear()
-            # Push the black frame to hardware immediately
-            if getattr(matrix, 'fpp', None):
-                matrix.fpp.write(matrix.dot_colors)
-    except Exception as e:
-        # Avoid crashing stop flow on clear failures; just log
-        print(f"Warning: failed to clear LEDs after stop: {e}")
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
@@ -235,6 +248,8 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
     finally:
         playback_active = False
         current_player = None
+        # Video ended naturally — restart idle twinkle
+        _start_idle()
 
 
 @app.route('/api/videos', methods=['GET'])
@@ -816,7 +831,7 @@ def play_video():
         if not rendered_path.exists():
             return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
         
-        # Stop any current playback
+        # Stop any current playback (and idle pattern)
         stop_current_playback()
         
         # Start new playback in a thread
@@ -844,6 +859,7 @@ def stop_playback():
     """Stop current playback."""
     try:
         stop_current_playback()
+        _start_idle()
         return jsonify({'status': 'stopped'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1233,6 +1249,9 @@ if __name__ == '__main__':
     
     # Start background cleanup thread for idle players
     start_cleanup_thread()
+
+    # Start idle twinkle so the wall shows life on boot
+    _start_idle()
     
     # Run the Flask server
     print("Starting Flask API server on port 5000...")

@@ -375,7 +375,7 @@ def main():
     if args.mode == "api":
         # Run the API server with Tetris monitor thread
         print("Starting API server mode...")
-        from api_server import app, start_cleanup_thread
+        from api_server import app, start_cleanup_thread, _start_idle
         from game_players import get_active_players_for_game
         import threading
         import time
@@ -397,10 +397,11 @@ def main():
                     # Start Tetris if players just joined and no game is running
                     if current_count > 0 and last_player_count == 0 and (not tetris_thread or not tetris_thread.is_alive()):
                         log(f"🎮 {current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
-                        # Stop any active video playback managed by the API server
+                        # Stop any active video playback and idle pattern
                         try:
-                            from api_server import stop_current_playback
+                            from api_server import stop_current_playback, _stop_idle
                             stop_current_playback()
+                            _stop_idle()
                             log("🔇 Stopped active video playback before starting game", module="TetrisMonitor")
                         except Exception as e:
                             log(f"Error stopping video playback: {e}", level='ERROR', module="TetrisMonitor")
@@ -441,11 +442,22 @@ def main():
                                 stop_event = None
                                 matrix = None
                                 log("✅ Tetris cleanup complete", module="TetrisMonitor")
+                                # Restart idle pattern so the wall isn't dark
+                                try:
+                                    from api_server import _start_idle
+                                    _start_idle()
+                                except Exception:
+                                    pass
                         else:
                             # No thread to stop, just reset state
                             tetris_thread = None
                             stop_event = None
                             matrix = None
+                            try:
+                                from api_server import _start_idle
+                                _start_idle()
+                            except Exception:
+                                pass
 
                     last_player_count = current_count
                     time.sleep(1)
@@ -506,6 +518,9 @@ def main():
                     level='ERROR', module="Main")
                 log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge",
                     level='ERROR', module="Main")
+
+        # Start idle twinkle so the wall shows life on boot
+        _start_idle()
 
         # Run Flask server (blocks)
         app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
