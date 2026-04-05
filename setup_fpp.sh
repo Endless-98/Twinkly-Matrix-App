@@ -740,6 +740,11 @@ if not_rt > 0:
         echo '🧪 Running end-to-end smoke test...'
         MMAP_SIZE=$(( WIDTH * HEIGHT * 3 ))
 
+        # Stop twinklywall so it doesn't overwrite our test pattern
+        echo '   Pausing twinklywall for clean mmap test...'
+        sudo systemctl stop twinklywall 2>/dev/null || true
+        sleep 0.5
+
         # Write a bright red test pattern directly into the mmap
         python3 -c "
 import os, time
@@ -755,13 +760,17 @@ with open(path, 'r+b') as f:
 print(f'Wrote {size} bytes of RED test pattern to {path}')
 " 2>/dev/null && echo '   ✅ Test pattern written to mmap' || echo '   ⚠️  Could not write test pattern'
 
+        # Re-assert overlay state 3 (service was stopped so its keepalive is gone)
+        curl -sS -m 3 -X PUT "http://localhost/api/overlays/model/Light_Wall/state" \
+            -H 'Content-Type: application/json' -d '{"State":3}' >/dev/null 2>&1 || true
+
         # Check if UDP packets are going to any controller and inspect their content.
         if command -v timeout >/dev/null 2>&1; then
             FIRST_IP="$(echo "${CONTROLLER_IPS:-}" | head -1)"
             if [ -n "$FIRST_IP" ]; then
                 echo "   ⏳ Capturing packets to $FIRST_IP (2s, checking content)..."
                 # Sleep briefly so fppd has time to pick up our mmap write
-                sleep 0.2
+                sleep 0.5
                 HEX_OUT="$(sudo timeout 2 tcpdump -ni eth0 -xx \
                     "udp and dst host $FIRST_IP" 2>/dev/null || echo '')"
                 PKT_COUNT="$(echo "$HEX_OUT" | grep -c '0x0000:' || echo '0')"
@@ -769,29 +778,29 @@ print(f'Wrote {size} bytes of RED test pattern to {path}')
                 if [ "${PKT_COUNT:-0}" -gt 0 ]; then
                     echo "   ✅ Captured $PKT_COUNT UDP packets → fppd IS transmitting"
 
-                    # Count 0xFF bytes in the hex dump.
-                    # tcpdump -xx outputs hex as 4-char big-endian words (e.g. 'ff00 1b4a').
-                    # We split every 4-char word into two 2-char bytes to count correctly.
-                    # An all-zero stream → ~0 FF bytes; our RED pattern → hundreds per packet.
-                    FF_COUNT="$(echo "$HEX_OUT" | python3 -c "
+                    # Count non-zero DATA bytes in the hex dump (skip headers).
+                    # The RED test pattern → many 0xFF bytes and non-zero data.
+                    NZ_COUNT="$(echo "$HEX_OUT" | python3 -c "
 import sys, re
 data = sys.stdin.read()
-# Each tcpdump data line: '\t0x0010:  4500 002b c2f6 ...'
-# Extract 4-char hex words, then split each into two 2-char bytes
-words = re.findall(r'[0-9a-f]{4}', data.lower())
-all_bytes = [c for w in words for c in (w[:2], w[2:])]
-print(sum(1 for b in all_bytes if b == 'ff'))
+packets = re.split(r'(?=\s+0x0000:)', data)
+total_nz = 0
+for pkt in packets:
+    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    ab = [c for w in words for c in (w[:2], w[2:])]
+    payload = ab[60:]  # skip ETH+IP+UDP+protocol headers
+    total_nz += sum(1 for b in payload if b != '00')
+print(total_nz)
 " 2>/dev/null || echo '0')"
 
-                    if [ "${FF_COUNT:-0}" -gt 50 ]; then
-                        echo "   ✅ Packets contain RED pixel data (${FF_COUNT} × 0xFF bytes)"
+                    if [ "${NZ_COUNT:-0}" -gt 50 ]; then
+                        echo "   ✅ Packets contain pixel data (${NZ_COUNT} non-zero DATA bytes in ${PKT_COUNT} packets)"
                         echo '   ✅ FPP Pixel Overlay IS forwarding mmap → controllers'
                         echo ''
                         echo '   🎉 FPP PIPELINE CONFIRMED WORKING!'
-                        echo '   If lights are STILL dark → Twinkly controllers need E1.31 mode'
-                        echo '   configured in the Twinkly app (Settings → External Control / sACN)'
+                        echo '   If lights are STILL dark → Twinkly controllers need rt mode'
                     else
-                        echo "   ⚠️  Packets contain ZEROS (only ${FF_COUNT} × 0xFF bytes in ${PKT_COUNT} packets)"
+                        echo "   ⚠️  Packets contain ZEROS (only ${NZ_COUNT} non-zero DATA bytes in ${PKT_COUNT} packets)"
                         echo '   → FPP Pixel Overlay state 3 is NOT active despite PUT returning OK'
                         echo '   → Check the control block state above'
                         echo '   → Or enable manually: FPP UI → Pixel Overlay Models → Light_Wall → Always On'
@@ -846,6 +855,11 @@ with open(path, 'r+b') as f:
     f.flush()
     os.fsync(f.fileno())
 " 2>/dev/null || true
+
+        # Restart twinklywall for remaining tests and normal operation
+        echo '   Restarting twinklywall...'
+        sudo systemctl start twinklywall 2>/dev/null || true
+        sleep 2  # Let service initialize
 
         # --- Play-based smoke test: trigger actual video playback and verify
         #     E1.31 packets carry real (non-zero) pixel data.

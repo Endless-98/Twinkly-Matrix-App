@@ -192,7 +192,7 @@ class FPPOutput:
         print(f"[FPP_OVERLAY] WARNING: both SHM write and HTTP PUT failed for overlay state {state}", flush=True)
         return False
 
-    def _start_overlay_keepalive(self, interval: int = 30):
+    def _start_overlay_keepalive(self, interval: int = 5):
         """Daemon thread that re-asserts overlay state 3 every *interval* seconds.
 
         fppd resets the overlay isActive to 0 on internal state transitions
@@ -330,9 +330,10 @@ class FPPOutput:
             self._write_count = 0
         self._write_count += 1
         if self._write_count <= 5 or self._write_count % 100 == 0:
-            # Sample some pixel values to verify data is being written
+            # Count non-zero bytes to verify real data is being written
+            nz = sum(1 for b in self.buffer if b != 0)
             sample = bytes(self.buffer[:12])  # First 4 pixels (12 bytes)
-            print(f"[FPP_WRITE] Frame #{self._write_count}: wrote {len(self.buffer)} bytes, first 12: {sample.hex()}", flush=True)
+            print(f"[FPP_WRITE] Frame #{self._write_count}: wrote {len(self.buffer)} bytes, non-zero: {nz}/{len(self.buffer)}, first 12: {sample.hex()}", flush=True)
         
         return total_elapsed * 1000
 

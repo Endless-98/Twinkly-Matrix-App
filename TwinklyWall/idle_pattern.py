@@ -44,7 +44,7 @@ class IdlePattern:
             "y": random.randint(0, h - 1),
             "phase": random.uniform(0, 2 * math.pi),
             "speed": random.uniform(0.3, 1.2),
-            "peak": random.randint(30, 90),
+            "peak": random.randint(150, 255),
             "r": r, "g": g, "b": b,
         }
 
