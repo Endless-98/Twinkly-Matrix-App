@@ -102,12 +102,6 @@ def run_tetris(matrix, stop_event=None, level=1):
 
     # Pre-compute key list for auto-repeat
     REPEATABLE_KEYS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP)
-    
-    # Start dedicated event polling thread (prevents event drops)
-    event_poller = None
-    if not HEADLESS:
-        event_poller = EventPoller()
-        event_poller.start()
 
     try:
         log("▶️ Tetris game loop started", module="Tetris")
@@ -122,9 +116,9 @@ def run_tetris(matrix, stop_event=None, level=1):
             # ALWAYS process events first - highest priority to prevent drops
             if not HEADLESS:
                 input_triggered_render = False
-                
-                # Get all events from the dedicated polling thread
-                events = event_poller.get_events()
+
+                # Poll events directly on the main thread - SDL requires this
+                events = pygame.event.get()
                 
                 # Process all pending events in one batch
                 for event in events:
@@ -253,17 +247,15 @@ def run_tetris(matrix, stop_event=None, level=1):
                     log(f"Error in matrix.render_frame(): {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
                     break
 
+            # Yield CPU briefly to avoid busy-waiting and starving other threads
+            time.sleep(0.001)
+
     except KeyboardInterrupt:
         print("\nShutting down...")
     except Exception as e:
         log(f"Unexpected error in Tetris loop: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
     finally:
         log(f"🛑 Tetris shutting down | Total frames: {frame_count}", module="Tetris")
-        
-        # Stop event poller thread
-        if event_poller:
-            event_poller.stop()
-        
         try:
             matrix.shutdown()
         except Exception as e:

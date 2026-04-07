@@ -1,3 +1,15 @@
+from enum import IntEnum
+
+class Rotation(IntEnum):
+    NORTH = 0 # Spawn state
+    EAST  = 1 # One clockwise rotation
+    SOUTH = 2 # Two rotations
+    WEST  = 3 # One counter-clockwise rotation
+
+class KickPieceGroup(IntEnum):
+    I_PIECE  = 0
+    STANDARD = 1
+
 ### GLOBAL ###
 GAME_NAME = "tetris"
 TETROMINO_MAX_GRID_SIZE = 4
@@ -44,141 +56,50 @@ TETROMINO_GHOST_ALPHA = 65
 GAME_OVER_FILENAME = 'game_over_screen.png'
 
 ### Tetromino Definition ###
-TETROMINO_COLORS = [(0,0,0), (0, 230, 254),(254, 16, 60),(184, 2, 253),(24, 1, 255),(255, 222, 0),(102, 253, 0),(255, 115, 8)]
+COLOR_EMPTY   = (0,   0,   0  )
+COLOR_I_PIECE = (0,   230, 254) # Cyan
+COLOR_J_PIECE = (24,  1,   255) # Blue
+COLOR_L_PIECE = (255, 115, 8  ) # Orange
+COLOR_O_PIECE = (255, 222, 0  ) # Yellow
+COLOR_S_PIECE = (102, 253, 0  ) # Green
+COLOR_Z_PIECE = (254, 16,  60 ) # Red
+COLOR_T_PIECE = (184, 2,   253) # Purple
 
-# TODO : This is terrible. Refactor to Enum with named groups
-    # Use Rotation enum
-    # Use Enum for Piece Group
-KICK_OFFSETS = [
-        ### Piece_group 0: I piece
-        [
-        # Counter-clockwise
-            [
-                # Desired rotation
-                [
-                    #Try number
-                    (-1,0),
-                    (2,0),
-                    (-1,2),
-                    (2,-1),
-                ],
-                [
-                    (2,0),
-                    (-1,0),
-                    (2,1),
-                    (-1,-2),
-                ],
-                [
-                    (1,0),
-                    (-2,0),
-                    (1,-2),
-                    (-2,1),
-                ],
-                [
-                    (-2,0),
-                    (1,0),
-                    (-2,-1),
-                    (1,2),
-                ],
-            ],
-            # Clockwise
-            [
-                # Desired rotation
-                [
-                    #Try number
-                    (-2,0),
-                    (1,0),
-                    (-2,-1),
-                    (1,2),
-                ],
-                [
-                    (-1,0),
-                    (2,0),
-                    (-1,2),
-                    (2,-1),
-                ],
-                [
-                    (2,0),
-                    (-1,0),
-                    (2,1),
-                    (-1,-2),
-                ],
-                [
-                    (1,0),
-                    (-2,0),
-                    (1,-2),
-                    (-2,1),
-                ],
-            ],
-        ],
-        ### Piece_group 1
-        [
-            
-        # Counter-clockwise
-            [
-                # Desired rotation
-                [
-                    #Try number
-                    (1,0),
-                    (1,1),
-                    (0,-2),
-                    (1,-2),
-                ],
-                [
-                    (1,0),
-                    (1,-1),
-                    (0,2),
-                    (1,2),
-                ],
-                [
-                    (-1,0),
-                    (-1,1),
-                    (0,-2),
-                    (-1,-2),
-                ],
-                [
-                    (-1,0),
-                    (-1,-1),
-                    (0,2),
-                    (-1,2),
-                ],
-            ],
-            # Clockwise
-            [
-                # Desired rotation
-                [
-                    #Try number
-                    (-1,0),
-                    (-1,1),
-                    (0,-2),
-                    (-1,-2),
-                ],
-                [
-                    (1,0),
-                    (1,-1),
-                    (0,2),
-                    (1,2),
-                ],
-                [
-                    (1,0),
-                    (1,1),
-                    (0,-2),
-                    (1,-2),
-                ],
-                [
-                    (-1,0),
-                    (-1,-1),
-                    (0,2),
-                    (-1,2),
-                ],
-            ],
-        ],
-    ]
+TETROMINO_COLORS = [COLOR_EMPTY, COLOR_I_PIECE, COLOR_J_PIECE, COLOR_L_PIECE, COLOR_O_PIECE, COLOR_S_PIECE, COLOR_Z_PIECE, COLOR_T_PIECE]
 
+KICK_OFFSETS = {
+    KickPieceGroup.I_PIECE: {
+        False: { # Counter-clockwise
+            Rotation.NORTH: [(-1,0),(2,0),(-1,2),(2,-1)],
+            Rotation.EAST:  [(2,0),(-1,0),(2,1),(-1,-2)],
+            Rotation.SOUTH: [(1,0),(-2,0),(1,-2),(-2,1)],
+            Rotation.WEST:  [(-2,0),(1,0),(-2,-1),(1,2)],
+        },
+        True: { # Clockwise
+            Rotation.NORTH: [(-2,0),(1,0),(-2,-1),(1,2)],
+            Rotation.EAST:  [(-1,0),(2,0),(-1,2),(2,-1)],
+            Rotation.SOUTH: [(2,0),(-1,0),(2,1),(-1,-2)],
+            Rotation.WEST:  [(1,0),(-2,0),(1,-2),(-2,1)],
+        },
+    },
+    KickPieceGroup.STANDARD: {
+        False: { # Counter-clockwise
+            Rotation.NORTH: [(1,0),(1,1),(0,-2),(1,-2)],
+            Rotation.EAST:  [(1,0),(1,-1),(0,2),(1,2)],
+            Rotation.SOUTH: [(-1,0),(-1,1),(0,-2),(-1,-2)],
+            Rotation.WEST:  [(-1,0),(-1,-1),(0,2),(-1,2)],
+        },
+        True: { # Clockwise
+            Rotation.NORTH: [(-1,0),(-1,1),(0,-2),(-1,-2)],
+            Rotation.EAST:  [(1,0),(1,-1),(0,2),(1,2)],
+            Rotation.SOUTH: [(1,0),(1,1),(0,-2),(1,-2)],
+            Rotation.WEST:  [(-1,0),(-1,-1),(0,2),(-1,2)],
+        },
+    },
+}
 
-
-EMPTY = False
-FILLED = True
+EMPTY : bool = False
+FILLED : bool = True
 TETROMINO_I_GRID_SHAPE = [[EMPTY,EMPTY,EMPTY,EMPTY],
                           [EMPTY,EMPTY,EMPTY,EMPTY],
                           [FILLED,FILLED,FILLED,FILLED],
@@ -210,15 +131,9 @@ TETROMINO_T_GRID_SHAPE = [[EMPTY,FILLED,EMPTY],
                           [EMPTY,EMPTY,EMPTY]]
 
 TETROMINO_I_GRID_SIZE = 4
-
 TETROMINO_J_GRID_SIZE = 3
-
 TETROMINO_L_GRID_SIZE = 3
-
 TETROMINO_O_GRID_SIZE = 4
-
 TETROMINO_S_GRID_SIZE = 3
-
 TETROMINO_Z_GRID_SIZE = 3
-
 TETROMINO_T_GRID_SIZE = 3

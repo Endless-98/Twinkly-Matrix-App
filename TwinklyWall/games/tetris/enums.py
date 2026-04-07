@@ -28,7 +28,7 @@ class TetrominoType(IntEnum):
     T_PIECE = 7
 
     @property
-    def shape(self) -> TetrominoType:# TODO : Switch to list
+    def shape(self) -> list[list[bool]]:# TODO : Switch to list
         match self:
             case TetrominoType.I_PIECE:
                 return TETROMINO_I_GRID_SHAPE
