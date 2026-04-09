@@ -838,7 +838,11 @@ def play_video():
 
         rendered_path = rendered_videos_dir / rendered_name
         if not rendered_path.exists():
-            return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
+            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / rendered_name
+            if fallback_path.exists():
+                rendered_path = fallback_path
+            else:
+                return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
         
         # Stop any current playback (and idle pattern)
         stop_current_playback()
