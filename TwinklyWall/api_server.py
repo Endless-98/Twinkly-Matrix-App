@@ -176,18 +176,24 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Start the idle twinkle pattern if nothing else is active."""
+    """Write a single black frame so the LEDs go dark when nothing is playing.
+
+    The FPP overlay keepalive thread in FPPOutput holds the overlay in state 3,
+    so fppd continuously broadcasts the mmap buffer (all zeros) to the LEDs
+    without us needing to pump frames continuously.
+    """
     global idle_animation
-    if idle_animation and idle_animation.running:
-        return
+    if idle_animation:
+        idle_animation.stop()
+        idle_animation = None
     try:
-        matrix = initialize_matrix()
-        if matrix:
-            idle_animation = IdlePattern(matrix)
-            idle_animation.start()
-            log("Idle twinkle started", module="Idle")
+        m = current_matrix or initialize_matrix()
+        if m and getattr(m, 'fpp', None):
+            import numpy as _np
+            m.render_colors(_np.zeros((m.height, m.width, 3), dtype=_np.uint8))
+            log("LEDs cleared to black (idle)", module="Idle")
     except Exception as e:
-        log(f"Failed to start idle pattern: {e}", level='WARNING', module="Idle")
+        log(f"Failed to clear display on idle: {e}", level='WARNING', module="Idle")
 
 
 def _stop_idle():
@@ -284,14 +290,10 @@ def get_videos():
             for file in scan_dir.iterdir():
                 if file.is_file() and file.suffix.lower() == '.npz' and file.name not in seen:
                     seen.add(file.name)
-                    # Check if thumbnail exists
-                    thumbnail_path = file.with_suffix('.png')
-                    thumbnail_exists = thumbnail_path.exists()
-
                     videos.append({
                         'filename': file.name,
-                        'has_thumbnail': thumbnail_exists,
-                        'thumbnail': f'/api/video/{file.stem}/thumbnail' if thumbnail_exists else None,
+                        'has_thumbnail': True,  # endpoint auto-generates from first frame
+                        'thumbnail': f'/api/video/{file.stem}/thumbnail',
                     })
 
         # Sort by filename
@@ -354,10 +356,18 @@ def get_video_thumbnail(video_stem):
     If thumbnail doesn't exist but the video does, generates it from the first frame.
     """
     try:
+        legacy_dir = Path(__file__).parent / 'dotmatrix' / 'rendered_videos'
         thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
         video_path = rendered_videos_dir / f"{video_stem}.npz"
-        
-        if not thumbnail_path.exists() and video_path.exists():
+
+        # Fall back to legacy directory if not found in primary
+        if not video_path.exists():
+            leg_video = legacy_dir / f"{video_stem}.npz"
+            if leg_video.exists():
+                video_path = leg_video
+                thumbnail_path = legacy_dir / f"{video_stem}.png"
+
+        if not thumbnail_path.exists() and video_path.exists() and HAS_CV2:
             try:
                 data = np.load(video_path)
                 frames = data['frames']
@@ -369,10 +379,10 @@ def get_video_thumbnail(video_stem):
                     log(f"Generated missing thumbnail: {thumbnail_path.name}", module="API")
             except Exception as gen_e:
                 log(f"Failed to generate thumbnail for {video_stem}: {gen_e}", level='WARNING', module="API")
-        
+
         if not thumbnail_path.exists():
             return jsonify({'error': 'Thumbnail not found'}), 404
-        
+
         # Return the image file
         return send_file(thumbnail_path, mimetype='image/png')
     except Exception as e:

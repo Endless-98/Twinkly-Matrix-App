@@ -637,8 +637,9 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
                       _buildPlatformBadge(),
                       const SizedBox(height: 20),
 
-                      // Capture Mode Selection (only show supported modes)
-                      if (capabilities.supportsDesktopCapture)
+                      // Capture Mode Selection — only meaningful on desktop platforms
+                      // (Android always uses MediaProjection full-screen; no choice needed)
+                      if (!Platform.isAndroid && capabilities.supportsDesktopCapture)
                         _buildCaptureModeCard(captureMode, selectedWindow, captureRegion),
                       const SizedBox(height: 24),
 

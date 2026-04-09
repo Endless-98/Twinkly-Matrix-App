@@ -54,11 +54,10 @@ class MainActivity : FlutterActivity() {
                 }
                 "captureScreenshot" -> {
                     val frame = screenCaptureService.captureFrame()
-                    if (frame != null) {
-                        result.success(frame)
-                    } else {
-                        result.error("CAPTURE_FAILED", "No frame available", null)
-                    }
+                    // Return null instead of error when no frame is ready — Flutter
+                    // handles null gracefully and retries; error triggers consecutive-
+                    // failure tracking that can abort the capture loop.
+                    result.success(frame)
                 }
                 else -> result.notImplemented()
             }
