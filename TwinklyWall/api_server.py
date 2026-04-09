@@ -176,40 +176,30 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Write a single black frame so the LEDs go dark when nothing is playing.
+    """Release the FPP overlay so no data is broadcast when nothing is playing.
 
-    The FPP overlay keepalive thread in FPPOutput holds the overlay in state 3,
-    so fppd continuously broadcasts the mmap buffer (all zeros) to the LEDs
-    without us needing to pump frames continuously.
+    With the overlay in state 0, fppd stops sending pixels to the controllers
+    entirely — zero network bandwidth used at idle.
     """
     global idle_animation
     if idle_animation:
         idle_animation.stop()
         idle_animation = None
     try:
-        m = current_matrix or initialize_matrix()
+        m = current_matrix
         if m and getattr(m, 'fpp', None):
-            import numpy as _np
-            m.render_colors(_np.zeros((m.height, m.width, 3), dtype=_np.uint8))
-            log("LEDs cleared to black (idle)", module="Idle")
+            m.fpp.release_overlay()
+            log("FPP overlay released — zero bandwidth at idle", module="Idle")
     except Exception as e:
-        log(f"Failed to clear display on idle: {e}", level='WARNING', module="Idle")
+        log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
 
 
 def _stop_idle():
-    """Stop the idle twinkle pattern and flush black to clear any lingering star pixels."""
+    """Stop any idle animation (no-op in current design — kept for compatibility)."""
     global idle_animation
     if idle_animation:
         idle_animation.stop()
         idle_animation = None
-        # Send a black frame so idle star pixels don't linger on the LEDs
-        try:
-            m = current_matrix
-            if m and getattr(m, 'fpp', None):
-                import numpy as _np
-                m.render_colors(_np.zeros((m.height, m.width, 3), dtype=_np.uint8))
-        except Exception:
-            pass
 
 
 def stop_current_playback():
@@ -227,6 +217,12 @@ def stop_current_playback():
     if playback_thread and playback_thread.is_alive():
         playback_thread.join(timeout=2)
     playback_thread = None
+    # Ensure overlay is released (no bandwidth) after stopping
+    try:
+        if current_matrix and getattr(current_matrix, 'fpp', None):
+            current_matrix.fpp.release_overlay()
+    except Exception:
+        pass
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
@@ -237,7 +233,11 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
         log(f"[VIDEO_THREAD] Starting video playback: {video_path}", level='INFO', module="PLAYBACK")
         matrix = initialize_matrix()
         log(f"[VIDEO_THREAD] Matrix initialized, FPP output: {bool(getattr(matrix, 'fpp', None))}", level='INFO', module="PLAYBACK")
-        
+
+        # Enable overlay now so fppd starts broadcasting our mmap buffer
+        if getattr(matrix, 'fpp', None):
+            matrix.fpp.acquire_overlay()
+
         player = VideoPlayer(matrix)
         current_player = player
         
@@ -1281,10 +1281,7 @@ if __name__ == '__main__':
     # Start background cleanup thread for idle players
     start_cleanup_thread()
 
-    # Start idle twinkle so the wall shows life on boot
-    _start_idle()
-    
-    # Run the Flask server
+    # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")
     app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
 

@@ -114,10 +114,9 @@ class FPPOutput:
             self.memory_map = mmap.mmap(self.file_handle.fileno(), self.buffer_size)
             print(f"[FPP_INIT] Memory map created successfully", flush=True)
             print(f"[FPP_INIT] ========================================", flush=True)
-            # Enable overlay to always transmit (state 3) via SHM + HTTP
-            self._enable_overlay_state(model_name=self._overlay_model_name)
-            # Keep reasserting state 3 so fppd state transitions don't kill it
-            self._start_overlay_keepalive(interval=30)
+            # Start with overlay disabled so no bandwidth is used until playback begins.
+            # Call acquire_overlay() before sending frames.
+            self._enable_overlay_state(state=0)
         except PermissionError:
             print(f"FPP Error: Permission denied accessing {fpp_file}")
             print(f"Fix: sudo chmod 666 {fpp_file}")
@@ -191,6 +190,28 @@ class FPPOutput:
 
         print(f"[FPP_OVERLAY] WARNING: both SHM write and HTTP PUT failed for overlay state {state}", flush=True)
         return False
+
+    def acquire_overlay(self):
+        """Enable FPP overlay (state 3) and start keepalive. Call before writing frames."""
+        # Stop any prior keepalive cleanly before starting a fresh one
+        if hasattr(self, '_keepalive_stop'):
+            self._keepalive_stop.set()
+        if hasattr(self, '_keepalive_thread') and self._keepalive_thread:
+            self._keepalive_thread.join(timeout=1)
+            self._keepalive_thread = None
+        self._enable_overlay_state(state=3)
+        self._start_overlay_keepalive(interval=30)
+        print("[FPP_OVERLAY] Overlay acquired — broadcasting enabled", flush=True)
+
+    def release_overlay(self):
+        """Disable FPP overlay (state 0) and stop keepalive. Zero bandwidth sent."""
+        if hasattr(self, '_keepalive_stop'):
+            self._keepalive_stop.set()
+        if hasattr(self, '_keepalive_thread') and self._keepalive_thread:
+            self._keepalive_thread.join(timeout=1)
+            self._keepalive_thread = None
+        self._enable_overlay_state(state=0)
+        print("[FPP_OVERLAY] Overlay released — no data sent", flush=True)
 
     def _start_overlay_keepalive(self, interval: int = 5):
         """Daemon thread that re-asserts overlay state 3 every *interval* seconds.
