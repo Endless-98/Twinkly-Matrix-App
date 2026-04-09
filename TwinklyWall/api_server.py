@@ -60,6 +60,18 @@ os.makedirs(rendered_videos_dir, exist_ok=True)
 os.makedirs(uploaded_videos_dir, exist_ok=True)
 os.makedirs(TMP_UPLOAD_DIR, exist_ok=True)
 
+# Migrate any .npz/.png files from the legacy dotmatrix/rendered_videos/ dir
+# into the canonical rendered_videos_dir so there is one source of truth.
+_legacy_rendered_dir = Path(__file__).parent / 'dotmatrix' / 'rendered_videos'
+if _legacy_rendered_dir.exists():
+    import shutil as _shutil
+    for _legacy_file in _legacy_rendered_dir.iterdir():
+        if _legacy_file.is_file() and _legacy_file.suffix.lower() in ('.npz', '.png'):
+            _dest = rendered_videos_dir / _legacy_file.name
+            if not _dest.exists():
+                _shutil.copy2(str(_legacy_file), str(_dest))
+                print(f"[MIGRATE] Moved {_legacy_file.name} → {rendered_videos_dir}", flush=True)
+
 # Force werkzeug/tempfile to use the large partition for request temp files
 os.environ["TMPDIR"] = str(TMP_UPLOAD_DIR)
 tempfile.tempdir = str(TMP_UPLOAD_DIR)
@@ -278,23 +290,14 @@ def get_videos():
                 pass
             return jsonify({'videos': []})
 
-        # Also scan legacy dotmatrix/rendered_videos/ directory
-        legacy_dir = Path(__file__).parent / 'dotmatrix' / 'rendered_videos'
-        scan_dirs = [rendered_videos_dir]
-        if legacy_dir.exists():
-            scan_dirs.append(legacy_dir)
-
-        seen = set()
         videos = []
-        for scan_dir in scan_dirs:
-            for file in scan_dir.iterdir():
-                if file.is_file() and file.suffix.lower() == '.npz' and file.name not in seen:
-                    seen.add(file.name)
-                    videos.append({
-                        'filename': file.name,
-                        'has_thumbnail': True,  # endpoint auto-generates from first frame
-                        'thumbnail': f'/api/video/{file.stem}/thumbnail',
-                    })
+        for file in rendered_videos_dir.iterdir():
+            if file.is_file() and file.suffix.lower() == '.npz':
+                videos.append({
+                    'filename': file.name,
+                    'has_thumbnail': True,  # endpoint auto-generates from first frame
+                    'thumbnail': f'/api/video/{file.stem}/thumbnail',
+                })
 
         # Sort by filename
         videos.sort(key=lambda x: x['filename'])
@@ -356,16 +359,8 @@ def get_video_thumbnail(video_stem):
     If thumbnail doesn't exist but the video does, generates it from the first frame.
     """
     try:
-        legacy_dir = Path(__file__).parent / 'dotmatrix' / 'rendered_videos'
         thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
         video_path = rendered_videos_dir / f"{video_stem}.npz"
-
-        # Fall back to legacy directory if not found in primary
-        if not video_path.exists():
-            leg_video = legacy_dir / f"{video_stem}.npz"
-            if leg_video.exists():
-                video_path = leg_video
-                thumbnail_path = legacy_dir / f"{video_stem}.png"
 
         if not thumbnail_path.exists() and video_path.exists() and HAS_CV2:
             try:
@@ -402,12 +397,7 @@ def get_video_metadata(filename):
         # Try multiple possible locations for the file
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
-            # Fallback to local dotmatrix/rendered_videos directory
-            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
-            if fallback_path.exists():
-                file_path = fallback_path
-            else:
-                return jsonify({'error': f'Video not found: {filename}'}), 404
+            return jsonify({'error': f'Video not found: {filename}'}), 404
 
         # Load minimal metadata
         data = np.load(file_path)
@@ -856,11 +846,7 @@ def play_video():
 
         rendered_path = rendered_videos_dir / rendered_name
         if not rendered_path.exists():
-            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / rendered_name
-            if fallback_path.exists():
-                rendered_path = fallback_path
-            else:
-                return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
+            return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
         
         # Stop any current playback (and idle pattern)
         stop_current_playback()
