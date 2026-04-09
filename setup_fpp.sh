@@ -77,6 +77,9 @@ else
     echo '⚠️  .pyenv Python 3.12.12 not found, using system python3'
 fi
 
+echo '📦 Installing system libraries required by numpy/pygame...'
+sudo apt-get install -y libopenblas0 libopenblas-dev 2>/dev/null || true
+
 echo '📦 Installing Python dependencies...'
 # Install dependencies (remove -q flag to see any errors)
 "$PYTHON_BIN" -m pip install --break-system-packages -r requirements.txt || {
