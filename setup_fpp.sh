@@ -79,7 +79,7 @@ fi
 
 echo '📦 Installing Python dependencies...'
 # Install dependencies (remove -q flag to see any errors)
-"$PYTHON_BIN" -m pip install -r requirements.txt || {
+"$PYTHON_BIN" -m pip install --break-system-packages -r requirements.txt || {
     echo "❌ Failed to install dependencies"
     exit 1
 }
@@ -89,7 +89,7 @@ if "$PYTHON_BIN" -c "import yt_dlp" 2>/dev/null; then
     echo '✅ Python dependencies satisfied (yt-dlp found)'
 else
     echo '🔄 Installing yt-dlp...'
-    "$PYTHON_BIN" -m pip install yt-dlp || {
+    "$PYTHON_BIN" -m pip install --break-system-packages yt-dlp || {
         echo "❌ Failed to install yt-dlp"
         exit 1
     }
