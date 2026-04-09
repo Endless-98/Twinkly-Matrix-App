@@ -28,6 +28,14 @@ class IdlePattern:
         for _ in range(num_stars):
             self._stars.append(self._make_star(w, h))
 
+        # Pre-compute numpy arrays for vectorized rendering
+        self._star_x     = np.array([s["x"]     for s in self._stars], dtype=np.int32)
+        self._star_y     = np.array([s["y"]     for s in self._stars], dtype=np.int32)
+        self._star_phase = np.array([s["phase"] for s in self._stars], dtype=np.float32)
+        self._star_speed = np.array([s["speed"] for s in self._stars], dtype=np.float32)
+        self._star_peak  = np.array([s["peak"]  for s in self._stars], dtype=np.float32)
+        self._star_rgb   = np.array([[s["r"], s["g"], s["b"]] for s in self._stars], dtype=np.float32)
+
     @staticmethod
     def _make_star(w, h):
         # Warm-white palette with slight colour variation
@@ -73,14 +81,11 @@ class IdlePattern:
             t = time.monotonic() - t0
             frame = np.zeros((self._matrix.height, self._matrix.width, 3), dtype=np.uint8)
 
-            for s in self._stars:
-                brightness = (math.sin(t * s["speed"] + s["phase"]) + 1.0) / 2.0
-                val = brightness * s["peak"]
-                frame[s["y"], s["x"]] = (
-                    int(val * s["r"]),
-                    int(val * s["g"]),
-                    int(val * s["b"]),
-                )
+            # Vectorized: compute all star brightnesses and colors at once
+            brightness = (np.sin(t * self._star_speed + self._star_phase) + 1.0) * 0.5  # (N,)
+            vals = brightness * self._star_peak                                           # (N,)
+            colors = np.clip(vals[:, np.newaxis] * self._star_rgb, 0, 255).astype(np.uint8)  # (N, 3)
+            frame[self._star_y, self._star_x] = colors
 
             try:
                 self._matrix.render_colors(frame)

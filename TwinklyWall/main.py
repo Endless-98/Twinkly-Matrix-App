@@ -196,7 +196,11 @@ def run_tetris(matrix, stop_event=None, level=1):
                                     log(f"Error in auto-repeat: {e}", level='ERROR', module="Tetris")
 
             # Drain any queued player inputs (from API threads) on the game thread
-            for player in players.active_players():
+            active = players.active_players()
+            # Auto-rebind any player who joined after begin_play() was called
+            if any(p.on_input is None for p in active):
+                tetris._bind_input(tetris)
+            for player in active:
                 while True:
                     payload = players.next_input(player.player_id)
                     if payload is None:

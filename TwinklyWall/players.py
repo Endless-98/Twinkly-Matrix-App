@@ -55,7 +55,7 @@ class Players:
         self._global_listeners: List[InputHandler] = []
         self._last_hard_drop: Dict[str, float] = {}
 
-    HARD_DROP_COOLDOWN_SEC = 0.75  # prevent repeat hard-drops while held
+    HARD_DROP_COOLDOWN_SEC = 0.3  # prevent repeat hard-drops while held
 
     def register(
         self,

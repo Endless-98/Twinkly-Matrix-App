@@ -340,25 +340,31 @@ class DotMatrix:
         
         # Check if this is a staggered canvas (height = width * 2)
         if self.should_stagger and h == self.height * 2:
-            # Staggered canvas: sample with column-dependent row offsets
-            # Even columns sample from rows [0,2,4,...], Odd columns from [1,3,5,...]
-            result = np.zeros((self.height, self.width, 3), dtype=np.uint8)
-            for col in range(self.width):
-                if col % 2 == 0:
-                    # Even column: sample every other row starting at 0
-                    src_rows = np.arange(0, h, 2, dtype=np.int32)
-                else:
-                    # Odd column: sample every other row starting at 1
-                    src_rows = np.arange(1, h, 2, dtype=np.int32)
-                
-                # Copy sampled rows for this column, applying alpha if available
-                for dst_row, src_row in enumerate(src_rows):
-                    if src_row < h:
-                        color = pixel_array[col, src_row][:3]  # Get RGB
-                        if has_alpha:
-                            alpha = alpha_view[col, src_row] / 255.0
-                            color = (color * alpha).astype(np.uint8)
-                        result[dst_row, col] = color
+            # Staggered canvas: fully vectorized sampling.
+            # pixel_array shape: (width, h, 3) where h = self.height * 2
+            # Even columns sample rows [0,2,...], odd columns sample rows [1,3,...]
+            result = np.empty((self.height, self.width, 3), dtype=np.uint8)
+
+            even_cols = np.arange(0, self.width, 2)   # [0, 2, ..., 88]
+            odd_cols  = np.arange(1, self.width, 2)   # [1, 3, ..., 89]
+
+            # pixel_array[even_cols] → (n_even, h, 3); [::2] selects rows 0,2,...
+            even_rgb = pixel_array[even_cols][:, ::2, :3]    # (n_even, height, 3)
+            result[:, even_cols, :] = even_rgb.transpose(1, 0, 2)
+
+            odd_rgb  = pixel_array[odd_cols][:, 1::2, :3]   # (n_odd,  height, 3)
+            result[:, odd_cols,  :] = odd_rgb.transpose(1, 0, 2)
+
+            if has_alpha:
+                even_a = alpha_view[even_cols][:, ::2].T.astype(np.float32) / 255.0  # (height, n_even)
+                result[:, even_cols, :] = (
+                    result[:, even_cols, :].astype(np.float32) * even_a[:, :, np.newaxis]
+                ).astype(np.uint8)
+                odd_a  = alpha_view[odd_cols][:, 1::2].T.astype(np.float32) / 255.0  # (height, n_odd)
+                result[:, odd_cols,  :] = (
+                    result[:, odd_cols,  :].astype(np.float32) * odd_a[:, :, np.newaxis]
+                ).astype(np.uint8)
+
             self.dot_colors = result
         else:
             # Regular canvas: standard transpose with alpha applied

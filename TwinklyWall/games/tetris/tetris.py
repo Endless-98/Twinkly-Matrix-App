@@ -488,6 +488,8 @@ class Tetris:
                             tetris.rotate_counterclockwise()
                         case "MOVE_DOWN":
                             tetris.drop_piece(True)
+                        case "MOVE_DOWN_RELEASE":
+                            tetris.drop_piece(False)
                         case "HARD_DROP":
                             tetris.hard_drop_piece()
                 return handle_tetris_input

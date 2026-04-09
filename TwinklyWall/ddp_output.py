@@ -50,6 +50,10 @@ class DDPOutput:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
 
+        # Pre-allocated header buffer — reused every chunk to avoid per-packet allocation
+        self._hdr = bytearray(self._HEADER_SIZE)
+        self._hdr[0] = self._DDP_MAGIC
+
         # Statistics
         self.frames_sent = 0
         self.bytes_sent = 0
@@ -120,6 +124,7 @@ class DDPOutput:
         offset = 0
         total = len(data)
         seq = self._seq
+        header = self._hdr  # reuse pre-allocated buffer
 
         while offset < total:
             chunk_len = min(total - offset, self._MAX_CHUNK)
@@ -127,8 +132,6 @@ class DDPOutput:
 
             flags = self._FLAG_VER1 | (self._FLAG_PUSH if is_last else 0)
 
-            header = bytearray(self._HEADER_SIZE)
-            header[0] = self._DDP_MAGIC
             header[1] = flags
             header[2] = seq & 0xFF
             header[3] = (offset >> 16) & 0xFF
@@ -136,7 +139,7 @@ class DDPOutput:
             header[5] = offset & 0xFF
             header[6] = (chunk_len >> 8) & 0xFF
             header[7] = chunk_len & 0xFF
-            # header[8:10] remain 0 (default data ID)
+            # header[8:9] remain 0 (default data ID)
 
             try:
                 self.sock.sendto(
