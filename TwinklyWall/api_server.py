@@ -264,18 +264,27 @@ def get_videos():
                 pass
             return jsonify({'videos': []})
 
+        # Also scan legacy dotmatrix/rendered_videos/ directory
+        legacy_dir = Path(__file__).parent / 'dotmatrix' / 'rendered_videos'
+        scan_dirs = [rendered_videos_dir]
+        if legacy_dir.exists():
+            scan_dirs.append(legacy_dir)
+
+        seen = set()
         videos = []
-        for file in rendered_videos_dir.iterdir():
-            if file.is_file() and file.suffix.lower() == '.npz':
-                # Check if thumbnail exists
-                thumbnail_path = file.with_suffix('.png')
-                thumbnail_exists = thumbnail_path.exists()
-                
-                videos.append({
-                    'filename': file.name,
-                    'has_thumbnail': thumbnail_exists,
-                    'thumbnail': f'/api/video/{file.stem}/thumbnail' if thumbnail_exists else None,
-                })
+        for scan_dir in scan_dirs:
+            for file in scan_dir.iterdir():
+                if file.is_file() and file.suffix.lower() == '.npz' and file.name not in seen:
+                    seen.add(file.name)
+                    # Check if thumbnail exists
+                    thumbnail_path = file.with_suffix('.png')
+                    thumbnail_exists = thumbnail_path.exists()
+
+                    videos.append({
+                        'filename': file.name,
+                        'has_thumbnail': thumbnail_exists,
+                        'thumbnail': f'/api/video/{file.stem}/thumbnail' if thumbnail_exists else None,
+                    })
 
         # Sort by filename
         videos.sort(key=lambda x: x['filename'])
@@ -1012,7 +1021,7 @@ def game_heartbeat():
                 cmd = "HARD_DROP"
             data['cmd'] = cmd
 
-            log(f"BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", module="API")
+            log(f"BUTTON PRESS - Player: {player_id} | Game: {player_game} | Command: {cmd}", level='DEBUG', module="API")
             handle_input(player_id, data)
 
         game = get_game_for_player(player_id)
