@@ -280,25 +280,12 @@ class FPPOutput:
             return 0.0
 
         start = time.perf_counter()
-        
-        # Track timing for different stages
-        select_start = time.perf_counter()
 
         if HAS_NUMPY and isinstance(dot_colors, np.ndarray) and self._fast_dest is not None:
             colors_flat = dot_colors.reshape(-1, 3)
             selected = colors_flat[self._fast_src]
-            select_elapsed = time.perf_counter() - select_start
-            
-            correct_start = time.perf_counter()
             corrected = self._apply_correction_numpy(selected)
-            correct_elapsed = time.perf_counter() - correct_start
-            
-            assign_start = time.perf_counter()
             self._buffer_view[self._fast_dest] = corrected
-            assign_elapsed = time.perf_counter() - assign_start
-            
-            # Optional: verbose logging for each write (disabled by default to reduce overhead)
-            # print(f"[FPP_WRITE] select={select_elapsed*1000:.3f}ms correct={correct_elapsed*1000:.3f}ms assign={assign_elapsed*1000:.3f}ms", flush=True)
         elif HAS_NUMPY and isinstance(dot_colors, np.ndarray):
             for (row, col), byte_indices in self.routing_table.items():
                 pixel = dot_colors[row, col]
@@ -317,24 +304,21 @@ class FPPOutput:
                     self.buffer[byte_idx + 1] = g
                     self.buffer[byte_idx + 2] = b
 
-        flush_start = time.perf_counter()
         self.memory_map.seek(0)
         self.memory_map.write(self.buffer)
-        self.memory_map.flush()  # Force sync to shared memory
-        flush_elapsed = time.perf_counter() - flush_start
-        
+        # mmap.flush() is omitted: /dev/shm is coherent shared memory on Linux;
+        # writes are immediately visible to other processes without msync.
+
         total_elapsed = time.perf_counter() - start
-        
-        # Debug: Log write activity periodically
+
+        # Startup diagnostic: log first 5 writes only
         if not hasattr(self, '_write_count'):
             self._write_count = 0
         self._write_count += 1
-        if self._write_count <= 5 or self._write_count % 100 == 0:
-            # Count non-zero bytes to verify real data is being written
-            nz = sum(1 for b in self.buffer if b != 0)
-            sample = bytes(self.buffer[:12])  # First 4 pixels (12 bytes)
-            print(f"[FPP_WRITE] Frame #{self._write_count}: wrote {len(self.buffer)} bytes, non-zero: {nz}/{len(self.buffer)}, first 12: {sample.hex()}", flush=True)
-        
+        if self._write_count <= 5:
+            sample = bytes(self.buffer[:12])
+            print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()}", flush=True)
+
         return total_elapsed * 1000
 
     def write_solid(self, r, g, b):

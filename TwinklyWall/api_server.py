@@ -191,11 +191,19 @@ def _start_idle():
 
 
 def _stop_idle():
-    """Stop the idle twinkle pattern."""
+    """Stop the idle twinkle pattern and flush black to clear any lingering star pixels."""
     global idle_animation
     if idle_animation:
         idle_animation.stop()
         idle_animation = None
+        # Send a black frame so idle star pixels don't linger on the LEDs
+        try:
+            m = current_matrix
+            if m and getattr(m, 'fpp', None):
+                import numpy as _np
+                m.render_colors(_np.zeros((m.height, m.width, 3), dtype=_np.uint8))
+        except Exception:
+            pass
 
 
 def stop_current_playback():
