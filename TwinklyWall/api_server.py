@@ -188,10 +188,11 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Release the FPP overlay so no data is broadcast when nothing is playing.
+    """Broadcast all-black frames so Twinklys stay dark while nothing is playing.
 
-    With the overlay in state 0, fppd stops sending pixels to the controllers
-    entirely — zero network bandwidth used at idle.
+    Twinkly lights revert to their built-in default pattern if DDP stops entirely.
+    We keep the FPP overlay active at state 3 but write all-zeros to the mmap,
+    so fppd continuously sends black frames and the lights remain off.
     """
     global idle_animation
     if idle_animation:
@@ -200,10 +201,10 @@ def _start_idle():
     try:
         m = current_matrix
         if m and getattr(m, 'fpp', None):
-            m.fpp.release_overlay()
-            log("FPP overlay released — zero bandwidth at idle", module="Idle")
+            m.fpp.broadcast_black()
+            log("FPP broadcasting black — lights dark at idle", module="Idle")
     except Exception as e:
-        log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
+        log(f"Failed to start black broadcast: {e}", level='WARNING', module="Idle")
 
 
 def _stop_idle():
@@ -229,10 +230,10 @@ def stop_current_playback():
     if playback_thread and playback_thread.is_alive():
         playback_thread.join(timeout=2)
     playback_thread = None
-    # Ensure overlay is released (no bandwidth) after stopping
+    # Broadcast black after stopping so Twinklys don't revert to default pattern
     try:
         if current_matrix and getattr(current_matrix, 'fpp', None):
-            current_matrix.fpp.release_overlay()
+            current_matrix.fpp.broadcast_black()
     except Exception:
         pass
 
