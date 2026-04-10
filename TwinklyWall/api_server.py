@@ -36,6 +36,7 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
+from twinkly_controller import set_all_off as _twinkly_off, set_all_rt as _twinkly_rt
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -188,11 +189,10 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Broadcast all-black frames so Twinklys stay dark while nothing is playing.
+    """Put Twinklys into 'off' mode and release the FPP overlay.
 
-    Twinkly lights revert to their built-in default pattern if DDP stops entirely.
-    We keep the FPP overlay active at state 3 but write all-zeros to the mmap,
-    so fppd continuously sends black frames and the lights remain off.
+    Twinkly 'off' mode keeps the lights dark without any DDP stream — one HTTP
+    call per controller, then completely silent until playback begins.
     """
     global idle_animation
     if idle_animation:
@@ -201,10 +201,11 @@ def _start_idle():
     try:
         m = current_matrix
         if m and getattr(m, 'fpp', None):
-            m.fpp.broadcast_black()
-            log("FPP broadcasting black — lights dark at idle", module="Idle")
+            m.fpp.release_overlay()
     except Exception as e:
-        log(f"Failed to start black broadcast: {e}", level='WARNING', module="Idle")
+        log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
+    _twinkly_off()  # once-and-done: lights stay dark, no DDP needed
+    log("Twinkly → off mode; FPP overlay released", module="Idle")
 
 
 def _stop_idle():
@@ -230,12 +231,13 @@ def stop_current_playback():
     if playback_thread and playback_thread.is_alive():
         playback_thread.join(timeout=2)
     playback_thread = None
-    # Broadcast black after stopping so Twinklys don't revert to default pattern
+    # Release overlay then tell Twinklys to go dark (once, no continuous DDP)
     try:
         if current_matrix and getattr(current_matrix, 'fpp', None):
-            current_matrix.fpp.broadcast_black()
+            current_matrix.fpp.release_overlay()
     except Exception:
         pass
+    _twinkly_off()
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
@@ -247,7 +249,8 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
         matrix = initialize_matrix()
         log(f"[VIDEO_THREAD] Matrix initialized, FPP output: {bool(getattr(matrix, 'fpp', None))}", level='INFO', module="PLAYBACK")
 
-        # Enable overlay now so fppd starts broadcasting our mmap buffer
+        # Switch Twinklys to real-time mode (blocks until done), then enable overlay
+        _twinkly_rt()
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 

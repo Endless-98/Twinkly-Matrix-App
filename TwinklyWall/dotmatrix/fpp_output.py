@@ -203,36 +203,15 @@ class FPPOutput:
         self._start_overlay_keepalive(interval=30)
         print("[FPP_OVERLAY] Overlay acquired — broadcasting enabled", flush=True)
 
-    def broadcast_black(self):
-        """Write all-zero (black) frames to the mmap and keep overlay at state 3.
-
-        Twinkly lights revert to their built-in default pattern if DDP stops.
-        This keeps the overlay active so fppd continuously sends black frames,
-        holding the lights dark without any animation running in our app.
-        """
-        # Zero out the mmap so fppd reads and broadcasts all-black
-        if self.memory_map:
-            self.memory_map.seek(0)
-            self.memory_map.write(b'\x00' * self.buffer_size)
-            self.memory_map.flush()
-        self.acquire_overlay()
-        print("[FPP_OVERLAY] Broadcasting black frames — lights dark, DDP active", flush=True)
-
     def release_overlay(self):
-        """Disable FPP overlay (state 0) and stop keepalive.
-
-        WARNING: This stops ALL DDP output from fppd. Twinkly lights will revert
-        to their built-in default pattern after a few seconds. Only call this
-        when you actually want the Twinklys to do their own thing (e.g. shutdown).
-        Use broadcast_black() instead to keep the lights dark at idle.
-        """
+        """Disable FPP overlay (state 0) and stop keepalive. Zero mmap traffic from our app."""
         if hasattr(self, '_keepalive_stop'):
             self._keepalive_stop.set()
         if hasattr(self, '_keepalive_thread') and self._keepalive_thread:
             self._keepalive_thread.join(timeout=1)
             self._keepalive_thread = None
         self._enable_overlay_state(state=0)
-        print("[FPP_OVERLAY] Overlay released — fppd may stop DDP output", flush=True)
+        print("[FPP_OVERLAY] Overlay released — our app sends nothing", flush=True)
 
     def _start_overlay_keepalive(self, interval: int = 5):
         """Daemon thread that re-asserts overlay state 3 every *interval* seconds.
