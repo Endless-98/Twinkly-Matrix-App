@@ -142,6 +142,16 @@ TwinklyWall/assets/source_videos/
 *.mkv
 *.webm
 
+# Disk images / SD card images — never commit these (gigabytes)
+*.img
+*.iso
+falcon_sd/
+
+# Rendered LED animation files — generated output, not source
+*.npz
+TwinklyWall/dotmatrix/rendered_videos/*
+!TwinklyWall/dotmatrix/rendered_videos/.gitkeep
+
 # Temporary files
 *.backup
 *.tmp
