@@ -48,6 +48,8 @@ playback_thread = None
 playback_active = False
 current_video_name = None
 idle_animation = None  # IdlePattern instance (runs when nothing else is active)
+# Stop signal shared across all playback threads — checked during load() and play()
+_stop_event = threading.Event()
 # Global render progress tracking: {filename: {'progress': 0.0-1.0, 'status': 'rendering'/'complete'/'error'}}
 render_progress = {}
 MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
@@ -212,21 +214,30 @@ def _stop_idle():
 
 
 def stop_current_playback():
-    """Stop the current playback if any."""
+    """Stop the current playback if any.  Blocks until the playback thread exits."""
     global playback_active, current_player, playback_thread, current_video_name
-    
+
     _stop_idle()
+
+    # Signal stop to any running playback (including threads still in load())
+    _stop_event.set()
     playback_active = False
     current_video_name = None
-    
+
     if current_player:
         current_player.stop()
         current_player = None
-    
-    if playback_thread and playback_thread.is_alive():
-        playback_thread.join(timeout=2)
+
+    # Wait for the thread to actually finish — up to 5s (covers slow .npz loads)
+    t = playback_thread
+    if t is not None and t.is_alive():
+        t.join(timeout=5)
+        if t.is_alive():
+            log("[STOP] Playback thread did not exit in 5s — proceeding anyway",
+                level="WARNING", module="PLAYBACK")
     playback_thread = None
-    # Release overlay so fppd sends zeros → controllers show black
+
+    # Release overlay
     try:
         if current_matrix and getattr(current_matrix, 'fpp', None):
             current_matrix.fpp.release_overlay()
@@ -235,25 +246,36 @@ def stop_current_playback():
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
-    """Thread function to play video."""
+    """Thread function to play video.  Checks _stop_event during load and play."""
     global current_player, current_matrix, playback_active
-    
+
     try:
-        log(f"[VIDEO_THREAD] Starting video playback: {video_path}", level='INFO', module="PLAYBACK")
+        log(f"[VIDEO_THREAD] Starting video playback: {video_path}",
+            level='INFO', module="PLAYBACK")
         matrix = initialize_matrix()
-        log(f"[VIDEO_THREAD] Matrix initialized, FPP output: {bool(getattr(matrix, 'fpp', None))}", level='INFO', module="PLAYBACK")
+        log(f"[VIDEO_THREAD] Matrix initialized, FPP output: "
+            f"{bool(getattr(matrix, 'fpp', None))}",
+            level='INFO', module="PLAYBACK")
+
+        # Bail out if stop was requested while we were setting up
+        if _stop_event.is_set():
+            log("[VIDEO_THREAD] Stop requested before play started",
+                level='INFO', module="PLAYBACK")
+            return
 
         # Enable FPP overlay — controllers are already in rt mode from startup
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 
-        player = VideoPlayer(matrix)
+        player = VideoPlayer(matrix, stop_event=_stop_event)
         current_player = player
-        
+
         log(f"[VIDEO_THREAD] Playing: {video_path}", level='INFO', module="PLAYBACK")
-        log(f"[VIDEO_THREAD] Settings: Loop={loop}, Speed={speed}, Brightness={brightness}, FPS={playback_fps}", level='INFO', module="PLAYBACK")
-        
-        # Play the video
+        log(f"[VIDEO_THREAD] Settings: Loop={loop}, Speed={speed}, "
+            f"Brightness={brightness}, FPS={playback_fps}",
+            level='INFO', module="PLAYBACK")
+
+        # Play the video — player checks its own _stop flag each frame
         frames = player.play(
             video_path,
             loop=loop,
@@ -263,16 +285,15 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
             brightness=brightness,
             playback_fps=playback_fps,
         )
-        
-        log(f"[VIDEO_THREAD] Playback complete: {frames} frames", level='INFO', module="PLAYBACK")
-        
+
+        log(f"[VIDEO_THREAD] Playback complete: {frames} frames",
+            level='INFO', module="PLAYBACK")
+
     except Exception as e:
-        print(f"Error during playback: {e}")
+        log(f"Error during playback: {e}", level='ERROR', module="PLAYBACK")
     finally:
         current_player = None
-        # Only enter idle if nobody else already stopped us (avoids double
-        # overlay-release / double twinkly-off when stop_current_playback()
-        # already cleaned up).
+        # Only enter idle if we weren't stopped externally
         if playback_active:
             playback_active = False
             _start_idle()
@@ -848,8 +869,11 @@ def play_video():
         if not rendered_path.exists():
             return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
         
-        # Stop any current playback (and idle pattern)
+        # Stop any current playback (and idle pattern) — blocks until old thread exits
         stop_current_playback()
+        
+        # Clear the stop signal so the new thread can run
+        _stop_event.clear()
         
         # Start new playback in a thread
         playback_active = True

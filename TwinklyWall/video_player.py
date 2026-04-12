@@ -16,15 +16,18 @@ import numpy as np
 class VideoPlayer:
     """Optimized player for rendered videos (.npz) targeting DotMatrix."""
 
-    def __init__(self, matrix, base_dir: Union[str, Path] = "dotmatrix/rendered_videos"):
+    def __init__(self, matrix, base_dir: Union[str, Path] = "dotmatrix/rendered_videos",
+                 stop_event=None):
         """
         Args:
             matrix: A DotMatrix instance to render to
             base_dir: Base folder where rendered videos are stored
+            stop_event: Optional threading.Event; checked alongside self._stop
         """
         self.matrix = matrix
         self.base_dir = Path(base_dir)
         self._stop = False
+        self._stop_event = stop_event
         # Dynamic brightness: can be changed during playback (0.05 to 2.0 = 5% to 200%)
         self._brightness: Optional[float] = None
 
@@ -42,6 +45,11 @@ class VideoPlayer:
     def stop(self):
         """Request playback to stop after current frame."""
         self._stop = True
+
+    @property
+    def _should_stop(self):
+        """True if stop was requested via flag or external event."""
+        return self._stop or (self._stop_event is not None and self._stop_event.is_set())
 
     def _resolve_path(self, name_or_path: Union[str, Path]) -> Optional[Path]:
         p = Path(name_or_path)
@@ -109,7 +117,7 @@ class VideoPlayer:
         """
         self._stop = False
         clip = self.load(name_or_path)
-        if self._stop:
+        if self._should_stop:
             return 0
         frames = clip["frames"]
         fps = clip["fps"]
@@ -164,7 +172,7 @@ class VideoPlayer:
             while infinite or (remaining is None or remaining > 0):
                 t_loop_start = time.perf_counter()
                 for idx in range(start_frame, end_frame):
-                    if self._stop:
+                    if self._should_stop:
                         return frames_rendered
                     t0 = time.perf_counter()
                     render_frame(frames[idx])
