@@ -679,64 +679,14 @@ for oi, out in enumerate(outputs):
 " 2>/dev/null || echo '   (could not parse co-universes.json)'
     fi
 
-    # 2b) Check Twinkly controller mode — they must not be in their own movie/effect mode.
+    # 2b) Twinkly controller mode check — SKIPPED.
+    # fppd's native Twinkly.cpp channel output manages authentication, rt mode,
+    # and keepalive tokens.  Any external HTTP calls to /xled/v1/login would
+    # invalidate fppd's auth tokens and cause flickering/unresponsive lights.
     if [ -n "${CONTROLLER_IPS:-}" ]; then
         echo ''
-        echo '🔍 Checking Twinkly controller modes (all 9 controllers)...'
-        ALL_RT=1
-        python3 -c "
-import urllib.request, json, base64, os
-ips = '''$CONTROLLER_IPS'''.strip().split('\n')
-not_rt = 0
-for ip in ips:
-    ip = ip.strip()
-    if not ip:
-        continue
-    try:
-        challenge = base64.b64encode(os.urandom(16)).decode()
-        req = urllib.request.Request(
-            'http://' + ip + '/xled/v1/login',
-            data=json.dumps({'challenge': challenge}).encode(),
-            headers={'Content-Type': 'application/json'}, method='POST')
-        with urllib.request.urlopen(req, timeout=4) as r:
-            login = json.loads(r.read())
-        token = login.get('authentication_token', '')
-        chalresp = login.get('challenge_response', '')
-        req_v = urllib.request.Request(
-            'http://' + ip + '/xled/v1/verify',
-            data=json.dumps({'challenge-response': chalresp}).encode(),
-            headers={'Content-Type': 'application/json', 'X-Auth-Token': token},
-            method='POST')
-        with urllib.request.urlopen(req_v, timeout=4) as r:
-            r.read()
-        req2 = urllib.request.Request('http://' + ip + '/xled/v1/led/mode')
-        req2.add_header('X-Auth-Token', token)
-        with urllib.request.urlopen(req2, timeout=4) as r:
-            mode_data = json.loads(r.read())
-        mode = mode_data.get('mode', 'unknown')
-        if mode in ('rt', 'realtime'):
-            print(f'   {ip}: mode={mode}  ✅')
-        elif mode == 'movie':
-            print(f'   {ip}: mode=movie  ⚠️  Playing own effect')
-            not_rt += 1
-        elif mode == 'off':
-            print(f'   {ip}: mode=off  ⚠️  Not yet in rt (service may still be starting)')
-            not_rt += 1
-        else:
-            print(f'   {ip}: mode={mode}')
-            not_rt += 1
-    except Exception as e:
-        print(f'   {ip}: error — {e}')
-        not_rt += 1
-if not_rt > 0:
-    print(f'   ⚠️  {not_rt} controller(s) NOT in rt mode')
-    print('   TwinklyWall sets rt at startup — wait a few seconds and re-check')
-    print('   Or: Twinkly app → each device → Settings → External Control → On')
-    import sys; sys.exit(1)
-" 2>/dev/null && ALL_RT=1 || ALL_RT=0
-        if [ "$ALL_RT" -eq 1 ]; then
-            echo '   ✅ All controllers in real-time mode'
-        fi
+        echo 'ℹ️  Twinkly rt mode is managed by fppd natively (Twinkly channel output).'
+        echo '   If lights show default patterns, check FPP UI → Channel Outputs → Twinkly entries.'
     fi
     #    then inspect the actual E1.31 packet CONTENT to verify fppd is forwarding
     #    mmap data (non-zero) rather than its own empty (all-zero) stream.
@@ -803,7 +753,7 @@ print(total_nz)
                         echo '   ✅ FPP Pixel Overlay IS forwarding mmap → controllers'
                         echo ''
                         echo '   🎉 FPP PIPELINE CONFIRMED WORKING!'
-                        echo '   If lights are STILL dark → Twinkly controllers need rt mode'
+                        echo '   If lights are STILL dark → check FPP UI → Channel Outputs → Twinkly entries'
                     else
                         echo "   ⚠️  Packets contain ZEROS (only ${NZ_COUNT} non-zero DATA bytes in ${PKT_COUNT} packets)"
                         echo '   → FPP Pixel Overlay state 3 is NOT active despite PUT returning OK'

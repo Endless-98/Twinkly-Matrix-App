@@ -372,7 +372,6 @@ def main():
         # Run the API server with Tetris monitor thread
         print("Starting API server mode...")
         from api_server import app, start_cleanup_thread, _start_idle
-        from twinkly_controller import ensure_rt_mode
         from game_players import get_active_players_for_game
         import threading
         import time
@@ -516,9 +515,8 @@ def main():
                 log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge",
                     level='ERROR', module="Main")
 
-        # Set all Twinkly controllers to 'rt' mode once (background, with retries).
-        # They stay in rt permanently — the FPP overlay state controls visibility.
-        ensure_rt_mode()
+        # fppd natively manages Twinkly auth tokens, rt mode, and keepalive
+        # via its Twinkly.cpp channel output — no Python-side intervention needed.
 
         # Start idle (overlay released = lights dark until playback)
         _start_idle()

@@ -36,7 +36,9 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
-from twinkly_controller import ensure_rt_mode, set_all_rt
+# NOTE: fppd natively manages Twinkly auth tokens, rt mode, and keepalive
+# via its Twinkly.cpp channel output. Do NOT add our own Twinkly HTTP API
+# calls — they invalidate fppd's auth tokens and cause lights to flicker.
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -266,14 +268,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
                 level='INFO', module="PLAYBACK")
             return
 
-        # Ensure controllers are in rt mode before sending data.
-        # On cold boot the background keepalive may not have succeeded yet.
-        _t1 = _time.monotonic()
-        set_all_rt()
-        log(f"[VIDEO_THREAD] Twinkly rt confirmed ({(_time.monotonic()-_t1)*1000:.0f}ms)",
-            level='INFO', module="PLAYBACK")
-
-        # Enable FPP overlay — controllers are now confirmed in rt mode
+        # Enable FPP overlay — fppd manages Twinkly rt mode natively
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 
@@ -1301,9 +1296,8 @@ if __name__ == '__main__':
     # Start background cleanup thread for idle players
     start_cleanup_thread()
 
-    # Set all Twinkly controllers to 'rt' mode once (background, with retries).
-    # They stay in rt permanently — the FPP overlay state controls visibility.
-    ensure_rt_mode()
+    # fppd natively manages Twinkly auth tokens, rt mode, and keepalive
+    # via its Twinkly.cpp channel output — no Python-side intervention needed.
 
     # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")
