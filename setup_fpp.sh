@@ -17,7 +17,8 @@ if [ -z "${_SETUP_REEXECED:-}" ]; then
     else
         echo '📥 Pulling latest code from GitHub...'
         cd TwinklyWall_Project
-        git pull origin master
+        git fetch origin master
+        git reset --hard origin/master
         cd ~
     fi
 
