@@ -14,6 +14,7 @@ import base64
 import json
 import os
 import threading
+import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from logger import log
@@ -87,26 +88,37 @@ def _twinkly_auth(ip):
 
 
 def _set_mode_one(ip, mode):
-    """Authenticate (using cache) and set the mode on a single controller."""
-    token = _twinkly_auth(ip)
-    if not token:
-        return False
-    try:
-        req = urllib.request.Request(
-            f"http://{ip}/xled/v1/led/mode",
-            data=json.dumps({"mode": mode}).encode(),
-            headers={"Content-Type": "application/json", "X-Auth-Token": token},
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-            r.read()
-        return True
-    except Exception as e:
-        # Token may have expired — evict cache so next call re-auths
-        with _token_lock:
-            _token_cache.pop(ip, None)
-        log(f"Twinkly set mode '{mode}' failed for {ip}: {e}", level="WARNING", module="Twinkly")
-        return False
+    """Authenticate (using cache) and set the mode on a single controller.
+
+    Retries once with a fresh token if the first attempt gets a 401.
+    """
+    for attempt in range(2):
+        token = _twinkly_auth(ip)
+        if not token:
+            return False
+        try:
+            req = urllib.request.Request(
+                f"http://{ip}/xled/v1/led/mode",
+                data=json.dumps({"mode": mode}).encode(),
+                headers={"Content-Type": "application/json", "X-Auth-Token": token},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
+                r.read()
+            return True
+        except urllib.error.HTTPError as e:
+            with _token_lock:
+                _token_cache.pop(ip, None)
+            if e.code == 401 and attempt == 0:
+                continue  # retry with fresh auth
+            log(f"Twinkly set mode '{mode}' failed for {ip}: {e}", level="WARNING", module="Twinkly")
+            return False
+        except Exception as e:
+            with _token_lock:
+                _token_cache.pop(ip, None)
+            log(f"Twinkly set mode '{mode}' failed for {ip}: {e}", level="WARNING", module="Twinkly")
+            return False
+    return False
 
 
 def _set_all_mode(mode, config_path=_CO_UNIVERSES_PATH):
