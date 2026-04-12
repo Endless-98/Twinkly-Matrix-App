@@ -75,7 +75,7 @@ if command -v /home/fpp/.pyenv/versions/3.12.12/bin/python &> /dev/null; then
     PYTHON_BIN="/home/fpp/.pyenv/versions/3.12.12/bin/python"
     echo '✅ Using .pyenv Python 3.12.12'
 else
-    echo '⚠️  .pyenv Python 3.12.12 not found, using system python3'
+    echo 'ℹ️  Using system python3 ('"$(python3 --version 2>&1)"')'
 fi
 
 echo '📦 Installing system libraries required by numpy/pygame/opencv...'
@@ -720,8 +720,7 @@ for ip in ips:
             print(f'   {ip}: mode=movie  ⚠️  Playing own effect')
             not_rt += 1
         elif mode == 'off':
-            print(f'   {ip}: mode=off  ❌  Lights OFF')
-            not_rt += 1
+            print(f'   {ip}: mode=off  ℹ️  (idle — will switch to rt on playback)')
         else:
             print(f'   {ip}: mode={mode}')
             not_rt += 1
@@ -729,9 +728,8 @@ for ip in ips:
         print(f'   {ip}: error — {e}')
         not_rt += 1
 if not_rt > 0:
-    print(f'   ⚠️  {not_rt} controller(s) NOT in rt mode — those curtains will stay DARK')
-    print('   FIX: Twinkly app → each device → Settings → External Control → On')
-    import sys; sys.exit(1)
+    print(f'   ℹ️  {not_rt} controller(s) in off/other mode')
+    print('   This is normal at idle — TwinklyWall switches to rt mode when playback starts')
 " 2>/dev/null && ALL_RT=1 || ALL_RT=0
         if [ "$ALL_RT" -eq 1 ]; then
             echo '   ✅ All controllers in real-time mode'

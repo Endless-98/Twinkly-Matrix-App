@@ -27,6 +27,12 @@ _TIMEOUT = 2  # seconds per HTTP request — fast LAN, no need for 4s
 _token_cache: dict[str, str] = {}
 _token_lock = threading.Lock()
 
+# Generation counter: incremented on every set_all_rt() call.
+# Background set_all_off() threads check this and abort if it changed,
+# preventing a stale "off" from overriding a newer "rt".
+_mode_generation = 0
+_mode_gen_lock = threading.Lock()
+
 
 def _load_controller_ips(config_path=_CO_UNIVERSES_PATH):
     """Return a deduplicated list of Twinkly controller IP addresses from FPP config."""
@@ -121,18 +127,37 @@ def _set_mode_one(ip, mode):
     return False
 
 
-def _set_all_mode(mode, config_path=_CO_UNIVERSES_PATH):
-    """Set all controllers to *mode* in parallel. Returns when all are done."""
+def _set_all_mode(mode, config_path=_CO_UNIVERSES_PATH, generation=None):
+    """Set all controllers to *mode* in parallel. Returns when all are done.
+
+    If *generation* is provided (used by background "off" threads), abort early
+    when the global generation counter has advanced — meaning a newer "rt"
+    request superseded this "off".
+    """
     ips = _load_controller_ips(config_path)
     if not ips:
         log("No Twinkly IPs found — skipping mode change", level="WARNING", module="Twinkly")
         return
+
+    # Check if already superseded before even starting
+    if generation is not None:
+        with _mode_gen_lock:
+            if _mode_generation != generation:
+                log(f"Twinkly '{mode}' aborted — superseded by newer request", module="Twinkly")
+                return
 
     ok = 0
     fail = 0
     with ThreadPoolExecutor(max_workers=len(ips), thread_name_prefix="twinkly") as pool:
         futures = {pool.submit(_set_mode_one, ip, mode): ip for ip in ips}
         for fut in as_completed(futures):
+            # Check if superseded while we were waiting
+            if generation is not None:
+                with _mode_gen_lock:
+                    if _mode_generation != generation:
+                        pool.shutdown(wait=False, cancel_futures=True)
+                        log(f"Twinkly '{mode}' aborted mid-flight — superseded", module="Twinkly")
+                        return
             if fut.result():
                 ok += 1
             else:
@@ -142,12 +167,27 @@ def _set_all_mode(mode, config_path=_CO_UNIVERSES_PATH):
 
 
 def set_all_off():
-    """Switch all controllers to 'off' mode in a background thread (non-blocking)."""
-    t = threading.Thread(target=_set_all_mode, args=("off",), daemon=True, name="twinkly-off")
+    """Switch all controllers to 'off' mode in a background thread (non-blocking).
+
+    Uses a generation snapshot so this will abort if set_all_rt() is called
+    before it finishes — preventing the race where "off" undoes a newer "rt".
+    """
+    with _mode_gen_lock:
+        gen = _mode_generation
+    t = threading.Thread(target=_set_all_mode, args=("off",),
+                         kwargs={"generation": gen},
+                         daemon=True, name="twinkly-off")
     t.start()
 
 
 def set_all_rt():
-    """Switch all controllers to real-time/DDP mode in parallel (blocks until done)."""
+    """Switch all controllers to real-time/DDP mode in parallel (blocks until done).
+
+    Increments the generation counter first so any in-flight set_all_off()
+    background thread will detect the change and abort.
+    """
+    global _mode_generation
+    with _mode_gen_lock:
+        _mode_generation += 1
     _set_all_mode("rt")
 

@@ -109,6 +109,8 @@ class VideoPlayer:
         """
         self._stop = False
         clip = self.load(name_or_path)
+        if self._stop:
+            return 0
         frames = clip["frames"]
         fps = clip["fps"]
         total = frames.shape[0]

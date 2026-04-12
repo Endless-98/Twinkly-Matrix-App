@@ -276,10 +276,13 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
     except Exception as e:
         print(f"Error during playback: {e}")
     finally:
-        playback_active = False
         current_player = None
-        # Video ended naturally — restart idle twinkle
-        _start_idle()
+        # Only enter idle if nobody else already stopped us (avoids double
+        # overlay-release / double twinkly-off when stop_current_playback()
+        # already cleaned up).
+        if playback_active:
+            playback_active = False
+            _start_idle()
 
 
 @app.route('/api/videos', methods=['GET'])
