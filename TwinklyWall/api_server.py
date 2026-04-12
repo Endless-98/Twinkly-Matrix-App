@@ -36,7 +36,7 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
-from twinkly_controller import set_all_off as _twinkly_off, set_all_rt as _twinkly_rt
+from twinkly_controller import ensure_rt_mode
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -189,11 +189,7 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Put Twinklys into 'off' mode and release the FPP overlay.
-
-    Twinkly 'off' mode keeps the lights dark without any DDP stream — one HTTP
-    call per controller, then completely silent until playback begins.
-    """
+    """Release the FPP overlay so fppd sends zeros → lights go dark."""
     global idle_animation
     if idle_animation:
         idle_animation.stop()
@@ -204,8 +200,7 @@ def _start_idle():
             m.fpp.release_overlay()
     except Exception as e:
         log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
-    _twinkly_off()  # once-and-done: lights stay dark, no DDP needed
-    log("Twinkly → off mode; FPP overlay released", module="Idle")
+    log("FPP overlay released — lights dark", module="Idle")
 
 
 def _stop_idle():
@@ -231,13 +226,12 @@ def stop_current_playback():
     if playback_thread and playback_thread.is_alive():
         playback_thread.join(timeout=2)
     playback_thread = None
-    # Release overlay then tell Twinklys to go dark (once, no continuous DDP)
+    # Release overlay so fppd sends zeros → controllers show black
     try:
         if current_matrix and getattr(current_matrix, 'fpp', None):
             current_matrix.fpp.release_overlay()
     except Exception:
         pass
-    _twinkly_off()
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps):
@@ -249,8 +243,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
         matrix = initialize_matrix()
         log(f"[VIDEO_THREAD] Matrix initialized, FPP output: {bool(getattr(matrix, 'fpp', None))}", level='INFO', module="PLAYBACK")
 
-        # Switch Twinklys to real-time mode (blocks until done), then enable overlay
-        _twinkly_rt()
+        # Enable FPP overlay — controllers are already in rt mode from startup
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 
@@ -1273,6 +1266,10 @@ if __name__ == '__main__':
     
     # Start background cleanup thread for idle players
     start_cleanup_thread()
+
+    # Set all Twinkly controllers to 'rt' mode once (background, with retries).
+    # They stay in rt permanently — the FPP overlay state controls visibility.
+    ensure_rt_mode()
 
     # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")

@@ -720,7 +720,8 @@ for ip in ips:
             print(f'   {ip}: mode=movie  ⚠️  Playing own effect')
             not_rt += 1
         elif mode == 'off':
-            print(f'   {ip}: mode=off  ℹ️  (idle — will switch to rt on playback)')
+            print(f'   {ip}: mode=off  ⚠️  Not yet in rt (service may still be starting)')
+            not_rt += 1
         else:
             print(f'   {ip}: mode={mode}')
             not_rt += 1
@@ -728,8 +729,10 @@ for ip in ips:
         print(f'   {ip}: error — {e}')
         not_rt += 1
 if not_rt > 0:
-    print(f'   ℹ️  {not_rt} controller(s) in off/other mode')
-    print('   This is normal at idle — TwinklyWall switches to rt mode when playback starts')
+    print(f'   ⚠️  {not_rt} controller(s) NOT in rt mode')
+    print('   TwinklyWall sets rt at startup — wait a few seconds and re-check')
+    print('   Or: Twinkly app → each device → Settings → External Control → On')
+    import sys; sys.exit(1)
 " 2>/dev/null && ALL_RT=1 || ALL_RT=0
         if [ "$ALL_RT" -eq 1 ]; then
             echo '   ✅ All controllers in real-time mode'
