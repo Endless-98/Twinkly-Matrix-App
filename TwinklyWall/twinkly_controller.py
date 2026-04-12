@@ -124,7 +124,7 @@ def _set_mode_one(ip, mode):
     return False
 
 
-def _set_all_rt(config_path=_CO_UNIVERSES_PATH):
+def set_all_rt(config_path=_CO_UNIVERSES_PATH):
     """Set all controllers to 'rt' mode in parallel.  Returns (ok, fail) counts."""
     ips = _load_controller_ips(config_path)
     if not ips:
@@ -156,7 +156,7 @@ def ensure_rt_mode():
     def _initial():
         """Initial burst: try up to 3 times with short delays."""
         for attempt in range(3):
-            ok, fail = _set_all_rt()
+            ok, fail = set_all_rt()
             if fail == 0:
                 return
             log(f"Twinkly rt attempt {attempt + 1}: {fail} failed — retrying in 2s",
@@ -171,7 +171,7 @@ def ensure_rt_mode():
         while True:
             time.sleep(_KEEPALIVE_INTERVAL)
             try:
-                ok, fail = _set_all_rt()
+                ok, fail = set_all_rt()
                 if fail > 0:
                     # Clear stale tokens so next cycle re-authenticates
                     with _token_lock:

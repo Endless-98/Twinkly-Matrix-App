@@ -36,7 +36,7 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
-from twinkly_controller import ensure_rt_mode
+from twinkly_controller import ensure_rt_mode, set_all_rt
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -250,11 +250,14 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
     global current_player, current_matrix, playback_active
 
     try:
+        import time as _time
+        _t0 = _time.monotonic()
+
         log(f"[VIDEO_THREAD] Starting video playback: {video_path}",
             level='INFO', module="PLAYBACK")
         matrix = initialize_matrix()
         log(f"[VIDEO_THREAD] Matrix initialized, FPP output: "
-            f"{bool(getattr(matrix, 'fpp', None))}",
+            f"{bool(getattr(matrix, 'fpp', None))} ({(_time.monotonic()-_t0)*1000:.0f}ms)",
             level='INFO', module="PLAYBACK")
 
         # Bail out if stop was requested while we were setting up
@@ -263,7 +266,14 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
                 level='INFO', module="PLAYBACK")
             return
 
-        # Enable FPP overlay — controllers are already in rt mode from startup
+        # Ensure controllers are in rt mode before sending data.
+        # On cold boot the background keepalive may not have succeeded yet.
+        _t1 = _time.monotonic()
+        set_all_rt()
+        log(f"[VIDEO_THREAD] Twinkly rt confirmed ({(_time.monotonic()-_t1)*1000:.0f}ms)",
+            level='INFO', module="PLAYBACK")
+
+        # Enable FPP overlay — controllers are now confirmed in rt mode
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 
