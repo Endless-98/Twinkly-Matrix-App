@@ -1,14 +1,20 @@
-"""Twinkly HTTP API client — one-time 'rt' mode at startup.
+"""Twinkly HTTP API client — keeps controllers in 'rt' mode permanently.
 
-Sets all controllers to real-time (DDP) mode once on boot so they respond
-to fppd immediately.  No mode toggling during playback — the FPP Pixel
-Overlay state (3 = on, 0 = off) controls whether the lights show data or
-go dark.  That's a local mmap/HTTP-to-localhost call, instant and reliable.
+Sets all controllers to real-time (DDP) mode at startup and re-asserts it
+every 30 seconds via a background keepalive thread.  Twinkly controllers
+have short auth-token timeouts and will revert to their built-in pattern
+if not refreshed.  The keepalive is cheap (~200 ms for all 9 in parallel)
+and prevents the sporadic "lights go to default pattern" issue.
+
+The FPP Pixel Overlay state (3 = on, 0 = off) controls whether the lights
+show data or go dark.  That's a local mmap/HTTP-to-localhost call, instant
+and reliable.
 """
 
 import base64
 import json
 import os
+import time
 import threading
 import urllib.error
 import urllib.request
@@ -18,6 +24,7 @@ from logger import log
 
 _CO_UNIVERSES_PATH = "/home/fpp/media/config/co-universes.json"
 _TIMEOUT = 2  # seconds per HTTP request — fast LAN
+_KEEPALIVE_INTERVAL = 30  # seconds between rt re-assertions
 
 # Cache per-IP auth tokens so repeated calls don't need a full re-auth
 _token_cache: dict[str, str] = {}
@@ -139,24 +146,39 @@ def _set_all_rt(config_path=_CO_UNIVERSES_PATH):
 
 
 def ensure_rt_mode():
-    """Set all controllers to 'rt' once in a background thread.
+    """Set all controllers to 'rt' now, then keep them there with a background loop.
 
-    Retries failed controllers up to 3 times with a short delay.
-    Safe to call multiple times — it's idempotent.
+    The keepalive re-asserts 'rt' every 30s, which also refreshes the auth
+    token before it expires.  If any controller fails, tokens are cleared and
+    it retries next cycle.  Safe to call multiple times — only one keepalive
+    thread will run.
     """
-    def _worker():
+    def _initial():
+        """Initial burst: try up to 3 times with short delays."""
         for attempt in range(3):
             ok, fail = _set_all_rt()
             if fail == 0:
                 return
             log(f"Twinkly rt attempt {attempt + 1}: {fail} failed — retrying in 2s",
                 level="WARNING", module="Twinkly")
-            import time
             time.sleep(2)
-            # Clear token cache for retry — stale tokens may be the issue
             with _token_lock:
                 _token_cache.clear()
 
-    t = threading.Thread(target=_worker, daemon=True, name="twinkly-ensure-rt")
+    def _keepalive():
+        """Background loop: re-assert 'rt' every _KEEPALIVE_INTERVAL seconds."""
+        _initial()
+        while True:
+            time.sleep(_KEEPALIVE_INTERVAL)
+            try:
+                ok, fail = _set_all_rt()
+                if fail > 0:
+                    # Clear stale tokens so next cycle re-authenticates
+                    with _token_lock:
+                        _token_cache.clear()
+            except Exception as e:
+                log(f"Twinkly keepalive error: {e}", level="WARNING", module="Twinkly")
+
+    t = threading.Thread(target=_keepalive, daemon=True, name="twinkly-keepalive")
     t.start()
 
