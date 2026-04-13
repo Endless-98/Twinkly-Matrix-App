@@ -392,7 +392,32 @@ if [ $DEBUG_MODE -eq 0 ]; then
     # fppd's Twinkly.cpp output authenticates with each controller on startup.
     # Previous sessions or diagnostics may have invalidated fppd's tokens.
     sudo systemctl restart fppd || true
-    sleep 3  # Wait for fppd to re-authenticate with all controllers
+    sleep 5  # Wait for fppd to authenticate with all 9 controllers
+
+    # Check fppd logs for Twinkly auth status
+    echo ''
+    echo '🔍 Checking fppd Twinkly output status...'
+    _FPPD_LOG="$(sudo journalctl -u fppd --since '30 seconds ago' --no-pager 2>/dev/null || echo '')"
+    if [ -n "$_FPPD_LOG" ]; then
+        _TW_LINES="$(echo "$_FPPD_LOG" | grep -iE 'twinkly|output.*start|channel.*output|auth|token|error|warn|fail' | tail -30)"
+        if [ -n "$_TW_LINES" ]; then
+            echo '   fppd log (Twinkly-related lines):'
+            echo "$_TW_LINES" | while IFS= read -r line; do
+                echo "     $line"
+            done
+        else
+            echo '   ⚠️  No Twinkly-related lines in fppd log (fppd may not log Twinkly auth)'
+        fi
+    else
+        echo '   ⚠️  Could not read fppd journal'
+    fi
+    # Also show fppd's full startup sequence (last 50 lines)
+    echo ''
+    echo '   fppd startup log (last 50 lines):'
+    sudo journalctl -u fppd --since '30 seconds ago' --no-pager 2>/dev/null | tail -50 | while IFS= read -r line; do
+        echo "     $line"
+    done
+    echo ''
 
     echo '▶️ Restarting twinklywall with latest code...'
     sudo systemctl restart twinklywall || sudo systemctl start twinklywall
@@ -693,6 +718,79 @@ for oi, out in enumerate(outputs):
         echo ''
         echo 'ℹ️  Twinkly rt mode is managed by fppd natively (Twinkly channel output).'
         echo '   If lights show default patterns, check FPP UI → Channel Outputs → Twinkly entries.'
+
+        # Query controller gestalt (device info — no auth needed on most firmware)
+        echo ''
+        echo '🔍 Querying Twinkly controller device info (gestalt)...'
+        FIRST_CTRL="$(echo "$CONTROLLER_IPS" | head -1)"
+        _GESTALT="$(curl -sS -m 3 "http://${FIRST_CTRL}/xled/v1/gestalt" 2>/dev/null || echo 'FAILED')"
+        if echo "$_GESTALT" | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'   product: {d.get(\"product_name\",\"?\")}, fw: {d.get(\"firmware_version\",\"?\")}, hw: {d.get(\"hardware_version\",\"?\")}, leds: {d.get(\"number_of_led\",\"?\")}, profile: {d.get(\"led_profile\",\"?\")}')" 2>/dev/null; then
+            echo '   ✅ Controller responds to HTTP — firmware is up'
+        else
+            echo "   ⚠️  Gestalt query failed for ${FIRST_CTRL}: $_GESTALT"
+            echo '   → Controller may not support unauthenticated gestalt (try with auth)'
+        fi
+
+        # Check if fppd is sending to port 7777 (Twinkly rt) specifically
+        echo ''
+        echo '🔍 Checking fppd Twinkly rt packets on port 7777...'
+        _PORT_HEX="$(sudo timeout 3 tcpdump -ni eth0 -c 5 -xx \
+            "udp and dst host ${FIRST_CTRL} and dst port 7777" 2>/dev/null || echo '')"
+        _PORT_PKTS="$(echo "$_PORT_HEX" | grep -c '0x0000:' || echo '0')"
+        if [ "${_PORT_PKTS:-0}" -gt 0 ]; then
+            echo "   ✅ ${_PORT_PKTS} packets to ${FIRST_CTRL}:7777 — fppd IS using Twinkly rt protocol"
+            # Extract and display the Twinkly protocol header from first packet
+            echo "$_PORT_HEX" | python3 -c "
+import sys, re
+data = sys.stdin.read()
+# Find first packet hex
+lines = [l for l in data.split('\n') if re.match(r'\s+0x[0-9a-f]+:', l)]
+if not lines:
+    print('   (no hex data)')
+    sys.exit(0)
+# Collect all hex bytes from lines
+all_bytes = []
+for l in lines:
+    words = re.findall(r'[0-9a-f]{4}', l.lower())
+    for w in words:
+        all_bytes.extend([w[:2], w[2:]])
+# UDP payload starts after ETH(14) + IP(20) + UDP(8) = 42 bytes
+payload = all_bytes[42:]
+if len(payload) < 11:
+    print(f'   Payload too short: {len(payload)} bytes')
+    sys.exit(0)
+ver = int(payload[0], 16)
+token = ''.join(payload[1:9])
+token_nonzero = sum(1 for b in payload[1:9] if b != '00')
+frag_info = ''.join(payload[9:11])
+payload_len = len(payload) - 11
+print(f'   Protocol version: {ver}')
+print(f'   Auth token bytes: {token} ({token_nonzero}/8 non-zero)')
+print(f'   Fragment info:    {frag_info}')
+print(f'   Pixel data:       {payload_len} bytes')
+if token_nonzero == 0:
+    print('   ❌ AUTH TOKEN IS ALL ZEROS — fppd failed to authenticate with controllers!')
+    print('   → fppd sends frames but controllers REJECT them (stale/missing token)')
+    print('   → Run: python3 TwinklyWall/test_twinkly_direct.py --gestalt-only')
+    print('   → Then: sudo systemctl stop fppd && python3 TwinklyWall/test_twinkly_direct.py --all')
+elif token_nonzero < 4:
+    print('   ⚠️  Auth token is mostly zeros — possibly invalid')
+else:
+    print('   ✅ Auth token looks valid (non-zero)')
+" 2>/dev/null || echo '   (could not parse packet hex)'
+        else
+            echo "   ❌ No packets on port 7777 to ${FIRST_CTRL}!"
+            echo '   → fppd is NOT using Twinkly rt protocol despite subtype=8 in co-universes.json'
+            # Check what ports fppd IS sending to
+            echo '   Checking what UDP ports fppd uses for this controller...'
+            _ANY_UDP="$(sudo timeout 2 tcpdump -ni eth0 -c 10 \
+                "udp and dst host ${FIRST_CTRL}" 2>/dev/null || echo '')"
+            if [ -n "$_ANY_UDP" ]; then
+                echo "$_ANY_UDP" | head -10 | while IFS= read -r line; do echo "     $line"; done
+            else
+                echo '   (no UDP traffic to controller at all!)'
+            fi
+        fi
     fi
     #    then inspect the actual E1.31 packet CONTENT to verify fppd is forwarding
     #    mmap data (non-zero) rather than its own empty (all-zero) stream.
