@@ -279,7 +279,13 @@ class FPPOutput:
             self._fast_src = np.array(src_indices, dtype=np.int32)
             self._buffer_view = np.frombuffer(self.buffer, dtype=np.uint8).reshape(-1, 3)
             try:
-                print(f"FPPOutput mapping entries: {len(self._fast_dest)}")
+                print(f"FPPOutput mapping entries: {len(self._fast_dest)}", flush=True)
+                print(f"[FPP_ROUTING] dest_pixel range: {self._fast_dest.min()}–{self._fast_dest.max()}", flush=True)
+                print(f"[FPP_ROUTING] src_pixel range:  {self._fast_src.min()}–{self._fast_src.max()}", flush=True)
+                print(f"[FPP_ROUTING] gamma={self.gamma}, color_order={self.color_order}, channel_gains={self.channel_gains}", flush=True)
+                # Show first few src→dest mappings so we can verify orientation
+                for _i in range(min(4, len(self._fast_src))):
+                    print(f"[FPP_ROUTING]   [{_i}] src={self._fast_src[_i]} (r{self._fast_src[_i]//self.width}c{self._fast_src[_i]%self.width}) → dest={self._fast_dest[_i]}", flush=True)
             except Exception:
                 pass
         elif HAS_NUMPY:
@@ -289,7 +295,8 @@ class FPPOutput:
             self._fast_src = np.arange(total, dtype=np.int32)
             self._buffer_view = np.frombuffer(self.buffer, dtype=np.uint8).reshape(-1, 3)
             try:
-                print("FPPOutput mapping empty; using linear fallback mapping")
+                print("[FPP_ROUTING] mapping empty — using linear fallback", flush=True)
+                print(f"[FPP_ROUTING] gamma={self.gamma}, color_order={self.color_order}", flush=True)
             except Exception:
                 pass
 
@@ -332,21 +339,31 @@ class FPPOutput:
 
         total_elapsed = time.perf_counter() - start
 
-        # Startup diagnostic: log first 5 writes with brightness stats
+        # Pixel-level diagnostics: first 30 writes + every 100 thereafter
         if not hasattr(self, '_write_count'):
             self._write_count = 0
         self._write_count += 1
-        if self._write_count <= 5:
+        _do_log = self._write_count <= 30 or self._write_count % 100 == 0
+        if _do_log:
             sample = bytes(self.buffer[:12])
             if HAS_NUMPY:
                 buf_arr = np.frombuffer(self.buffer, dtype=np.uint8)
                 max_val = int(buf_arr.max())
                 mean_val = float(buf_arr.mean())
                 nonzero = int(np.count_nonzero(buf_arr))
-                print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()} "
-                      f"| max={max_val} mean={mean_val:.1f} nonzero={nonzero}/{len(buf_arr)}", flush=True)
+                print(f"[FPP_WRITE] Frame #{self._write_count}: bytes0-11={sample.hex()} "
+                      f"max={max_val} mean={mean_val:.1f} nonzero={nonzero}/{len(buf_arr)}", flush=True)
+                # On the first frame, also read mmap back to verify data made it through
+                if self._write_count == 1:
+                    try:
+                        self.memory_map.seek(0)
+                        readback = bytes(self.memory_map.read(12))
+                        match = readback == sample
+                        print(f"[FPP_WRITE] mmap readback (frame 1): {readback.hex()} {'✅ matches' if match else '❌ MISMATCH!'}", flush=True)
+                    except Exception as _rb_err:
+                        print(f"[FPP_WRITE] mmap readback failed: {_rb_err}", flush=True)
             else:
-                print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()}", flush=True)
+                print(f"[FPP_WRITE] Frame #{self._write_count}: bytes0-11={sample.hex()}", flush=True)
 
         return total_elapsed * 1000
 

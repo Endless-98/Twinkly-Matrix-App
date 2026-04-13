@@ -181,7 +181,10 @@ def initialize_matrix():
         headless = use_fpp_output or ('DISPLAY' not in os.environ)
         fpp_memory_file = _resolve_fpp_memory_file()
 
-        log(f"DotMatrix init: fpp={use_fpp_output}, headless={headless}",
+        fpp_gamma_val = None
+        fpp_color_order = "RGB"
+        log(f"DotMatrix init: fpp={use_fpp_output}, headless={headless}, "
+            f"gamma={fpp_gamma_val}, color_order={fpp_color_order}, mmap={fpp_memory_file}",
             module="MATRIX")
 
         current_matrix = DotMatrix(
@@ -191,10 +194,11 @@ def initialize_matrix():
             enable_performance_monitor=True,
             disable_blending=True,
             supersample=1,
-            fpp_gamma=None,
-            fpp_color_order="RGB",
+            fpp_gamma=fpp_gamma_val,
+            fpp_color_order=fpp_color_order,
             fpp_memory_buffer_file=fpp_memory_file,
         )
+        log(f"DotMatrix created OK (fpp={use_fpp_output})", module="MATRIX")
     return current_matrix
 
 
@@ -277,6 +281,23 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
         # Enable FPP overlay — fppd manages Twinkly rt mode natively
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
+            # Log mmap contents immediately after overlay acquire so we can see
+            # what was in the buffer before the first frame is written
+            try:
+                fpp_path = _resolve_fpp_memory_file()
+                with open(fpp_path, 'rb') as _f:
+                    _raw = _f.read(12)
+                import numpy as _np2
+                _arr = _np2.frombuffer(open(fpp_path, 'rb').read(), dtype=_np2.uint8)
+                log(f"[VIDEO_THREAD] mmap after overlay acquire: first12={_raw.hex()} "
+                    f"max={int(_arr.max())} mean={float(_arr.mean()):.1f} nonzero={int(_np2.count_nonzero(_arr))}",
+                    module="PLAYBACK")
+                log(f"[VIDEO_THREAD] FPP settings: gamma={matrix.fpp.gamma} "
+                    f"color_order={matrix.fpp.color_order} "
+                    f"routing_entries={len(getattr(matrix.fpp,'_fast_dest',[]))}",
+                    module="PLAYBACK")
+            except Exception as _diag_e:
+                log(f"[VIDEO_THREAD] mmap post-acquire diagnostic error: {_diag_e}", module="PLAYBACK")
 
         player = VideoPlayer(matrix, stop_event=_stop_event)
         current_player = player
@@ -942,7 +963,7 @@ def get_status():
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Diagnostic endpoint — verifies the mmap → fppd pipeline is live."""
-    import struct
+    import struct, urllib.request as _ureq, json as _json2
     diag = {'mmap': False, 'overlay': False, 'matrix': bool(current_matrix)}
     try:
         fpp_path = _resolve_fpp_memory_file()
@@ -950,7 +971,7 @@ def health_check():
             diag['mmap'] = True
             diag['mmap_path'] = fpp_path
             diag['mmap_size'] = os.path.getsize(fpp_path)
-            # Read brightness statistics from current mmap contents
+            diag['mmap_writable'] = os.access(fpp_path, os.W_OK)
             with open(fpp_path, 'rb') as f:
                 raw = f.read()
             if raw:
@@ -959,6 +980,7 @@ def health_check():
                 diag['mmap_max'] = int(arr.max())
                 diag['mmap_mean'] = round(float(arr.mean()), 1)
                 diag['mmap_nonzero'] = int(_np.count_nonzero(arr))
+                diag['mmap_first12_hex'] = raw[:12].hex()
 
         if current_matrix and getattr(current_matrix, 'fpp', None):
             fpp = current_matrix.fpp
@@ -966,6 +988,22 @@ def health_check():
             diag['overlay_model'] = getattr(fpp, '_overlay_model_name', 'unknown')
             diag['gamma'] = fpp.gamma
             diag['color_order'] = fpp.color_order
+            diag['routing_entries'] = int(len(fpp._fast_dest)) if fpp._fast_dest is not None else 0
+            diag['frames_written'] = getattr(fpp, '_write_count', 0)
+
+        # Check FPP overlay state via HTTP
+        try:
+            model = diag.get('overlay_model', 'Light_Wall')
+            url = f'http://localhost/api/overlays/model/{model}'
+            with _ureq.urlopen(url, timeout=2) as resp:
+                ov = _json2.loads(resp.read().decode())
+            diag['fpp_overlay_state'] = ov.get('State', ov.get('isActive', '?'))
+        except Exception as _oe:
+            diag['fpp_overlay_state'] = f'(query failed: {_oe})'
+
+        diag['playback_active'] = playback_active
+        diag['current_video'] = current_video_name
+
     except Exception as e:
         diag['error'] = str(e)
     return jsonify(diag)
@@ -1177,6 +1215,12 @@ def game_state():
 
 @app.route('/api/test/solid', methods=['POST'])
 def test_solid():
+    """Write a solid color to the LED wall and HOLD the overlay active.
+    
+    Acquires the FPP overlay (state 3) then writes the color.
+    Call /api/stop to release the overlay afterward.
+    Also reads back from mmap to confirm the write succeeded.
+    """
     try:
         data = request.get_json(silent=True) or {}
         r = int(data.get('r', data.get('red', 255)))
@@ -1184,8 +1228,30 @@ def test_solid():
         b = int(data.get('b', data.get('blue', 0)))
         matrix = initialize_matrix()
         if getattr(matrix, 'fpp', None):
+            # CRITICAL: must acquire overlay (state 3) so fppd forwards our mmap data
+            matrix.fpp.acquire_overlay()
             ms = matrix.fpp.write_solid(r, g, b)
-            return jsonify({'status': 'ok', 'ms': ms, 'rgb': [r, g, b]})
+            # Read back from mmap to verify the write made it through
+            readback_stats = {}
+            try:
+                import numpy as _np
+                fpp_path = _resolve_fpp_memory_file()
+                raw = open(fpp_path, 'rb').read()
+                arr = _np.frombuffer(raw, dtype=_np.uint8)
+                readback_stats = {
+                    'mmap_max': int(arr.max()),
+                    'mmap_mean': round(float(arr.mean()), 1),
+                    'mmap_nonzero': int(_np.count_nonzero(arr)),
+                    'mmap_first12_hex': raw[:12].hex(),
+                }
+                log(f"[TEST_SOLID] rgb=({r},{g},{b}) mmap: max={readback_stats['mmap_max']} "
+                    f"mean={readback_stats['mmap_mean']} "
+                    f"nonzero={readback_stats['mmap_nonzero']}/13500 "
+                    f"first12={readback_stats['mmap_first12_hex']}", module="API")
+            except Exception as _rb:
+                readback_stats['readback_error'] = str(_rb)
+            return jsonify({'status': 'ok', 'ms': ms, 'rgb': [r, g, b],
+                            'overlay': 'acquired (state 3)', **readback_stats})
         return jsonify({'error': 'FPP output not enabled'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -1196,6 +1262,7 @@ def test_black():
     try:
         matrix = initialize_matrix()
         if getattr(matrix, 'fpp', None):
+            matrix.fpp.acquire_overlay()
             ms = matrix.fpp.write_solid(0, 0, 0)
             return jsonify({'status': 'ok', 'ms': ms})
         return jsonify({'error': 'FPP output not enabled'}), 400
@@ -1216,6 +1283,119 @@ def twinkly_rt():
         return jsonify({'status': status, 'ok': ok, 'failed': fail})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/debug/pipeline', methods=['GET'])
+def debug_pipeline():
+    """Full pipeline diagnostic — shows every stage from matrix→mmap→fppd→controllers.
+
+    Call this while the wall appears dark to capture all relevant state.
+    The response is also printed to the service log for journalctl review.
+    """
+    import struct, glob
+
+    diag = {}
+
+    # ── 1. Matrix / FPPOutput settings ───────────────────────────────────────
+    try:
+        matrix = initialize_matrix()
+        fpp = getattr(matrix, 'fpp', None)
+        if fpp:
+            diag['matrix'] = {
+                'gamma': fpp.gamma,
+                'color_order': fpp.color_order,
+                'channel_gains': list(fpp.channel_gains),
+                'width': fpp.width,
+                'height': fpp.height,
+                'buffer_size': fpp.buffer_size,
+                'routing_entries': int(len(fpp._fast_dest)) if fpp._fast_dest is not None else 0,
+                'mmap_open': fpp.memory_map is not None,
+            }
+            if fpp._fast_dest is not None and len(fpp._fast_dest) > 0:
+                diag['matrix']['routing_dest_min'] = int(fpp._fast_dest.min())
+                diag['matrix']['routing_dest_max'] = int(fpp._fast_dest.max())
+        else:
+            diag['matrix'] = {'error': 'FPP output not initialised'}
+    except Exception as e:
+        diag['matrix'] = {'error': str(e)}
+
+    # ── 2. mmap file stats (raw, before any overlay state change) ───────────
+    try:
+        fpp_path = _resolve_fpp_memory_file()
+        diag['mmap'] = {'path': fpp_path, 'exists': os.path.exists(fpp_path)}
+        if os.path.exists(fpp_path):
+            diag['mmap']['size'] = os.path.getsize(fpp_path)
+            diag['mmap']['writable'] = os.access(fpp_path, os.W_OK)
+            raw = open(fpp_path, 'rb').read()
+            import numpy as _np
+            arr = _np.frombuffer(raw, dtype=_np.uint8)
+            diag['mmap']['max_val'] = int(arr.max())
+            diag['mmap']['mean_val'] = round(float(arr.mean()), 2)
+            diag['mmap']['nonzero'] = int(_np.count_nonzero(arr))
+            diag['mmap']['first_12_hex'] = raw[:12].hex()
+    except Exception as e:
+        diag['mmap'] = {'error': str(e)}
+
+    # ── 3. FPP overlay state via HTTP API ────────────────────────────────────
+    try:
+        import urllib.request, json as _json
+        model_name = getattr(current_matrix.fpp, '_overlay_model_name', 'Light_Wall') if current_matrix and getattr(current_matrix, 'fpp', None) else 'Light_Wall'
+        url = f'http://localhost/api/overlays/model/{model_name}'
+        with urllib.request.urlopen(url, timeout=3) as resp:
+            overlay_info = _json.loads(resp.read().decode())
+        diag['fpp_overlay'] = overlay_info
+    except Exception as e:
+        diag['fpp_overlay'] = {'error': str(e)}
+
+    # ── 4. FPP SHM control file state ────────────────────────────────────────
+    try:
+        control_file = f'/dev/shm/FPP-PixelOverlay-{model_name}'  # type: ignore[reportPossiblyUnbound]
+        if os.path.exists(control_file):
+            with open(control_file, 'rb') as cf:
+                raw_ctrl = cf.read(4)
+            state_val = struct.unpack('<i', raw_ctrl)[0] if len(raw_ctrl) >= 4 else None
+            diag['fpp_shm_control'] = {'file': control_file, 'isActive': state_val}
+        else:
+            shm_files = glob.glob('/dev/shm/FPP-*')
+            diag['fpp_shm_control'] = {'not_found': control_file, 'available': shm_files}
+    except Exception as e:
+        diag['fpp_shm_control'] = {'error': str(e)}
+
+    # ── 5. Write a bright test pattern, hold overlay at 3, read back ─────────
+    write_test = {}
+    try:
+        fpp = getattr(initialize_matrix(), 'fpp', None)
+        if fpp:
+            # Use bright magenta (255,0,255) — unmistakeable
+            fpp.acquire_overlay()
+            fpp.write_solid(255, 0, 255)
+            import time as _t; _t.sleep(0.05)
+            raw2 = open(fpp_path, 'rb').read()  # type: ignore[reportPossiblyUnbound]
+            arr2 = _np.frombuffer(raw2, dtype=_np.uint8)
+            write_test['wrote_rgb'] = [255, 0, 255]
+            write_test['readback_max'] = int(arr2.max())
+            write_test['readback_mean'] = round(float(arr2.mean()), 2)
+            write_test['readback_nonzero'] = int(_np.count_nonzero(arr2))
+            write_test['readback_first12'] = raw2[:12].hex()
+            write_test['overlay_state_held'] = 3
+            write_test['note'] = 'Overlay held at state 3 — call /api/stop to release'
+        else:
+            write_test['error'] = 'FPP not initialised'
+    except Exception as e:
+        write_test['error'] = str(e)
+    diag['write_test'] = write_test
+
+    # ── 6. Current playback state ─────────────────────────────────────────────
+    diag['playback'] = {
+        'active': playback_active,
+        'video': current_video_name,
+        'has_player': current_player is not None,
+        'has_matrix': current_matrix is not None,
+    }
+
+    # Print to log so it shows in journalctl
+    log(f"[PIPELINE_DIAG] {diag}", module="DEBUG")
+    return jsonify(diag)
 
 
 @app.route('/api/youtube/download', methods=['POST'])
