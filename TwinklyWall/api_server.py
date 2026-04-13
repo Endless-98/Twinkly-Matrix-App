@@ -37,9 +37,9 @@ from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
 import twinkly_controller
-# NOTE: fppd sends DDP data to Twinkly controllers but can fail to maintain
-# 'rt' mode auth tokens reliably.  We do a ONE-SHOT rt assertion at startup
-# (and expose /api/twinkly/rt for manual recovery) then let fppd take over.
+# Twinkly controllers revert to built-in patterns when auth tokens expire
+# (~14 min).  ensure_rt_mode() spawns a 30s keepalive that re-authenticates
+# and re-asserts rt mode permanently.  fppd sends the pixel data via DDP.
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -1352,13 +1352,15 @@ if __name__ == '__main__':
     # Start background cleanup thread for idle players
     start_cleanup_thread()
 
-    # One-shot: force all Twinkly controllers into 'rt' mode so they
-    # accept DDP data from fppd.  fppd maintains the tokens afterwards.
+    # Force all Twinkly controllers into 'rt' mode and keep them there.
+    # ensure_rt_mode() does an initial burst (3 retries) then spawns a
+    # daemon thread that re-asserts rt every 30s — this prevents token
+    # expiry from reverting controllers to their built-in patterns.
     try:
-        ok, fail = twinkly_controller.set_all_rt()
-        log(f"Startup Twinkly rt: {ok} ok, {fail} failed", module="STARTUP")
+        twinkly_controller.ensure_rt_mode()
+        log("Twinkly rt keepalive started (30s interval)", module="STARTUP")
     except Exception as e:
-        log(f"Startup Twinkly rt error (non-fatal): {e}", level="WARNING", module="STARTUP")
+        log(f"Twinkly rt keepalive error (non-fatal): {e}", level="WARNING", module="STARTUP")
 
     # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")
