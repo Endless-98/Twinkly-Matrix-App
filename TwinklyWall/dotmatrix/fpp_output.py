@@ -200,7 +200,7 @@ class FPPOutput:
             self._keepalive_thread.join(timeout=1)
             self._keepalive_thread = None
         self._enable_overlay_state(state=3)
-        self._start_overlay_keepalive(interval=30)
+        self._start_overlay_keepalive(interval=5)
         print("[FPP_OVERLAY] Overlay acquired — broadcasting enabled", flush=True)
 
     def release_overlay(self):
@@ -332,13 +332,21 @@ class FPPOutput:
 
         total_elapsed = time.perf_counter() - start
 
-        # Startup diagnostic: log first 5 writes only
+        # Startup diagnostic: log first 5 writes with brightness stats
         if not hasattr(self, '_write_count'):
             self._write_count = 0
         self._write_count += 1
         if self._write_count <= 5:
             sample = bytes(self.buffer[:12])
-            print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()}", flush=True)
+            if HAS_NUMPY:
+                buf_arr = np.frombuffer(self.buffer, dtype=np.uint8)
+                max_val = int(buf_arr.max())
+                mean_val = float(buf_arr.mean())
+                nonzero = int(np.count_nonzero(buf_arr))
+                print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()} "
+                      f"| max={max_val} mean={mean_val:.1f} nonzero={nonzero}/{len(buf_arr)}", flush=True)
+            else:
+                print(f"[FPP_WRITE] Frame #{self._write_count}: first 12 bytes: {sample.hex()}", flush=True)
 
         return total_elapsed * 1000
 

@@ -52,6 +52,11 @@ current_video_name = None
 idle_animation = None  # IdlePattern instance (runs when nothing else is active)
 # Stop signal shared across all playback threads — checked during load() and play()
 _stop_event = threading.Event()
+# Generation counter: incremented on every play request.  Threads compare their
+# generation against the global to detect when a newer play has superseded them.
+_playback_generation = 0
+# Lock protecting the play/stop cycle so concurrent API requests don't interleave
+_playback_lock = threading.Lock()
 # Global render progress tracking: {filename: {'progress': 0.0-1.0, 'status': 'rendering'/'complete'/'error'}}
 render_progress = {}
 MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
@@ -185,7 +190,7 @@ def initialize_matrix():
             enable_performance_monitor=True,
             disable_blending=True,
             supersample=1,
-            fpp_gamma=2.2,
+            fpp_gamma=None,
             fpp_color_order="RGB",
             fpp_memory_buffer_file=fpp_memory_file,
         )
@@ -235,7 +240,7 @@ def stop_current_playback():
     if t is not None and t.is_alive():
         t.join(timeout=5)
         if t.is_alive():
-            log("[STOP] Playback thread did not exit in 5s — proceeding anyway",
+            log("[STOP] Playback thread did not exit in 5s — abandoning it (daemon)",
                 level="WARNING", module="PLAYBACK")
     playback_thread = None
 
@@ -247,7 +252,7 @@ def stop_current_playback():
         pass
 
 
-def play_video_thread(video_path, loop, speed, brightness, playback_fps):
+def play_video_thread(video_path, loop, speed, brightness, playback_fps, generation):
     """Thread function to play video.  Checks _stop_event during load and play."""
     global current_player, current_matrix, playback_active
 
@@ -295,11 +300,14 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps):
             level='INFO', module="PLAYBACK")
 
     except Exception as e:
-        log(f"Error during playback: {e}", level='ERROR', module="PLAYBACK")
+        log(f"Error during playback: {e}\n{traceback.format_exc()}",
+            level='ERROR', module="PLAYBACK")
     finally:
         current_player = None
-        # Only enter idle if we weren't stopped externally
-        if playback_active:
+        # Only enter idle if THIS thread is still the active generation
+        # (i.e. no newer play request superseded us).  This prevents the
+        # old thread from releasing the overlay that a new thread just acquired.
+        if _playback_generation == generation and playback_active:
             playback_active = False
             _start_idle()
 
@@ -848,7 +856,7 @@ def get_render_progress(filename):
 @app.route('/api/play', methods=['POST'])
 def play_video():
     """Start playing a video."""
-    global playback_active, playback_thread, current_video_name
+    global playback_active, playback_thread, current_video_name, _playback_generation
     
     try:
         data = request.json
@@ -874,21 +882,26 @@ def play_video():
         if not rendered_path.exists():
             return jsonify({'error': f'Rendered video not found: {rendered_name}'}), 404
         
-        # Stop any current playback (and idle pattern) — blocks until old thread exits
-        stop_current_playback()
-        
-        # Clear the stop signal so the new thread can run
-        _stop_event.clear()
-        
-        # Start new playback in a thread
-        playback_active = True
-        current_video_name = video_name
-        playback_thread = threading.Thread(
-            target=play_video_thread,
-            args=(str(rendered_path), loop, 1.0, brightness, playback_fps),
-            daemon=True
-        )
-        playback_thread.start()
+        with _playback_lock:
+            # Stop any current playback (and idle pattern) — blocks until old thread exits
+            stop_current_playback()
+            
+            # Clear the stop signal so the new thread can run
+            _stop_event.clear()
+            
+            # Bump generation so any lingering old thread won't enter idle
+            _playback_generation += 1
+            gen = _playback_generation
+            
+            # Start new playback in a thread
+            playback_active = True
+            current_video_name = video_name
+            playback_thread = threading.Thread(
+                target=play_video_thread,
+                args=(str(rendered_path), loop, 1.0, brightness, playback_fps, gen),
+                daemon=True
+            )
+            playback_thread.start()
         
         return jsonify({
             'status': 'playing',
@@ -904,8 +917,9 @@ def play_video():
 def stop_playback():
     """Stop current playback."""
     try:
-        stop_current_playback()
-        _start_idle()
+        with _playback_lock:
+            stop_current_playback()
+            _start_idle()
         return jsonify({'status': 'stopped'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -922,6 +936,38 @@ def get_status():
         'video': current_video_name,
         'brightness': brightness,
     })
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Diagnostic endpoint — verifies the mmap → fppd pipeline is live."""
+    import struct
+    diag = {'mmap': False, 'overlay': False, 'matrix': bool(current_matrix)}
+    try:
+        fpp_path = _resolve_fpp_memory_file()
+        if os.path.exists(fpp_path):
+            diag['mmap'] = True
+            diag['mmap_path'] = fpp_path
+            diag['mmap_size'] = os.path.getsize(fpp_path)
+            # Read brightness statistics from current mmap contents
+            with open(fpp_path, 'rb') as f:
+                raw = f.read()
+            if raw:
+                import numpy as _np
+                arr = _np.frombuffer(raw, dtype=_np.uint8)
+                diag['mmap_max'] = int(arr.max())
+                diag['mmap_mean'] = round(float(arr.mean()), 1)
+                diag['mmap_nonzero'] = int(_np.count_nonzero(arr))
+
+        if current_matrix and getattr(current_matrix, 'fpp', None):
+            fpp = current_matrix.fpp
+            diag['overlay'] = True
+            diag['overlay_model'] = getattr(fpp, '_overlay_model_name', 'unknown')
+            diag['gamma'] = fpp.gamma
+            diag['color_order'] = fpp.color_order
+    except Exception as e:
+        diag['error'] = str(e)
+    return jsonify(diag)
 
 
 @app.route('/api/brightness', methods=['POST'])

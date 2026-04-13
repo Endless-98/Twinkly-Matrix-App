@@ -322,7 +322,7 @@ def build_matrix(show_preview=True, fps=20):
         disable_blending=True,
         supersample=1,
         max_fps=fps,
-        fpp_gamma=2.2,
+        fpp_gamma=None,
         fpp_color_order="RGB",
         fpp_memory_buffer_file=fpp_memory_file,
     )
@@ -395,9 +395,10 @@ def main():
                         log(f"🎮 {current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
                         # Stop any active video playback and idle pattern
                         try:
-                            from api_server import stop_current_playback, _stop_idle
-                            stop_current_playback()
-                            _stop_idle()
+                            from api_server import stop_current_playback, _stop_idle, _playback_lock
+                            with _playback_lock:
+                                stop_current_playback()
+                                _stop_idle()
                             log("🔇 Stopped active video playback before starting game", module="TetrisMonitor")
                         except Exception as e:
                             log(f"Error stopping video playback: {e}", level='ERROR', module="TetrisMonitor")

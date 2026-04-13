@@ -72,6 +72,10 @@ class VideoPlayer:
         if not path:
             raise FileNotFoundError(f"Render not found: {name_or_path}")
         data = np.load(path)
+        # Check stop between expensive I/O and decompression
+        if self._should_stop:
+            return {"path": str(path), "frames": np.empty((0, 1, 1, 3), dtype=np.uint8),
+                    "fps": 20.0, "width": 1, "height": 1}
         frames = data["frames"]
         fps = float(data["fps"]) if "fps" in data else 20.0
         width = int(data["width"]) if "width" in data else frames.shape[2]
