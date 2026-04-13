@@ -63,8 +63,8 @@ class ApiService {
         
         if (videos.first is String) {
           // Old format: convert strings to metadata objects
-          return (videos as List<String>)
-              .map((filename) => {
+          return List<String>.from(videos)
+              .map((filename) => <String, dynamic>{
                 'filename': filename,
                 'has_thumbnail': false,
                 'thumbnail': null,
@@ -162,6 +162,23 @@ class ApiService {
         return jsonDecode(response.body);
       } else {
         throw Exception('Failed to get status: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Connection error: $e');
+    }
+  }
+
+  /// Get system health diagnostics
+  Future<Map<String, dynamic>> getHealth() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/health'))
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        throw Exception('Failed to get health: ${response.statusCode}');
       }
     } catch (e) {
       throw Exception('Connection error: $e');

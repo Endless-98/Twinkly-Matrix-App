@@ -72,6 +72,21 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final fppIp = ref.read(fppIpProvider);
       final apiService = ApiService(host: fppIp);
       final scenes = await apiService.getAvailableVideos();
+
+      // Sync playback status with backend
+      try {
+        final status = await apiService.getStatus();
+        final playing = status['playing'] == true;
+        final currentVideo = status['video'] as String?;
+        if (mounted) {
+          setState(() {
+            _currentlyPlaying = playing ? currentVideo : null;
+          });
+        }
+      } catch (_) {
+        // Non-critical — don't block scene loading
+      }
+
       setState(() {
         _scenes = scenes;
         _isLoading = false;
@@ -319,7 +334,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         if (!mounted) return;
         
         // Show the rendered video trimmer dialog
-        final confirmed = await showDialog<bool>(
+        await showDialog<bool>(
           context: context,
           barrierDismissible: false,
           builder: (context) => RenderedVideoTrimmerDialog(
@@ -785,7 +800,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                   ),
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    color: Colors.grey[850],
+                    color: Colors.grey[900],
                     child: Row(
                       children: [
                         Checkbox(

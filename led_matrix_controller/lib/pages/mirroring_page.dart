@@ -812,7 +812,7 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.grey[850],
+        color: Colors.grey[900],
         borderRadius: BorderRadius.circular(12),
       ),
       child: Column(

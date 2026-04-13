@@ -75,8 +75,8 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
       _sendHeartbeat();
     });
 
-    // Start score update timer (fetch every 200ms for smooth updates)
-    _scoreUpdateTimer = Timer.periodic(const Duration(milliseconds: 200), (_) {
+    // Start score update timer (fetch every 500ms for smooth updates)
+    _scoreUpdateTimer = Timer.periodic(const Duration(milliseconds: 500), (_) {
       _fetchGameScore();
     });
   }
@@ -161,11 +161,15 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
   Widget build(BuildContext context) {
     final gameScore = ref.watch(gameScoreProvider);
 
-    return WillPopScope(
-      onWillPop: () async {
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (bool didPop, dynamic result) async {
+        if (didPop) return;
         debugPrint('👈 Back button pressed, leaving game before navigation...');
         await _leaveGame();
-        return true;  // Allow pop
+        if (context.mounted) {
+          Navigator.of(context).pop();
+        }
       },
       child: Scaffold(
         backgroundColor: Colors.black,
