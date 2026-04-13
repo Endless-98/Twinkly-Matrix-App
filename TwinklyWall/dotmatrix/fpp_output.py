@@ -92,21 +92,38 @@ class FPPOutput:
         return r, g, b
 
     def _initialize_memory_map(self, fpp_file):
-        """Initialize memory-mapped file for FPP output."""
+        """Initialize memory-mapped file for FPP output.
+        
+        IMPORTANT: The SHM file must be created by fppd (via shm_open).
+        If we create it first with wrong ownership/permissions, fppd's
+        shm_open gets 'Permission denied' and it falls back to a private
+        buffer — sending zero pixel data to controllers (lights dark).
+        """
         try:
             print(f"[FPP_INIT] ========================================", flush=True)
             print(f"[FPP_INIT] Initializing memory map for: {fpp_file}", flush=True)
             print(f"[FPP_INIT] Buffer size: {self.buffer_size} bytes ({self.width}x{self.height}x3)", flush=True)
             
             if not os.path.exists(fpp_file):
-                print(f"[FPP_INIT] WARNING: mmap file does not exist, creating it", flush=True)
-                print(f"[FPP_INIT] NOTE: FPP Pixel Overlay may need to be configured!", flush=True)
-                with open(fpp_file, 'wb') as f:
-                    f.write(b'\x00' * self.buffer_size)
-            elif os.path.getsize(fpp_file) != self.buffer_size:
-                print(f"[FPP_INIT] WARNING: mmap file size mismatch, resizing", flush=True)
-                with open(fpp_file, 'wb') as f:
-                    f.write(b'\x00' * self.buffer_size)
+                print(f"[FPP_INIT] ❌ SHM file does not exist: {fpp_file}", flush=True)
+                print(f"[FPP_INIT] fppd must create this file — do NOT create it from Python", flush=True)
+                print(f"[FPP_INIT] Fix: sudo systemctl restart fppd", flush=True)
+                # Wait briefly in case fppd is still starting up
+                import time
+                for _retry in range(10):
+                    time.sleep(1)
+                    if os.path.exists(fpp_file):
+                        print(f"[FPP_INIT] ✅ SHM file appeared after {_retry + 1}s", flush=True)
+                        break
+                else:
+                    print(f"[FPP_INIT] ❌ SHM file never appeared — fppd not running?", flush=True)
+                    self._cleanup()
+                    return
+            
+            file_size = os.path.getsize(fpp_file)
+            if file_size != self.buffer_size:
+                print(f"[FPP_INIT] ⚠️  SHM file size mismatch: {file_size} != {self.buffer_size}", flush=True)
+                print(f"[FPP_INIT] Proceeding with existing file (fppd owns it)", flush=True)
             else:
                 print(f"[FPP_INIT] mmap file exists with correct size", flush=True)
 

@@ -388,18 +388,42 @@ if [ $DEBUG_MODE -eq 0 ]; then
 
     sleep 0.5
 
+    # CRITICAL: Delete SHM files BEFORE fppd restart.
+    # fppd's PixelOverlayModel.cpp uses shm_open() to create/open the overlay.
+    # If a stale SHM file exists with wrong ownership/permissions, fppd gets
+    # "Permission denied" and falls back to a private buffer (all zeros).
+    # Result: fppd sends valid Twinkly packets but with ZERO pixel data → lights dark.
+    echo '🗑️  Removing stale SHM files so fppd can recreate them...'
+    sudo rm -f /dev/shm/FPP-Model-Data-* /dev/shm/FPP-PixelOverlay-* 2>/dev/null || true
+
     echo '▶️ Restarting fppd to ensure fresh Twinkly auth tokens...'
     # fppd's Twinkly.cpp output authenticates with each controller on startup.
     # Previous sessions or diagnostics may have invalidated fppd's tokens.
     sudo systemctl restart fppd || true
-    sleep 5  # Wait for fppd to authenticate with all 9 controllers
+
+    # Wait for fppd to create SHM and authenticate with controllers
+    echo '   Waiting for fppd to create SHM and authenticate...'
+    for _wait in $(seq 1 10); do
+        sleep 1
+        if [ -e "$FPP_MMAP_FILE" ]; then
+            echo "   ✅ fppd created $FPP_MMAP_FILE after ${_wait}s"
+            break
+        fi
+        if [ "$_wait" -eq 10 ]; then
+            echo "   ⚠️  fppd did not create SHM within 10s — check fppd logs"
+        fi
+    done
+
+    # Make SHM writable by our Python service (fpp user)
+    sudo chmod 666 "$FPP_MMAP_FILE" 2>/dev/null || true
+    sudo chmod 666 "$CONTROL_FILE" 2>/dev/null || true
 
     # Check fppd logs for Twinkly auth status
     echo ''
     echo '🔍 Checking fppd Twinkly output status...'
     _FPPD_LOG="$(sudo journalctl -u fppd --since '30 seconds ago' --no-pager 2>/dev/null || echo '')"
     if [ -n "$_FPPD_LOG" ]; then
-        _TW_LINES="$(echo "$_FPPD_LOG" | grep -iE 'twinkly|output.*start|channel.*output|auth|token|error|warn|fail' | tail -30)"
+        _TW_LINES="$(echo "$_FPPD_LOG" | grep -iE 'twinkly|output.*start|channel.*output|auth|token|error|warn|fail|permission|shm|shared.memory' | tail -30)"
         if [ -n "$_TW_LINES" ]; then
             echo '   fppd log (Twinkly-related lines):'
             echo "$_TW_LINES" | while IFS= read -r line; do
@@ -748,10 +772,12 @@ lines = [l for l in data.split('\n') if re.match(r'\s+0x[0-9a-f]+:', l)]
 if not lines:
     print('   (no hex data)')
     sys.exit(0)
-# Collect all hex bytes from lines
+# Collect all hex bytes from lines (strip offset labels like '0x0000:')
 all_bytes = []
 for l in lines:
-    words = re.findall(r'[0-9a-f]{4}', l.lower())
+    # Remove the leading offset label (e.g. '  0x0010:') before parsing hex words
+    l_stripped = re.sub(r'^\s*0x[0-9a-f]+:\s*', '', l.lower())
+    words = re.findall(r'[0-9a-f]{4}', l_stripped)
     for w in words:
         all_bytes.extend([w[:2], w[2:]])
 # UDP payload starts after ETH(14) + IP(20) + UDP(8) = 42 bytes
@@ -845,7 +871,9 @@ data = sys.stdin.read()
 packets = re.split(r'(?=\s+0x0000:)', data)
 total_nz = 0
 for pkt in packets:
-    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    # Strip offset labels (0x0000:, 0x0010:, etc.) before parsing hex words
+    pkt_clean = re.sub(r'0x[0-9a-f]+:', '', pkt.lower())
+    words = re.findall(r'[0-9a-f]{4}', pkt_clean)
     ab = [c for w in words for c in (w[:2], w[2:])]
     payload = ab[60:]  # skip ETH+IP+UDP+protocol headers
     total_nz += sum(1 for b in payload if b != '00')
@@ -948,7 +976,9 @@ data = sys.stdin.read()
 packets = re.split(r'(?=\\s+0x0000:)', data)
 total_nz = 0
 for pkt in packets:
-    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    # Strip offset labels (0x0000:, 0x0010:, etc.) before parsing hex words
+    pkt_clean = re.sub(r'0x[0-9a-f]+:', '', pkt.lower())
+    words = re.findall(r'[0-9a-f]{4}', pkt_clean)
     ab = [c for w in words for c in (w[:2], w[2:])]
     payload = ab[60:]  # skip ETH+IP+UDP+protocol headers
     total_nz += sum(1 for b in payload if b != '00')
@@ -1020,7 +1050,9 @@ data = sys.stdin.read()
 packets = re.split(r'(?=\s+0x0000:)', data)
 total_nonzero = 0
 for pkt in packets:
-    words = re.findall(r'[0-9a-f]{4}', pkt.lower())
+    # Strip offset labels (0x0000:, 0x0010:, etc.) before parsing hex words
+    pkt_clean = re.sub(r'0x[0-9a-f]+:', '', pkt.lower())
+    words = re.findall(r'[0-9a-f]{4}', pkt_clean)
     all_bytes = [c for w in words for c in (w[:2], w[2:])]
     # Skip first 60 bytes (ethernet 14 + IP 20 + UDP 8 + protocol header ~18)
     payload = all_bytes[60:]
