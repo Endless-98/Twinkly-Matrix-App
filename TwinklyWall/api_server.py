@@ -181,7 +181,7 @@ def initialize_matrix():
         headless = use_fpp_output or ('DISPLAY' not in os.environ)
         fpp_memory_file = _resolve_fpp_memory_file()
 
-        fpp_gamma_val = None
+        fpp_gamma_val = 2.2
         fpp_color_order = "RGB"
         log(f"DotMatrix init: fpp={use_fpp_output}, headless={headless}, "
             f"gamma={fpp_gamma_val}, color_order={fpp_color_order}, mmap={fpp_memory_file}",
