@@ -103,6 +103,13 @@ def run_tetris(matrix, stop_event=None, level=1):
     # Pre-compute key list for auto-repeat
     REPEATABLE_KEYS = (pygame.K_LEFT, pygame.K_RIGHT, pygame.K_UP)
 
+    # Enable FPP overlay so fppd forwards mmap data to the lights.
+    # The overlay is disabled by default (state=0) after FPPOutput init;
+    # without this call fppd ignores the mmap and the wall stays black.
+    if getattr(matrix, 'fpp', None):
+        matrix.fpp.acquire_overlay()
+        log("🟢 FPP overlay acquired for Tetris", module="Tetris")
+
     try:
         log("▶️ Tetris game loop started", module="Tetris")
         while True:
@@ -260,6 +267,12 @@ def run_tetris(matrix, stop_event=None, level=1):
         log(f"Unexpected error in Tetris loop: {e}\n{traceback.format_exc()}", level='ERROR', module="Tetris")
     finally:
         log(f"🛑 Tetris shutting down | Total frames: {frame_count}", module="Tetris")
+        if getattr(matrix, 'fpp', None):
+            try:
+                matrix.fpp.release_overlay()
+                log("🔴 FPP overlay released", module="Tetris")
+            except Exception as e:
+                log(f"Error releasing FPP overlay: {e}", level='WARNING', module="Tetris")
         try:
             matrix.shutdown()
         except Exception as e:
