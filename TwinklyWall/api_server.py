@@ -36,10 +36,10 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
-import twinkly_controller
-# Twinkly controllers revert to built-in patterns when auth tokens expire
-# (~14 min).  ensure_rt_mode() spawns a 30s keepalive that re-authenticates
-# and re-asserts rt mode permanently.  fppd sends the pixel data via DDP.
+# NOTE: twinkly_controller is NOT imported and NOT used at runtime.
+# fppd's Twinkly.cpp channel output (subtype=8 in co-universes.json) manages
+# auth tokens, rt mode, and keepalive natively.  Any external HTTP login to
+# /xled/v1/login INVALIDATES fppd's token, causing frame data rejection.
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -1272,17 +1272,17 @@ def test_black():
 
 @app.route('/api/twinkly/rt', methods=['POST'])
 def twinkly_rt():
-    """Force all Twinkly controllers into 'rt' (real-time) mode.
+    """DISABLED — calling Twinkly HTTP API invalidates fppd's auth tokens.
 
-    Use when lights are dark despite data flowing through fppd.
-    This is a one-shot call; fppd maintains rt mode afterwards.
+    fppd manages rt mode natively via Twinkly.cpp (subtype=8).
+    If lights are dark, restart fppd: sudo systemctl restart fppd
     """
-    try:
-        ok, fail = twinkly_controller.set_all_rt()
-        status = 'ok' if fail == 0 else 'partial'
-        return jsonify({'status': status, 'ok': ok, 'failed': fail})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'error': 'Disabled — fppd manages Twinkly auth tokens natively. '
+                 'Calling /xled/v1/login from Python invalidates fppd tokens. '
+                 'Restart fppd instead: sudo systemctl restart fppd',
+        'action': 'restart_fppd',
+    }), 409
 
 
 @app.route('/api/debug/pipeline', methods=['GET'])
@@ -1532,15 +1532,8 @@ if __name__ == '__main__':
     # Start background cleanup thread for idle players
     start_cleanup_thread()
 
-    # Force all Twinkly controllers into 'rt' mode and keep them there.
-    # ensure_rt_mode() does an initial burst (3 retries) then spawns a
-    # daemon thread that re-asserts rt every 30s — this prevents token
-    # expiry from reverting controllers to their built-in patterns.
-    try:
-        twinkly_controller.ensure_rt_mode()
-        log("Twinkly rt keepalive started (30s interval)", module="STARTUP")
-    except Exception as e:
-        log(f"Twinkly rt keepalive error (non-fatal): {e}", level="WARNING", module="STARTUP")
+    # DO NOT call twinkly_controller here.  fppd manages Twinkly auth natively.
+    # Any /xled/v1/login call invalidates fppd's token → lights go dark.
 
     # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")

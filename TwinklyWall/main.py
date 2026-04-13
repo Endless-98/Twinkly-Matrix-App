@@ -516,22 +516,11 @@ def main():
                 log("Try: sudo systemctl stop ddp_bridge && sudo systemctl disable ddp_bridge",
                     level='ERROR', module="Main")
 
-        # One-shot rt mode assertion at startup — does NOT start a keepalive
-        # daemon (that would fight fppd's auth token every 30s).  fppd's
-        # Twinkly.cpp channel output (subtype=8) re-authenticates every 120s,
-        # so a single assertion here is enough to prime the controllers.
-        try:
-            from twinkly_controller import set_all_rt
-            import threading as _th2
-            def _rt_oneshot():
-                import time as _t2
-                _t2.sleep(3)  # Wait for fppd to fully initialise its Twinkly outputs
-                ok, fail = set_all_rt()
-                log(f"[RT_INIT] One-shot rt mode: {ok} ok, {fail} failed",
-                    module="Main")
-            _th2.Thread(target=_rt_oneshot, daemon=True, name='rt-oneshot').start()
-        except Exception as _rt_e:
-            log(f"[RT_INIT] Could not schedule rt assertion: {_rt_e}", module="Main")
+        # DO NOT call twinkly_controller.set_all_rt() or ensure_rt_mode() here.
+        # fppd's Twinkly.cpp channel output (subtype=8 in co-universes.json)
+        # manages auth tokens, rt mode, and keepalive natively.  Any external
+        # HTTP login to /xled/v1/login INVALIDATES fppd's current token, causing
+        # controllers to reject frame data until fppd re-authenticates (~120s).
 
         # Start idle (overlay released = lights dark until playback)
         _start_idle()

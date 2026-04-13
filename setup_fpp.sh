@@ -388,6 +388,12 @@ if [ $DEBUG_MODE -eq 0 ]; then
 
     sleep 0.5
 
+    echo '▶️ Restarting fppd to ensure fresh Twinkly auth tokens...'
+    # fppd's Twinkly.cpp output authenticates with each controller on startup.
+    # Previous sessions or diagnostics may have invalidated fppd's tokens.
+    sudo systemctl restart fppd || true
+    sleep 3  # Wait for fppd to re-authenticate with all controllers
+
     echo '▶️ Restarting twinklywall with latest code...'
     sudo systemctl restart twinklywall || sudo systemctl start twinklywall
 fi

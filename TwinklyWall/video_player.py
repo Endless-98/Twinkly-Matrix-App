@@ -122,6 +122,7 @@ class VideoPlayer:
         self._stop = False
         clip = self.load(name_or_path)
         if self._should_stop:
+            print(f"[VideoPlayer] Stop requested during/after load — 0 frames rendered", flush=True)
             return 0
         frames = clip["frames"]
         fps = clip["fps"]
@@ -131,6 +132,7 @@ class VideoPlayer:
         if start_frame < 0:
             start_frame = 0
         if start_frame >= end_frame:
+            print(f"[VideoPlayer] No frames to play: start={start_frame} end={end_frame} total={total}", flush=True)
             return 0
 
         # Compute target playback fps
