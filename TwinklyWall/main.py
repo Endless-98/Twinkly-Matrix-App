@@ -322,7 +322,7 @@ def build_matrix(show_preview=True, fps=20):
         disable_blending=True,
         supersample=1,
         max_fps=fps,
-        fpp_gamma=1.5,
+        fpp_gamma=2.2,
         fpp_color_order="RGB",
         fpp_memory_buffer_file=fpp_memory_file,
     )
