@@ -36,9 +36,10 @@ from game_players import (
 from logger import log
 from players import handle_input
 from idle_pattern import IdlePattern
-# NOTE: fppd natively manages Twinkly auth tokens, rt mode, and keepalive
-# via its Twinkly.cpp channel output. Do NOT add our own Twinkly HTTP API
-# calls — they invalidate fppd's auth tokens and cause lights to flicker.
+import twinkly_controller
+# NOTE: fppd sends DDP data to Twinkly controllers but can fail to maintain
+# 'rt' mode auth tokens reliably.  We do a ONE-SHOT rt assertion at startup
+# (and expose /api/twinkly/rt for manual recovery) then let fppd take over.
 
 app = Flask(__name__)
 CORS(app)  # Enable CORS for Flutter web app
@@ -1001,12 +1002,6 @@ def set_brightness():
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/api/health', methods=['GET'])
-def health():
-    """Health check endpoint."""
-    return jsonify({'status': 'ok'})
-
-
 @app.route('/api/game/join', methods=['POST'])
 def game_join():
     """
@@ -1208,6 +1203,21 @@ def test_black():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/twinkly/rt', methods=['POST'])
+def twinkly_rt():
+    """Force all Twinkly controllers into 'rt' (real-time) mode.
+
+    Use when lights are dark despite data flowing through fppd.
+    This is a one-shot call; fppd maintains rt mode afterwards.
+    """
+    try:
+        ok, fail = twinkly_controller.set_all_rt()
+        status = 'ok' if fail == 0 else 'partial'
+        return jsonify({'status': status, 'ok': ok, 'failed': fail})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/youtube/download', methods=['POST'])
 def download_youtube_video():
     """Download a video from YouTube using yt-dlp.
@@ -1342,8 +1352,13 @@ if __name__ == '__main__':
     # Start background cleanup thread for idle players
     start_cleanup_thread()
 
-    # fppd natively manages Twinkly auth tokens, rt mode, and keepalive
-    # via its Twinkly.cpp channel output — no Python-side intervention needed.
+    # One-shot: force all Twinkly controllers into 'rt' mode so they
+    # accept DDP data from fppd.  fppd maintains the tokens afterwards.
+    try:
+        ok, fail = twinkly_controller.set_all_rt()
+        log(f"Startup Twinkly rt: {ok} ok, {fail} failed", module="STARTUP")
+    except Exception as e:
+        log(f"Startup Twinkly rt error (non-fatal): {e}", level="WARNING", module="STARTUP")
 
     # Run the Flask server (overlay stays disabled until first playback)
     print("Starting Flask API server on port 5000...")
