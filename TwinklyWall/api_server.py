@@ -536,7 +536,13 @@ def get_video_preview(filename):
         writer = cv2.VideoWriter(tmp_path, fourcc, fps, (out_w, out_h))
         try:
             for i in range(len(frames)):
-                bgr = cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR)
+                # Apply the same contrast + saturation boost used at playback time
+                arr_f = frames[i].astype(np.float32)
+                arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.15, 0.0, 255.0)
+                luma = arr_f[:, :, 0:1] * 0.299 + arr_f[:, :, 1:2] * 0.587 + arr_f[:, :, 2:3] * 0.114
+                arr_f = np.clip(luma + (arr_f - luma) * 1.4, 0.0, 255.0)
+                frame_rgb = arr_f.astype(np.uint8)
+                bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
                 big = cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_NEAREST)
                 writer.write(big)
         finally:

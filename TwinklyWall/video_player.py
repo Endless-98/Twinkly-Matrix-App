@@ -157,9 +157,12 @@ class VideoPlayer:
             print(f"  Initial brightness: {brightness}")
 
         def render_frame(arr_uint8: np.ndarray):
-            # Apply +20% contrast enhancement around the midpoint
+            # Apply contrast enhancement around the midpoint
             arr_f = arr_uint8.astype(np.float32)
             arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.15, 0.0, 255.0)
+            # Saturation boost: pull each channel toward/away from luma by 1.4×
+            luma = arr_f[:, :, 0:1] * 0.299 + arr_f[:, :, 1:2] * 0.587 + arr_f[:, :, 2:3] * 0.114
+            arr_f = np.clip(luma + (arr_f - luma) * 1.4, 0.0, 255.0)
             # Use dynamic brightness - check current value each frame
             br = self._brightness
             if br is not None:

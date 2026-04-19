@@ -49,9 +49,12 @@ class PlaylistPlayer:
         return self._stop or (self._stop_event is not None and self._stop_event.is_set())
 
     def _render_frame(self, arr: np.ndarray):
-        """Apply contrast + brightness then push to matrix."""
+        """Apply contrast + saturation + brightness then push to matrix."""
         arr_f = arr.astype(np.float32)
         arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.15, 0.0, 255.0)
+        # Saturation boost: pull each channel toward/away from luma by 1.4×
+        luma = arr_f[:, :, 0:1] * 0.299 + arr_f[:, :, 1:2] * 0.587 + arr_f[:, :, 2:3] * 0.114
+        arr_f = np.clip(luma + (arr_f - luma) * 1.4, 0.0, 255.0)
         br = self._brightness
         if br is not None and br != 1.0:
             arr_f = np.minimum(255.0, arr_f * float(br))
