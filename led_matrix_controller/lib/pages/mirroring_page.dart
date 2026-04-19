@@ -152,14 +152,14 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
     int captureMsAcc = 0;
     int sendMsAcc = 0;
 
-    const targetIntervalMs = 50; // 20 FPS
+    const targetIntervalMs = 25; // 40 FPS
     final stopwatch = Stopwatch()..start();
     int nextFrameTargetMs = targetIntervalMs;
     
     // Local frame counter to avoid race conditions with widget state
     int localFrameCount = 0;
     int consecutiveFailures = 0;
-    const maxConsecutiveFailures = 300; // ~15s at 20fps before giving up
+    const maxConsecutiveFailures = 600; // ~15s at 40fps before giving up
 
     while (isCapturing) {
       try {
@@ -223,9 +223,9 @@ class _MirroringPageState extends ConsumerState<MirroringPage> with WidgetsBindi
           final totalMs = stopwatch.elapsedMilliseconds - frameStart;
           totalMsAcc += totalMs;
 
-          // Update UI less frequently (every 20 frames) to avoid throttling when app is backgrounded
-          if (localFrameCount % 20 == 0 && mounted) {
-            final avgFps = 20000 / totalMsAcc;
+          // Update UI less frequently (every 40 frames) to avoid throttling when app is backgrounded
+          if (localFrameCount % 40 == 0 && mounted) {
+            final avgFps = 40000 / totalMsAcc;
             final avgCaptureMs = (captureMsAcc / 20).toStringAsFixed(1);
             final avgSendMs = (sendMsAcc / 20).toStringAsFixed(1);
             totalMsAcc = 0;

@@ -1219,6 +1219,7 @@ def list_playlists():
                 'name': p.stem,
                 'entries': data.get('entries', []),
                 'transition_duration': data.get('transition_duration', 1.0),
+                'color': data.get('color', '#42A5F5'),
             })
         return jsonify({'playlists': playlists})
     except Exception as e:
@@ -1244,6 +1245,7 @@ def create_playlist():
         playlist_data = {
             'entries': entries,
             'transition_duration': float(data.get('transition_duration', 1.0)),
+            'color': data.get('color', '#42A5F5'),
         }
         _save_playlist(name, playlist_data)
         return jsonify({'status': 'created', 'name': name}), 201
@@ -1274,6 +1276,8 @@ def update_playlist(name):
             existing['entries'] = data['entries']
         if 'transition_duration' in data:
             existing['transition_duration'] = float(data['transition_duration'])
+        if 'color' in data:
+            existing['color'] = data['color']
         _save_playlist(name, existing)
         return jsonify({'status': 'updated', 'name': name})
     except Exception as e:

@@ -298,7 +298,7 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
     DDPSender.setDebugLevel(1);
     logger.info('Starting bubble cast loop: $fppIp:$fppPort', module: 'CAST');
 
-    const targetIntervalMs = 50; // 20 FPS
+    const targetIntervalMs = 25; // 40 FPS
     final stopwatch = Stopwatch()..start();
     int nextFrameTargetMs = targetIntervalMs;
     int localFrameCount = 0;
@@ -744,6 +744,35 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
 
   Future<void> _showOverlay() async {
     try {
+      // Check overlay permission first on Android
+      if (Platform.isAndroid) {
+        final canDraw = await _channel.invokeMethod('canDrawOverlays') as bool? ?? false;
+        if (!canDraw) {
+          if (!mounted) return;
+          final shouldOpen = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Permission Required'),
+              content: const Text(
+                'TwinklyWall needs the "Display over other apps" permission to show the crop overlay.\n\n'
+                'Please enable it in the next screen, then return here.',
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Open Settings'),
+                ),
+              ],
+            ),
+          );
+          if (shouldOpen != true) return;
+        }
+      }
+
       await _channel.invokeMethod('showOverlay', {
         'cropLeft': _cropRect.left,
         'cropTop': _cropRect.top,

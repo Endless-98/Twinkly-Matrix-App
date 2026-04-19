@@ -468,7 +468,7 @@ class ScreenCaptureService : Service() {
             projection.registerCallback(projectionCallback!!, imageHandler)
             Log.d(TAG, "MediaProjection callback registered")
 
-            imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 3)
+            imageReader = ImageReader.newInstance(captureWidth, captureHeight, PixelFormat.RGBA_8888, 5)
             Log.d(TAG, "ImageReader created: ${captureWidth}x${captureHeight}, surface=${imageReader?.surface}")
 
             // Set up listener — caches latest frame as RGB bytes whenever VirtualDisplay produces one
@@ -539,12 +539,15 @@ class ScreenCaptureService : Service() {
 
             Log.d(TAG, "OnImageAvailableListener registered on background handler")
 
+            // Use flag 0 instead of VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR to support
+            // both full-screen and single-app capture on Android 14+ (API 34+).
+            // AUTO_MIRROR can cause blank frames in single-app capture mode.
             virtualDisplay = mediaProjection?.createVirtualDisplay(
                 "LEDMatrixCapture",
                 captureWidth,
                 captureHeight,
                 density,
-                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                0,
                 imageReader?.surface,
                 null,
                 null

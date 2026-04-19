@@ -570,7 +570,7 @@ class ApiService {
 
   /// Create a new playlist
   Future<void> createPlaylist(String name, List<Map<String, dynamic>> entries,
-      {double transitionDuration = 1.0}) async {
+      {double transitionDuration = 1.0, String color = '#42A5F5'}) async {
     try {
       final response = await http
           .post(
@@ -580,6 +580,7 @@ class ApiService {
               'name': name,
               'entries': entries,
               'transition_duration': transitionDuration,
+              'color': color,
             }),
           )
           .timeout(const Duration(seconds: 5));
@@ -593,11 +594,14 @@ class ApiService {
 
   /// Update an existing playlist
   Future<void> updatePlaylist(String name, List<Map<String, dynamic>> entries,
-      {double? transitionDuration}) async {
+      {double? transitionDuration, String? color}) async {
     try {
       final body = <String, dynamic>{'entries': entries};
       if (transitionDuration != null) {
         body['transition_duration'] = transitionDuration;
+      }
+      if (color != null) {
+        body['color'] = color;
       }
       final response = await http
           .put(
