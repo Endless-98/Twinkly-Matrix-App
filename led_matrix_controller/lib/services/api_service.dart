@@ -526,4 +526,127 @@ class ApiService {
       throw Exception('Video download error: $e');
     }
   }
+
+  // ---------------------------------------------------------------------------
+  // Playlists
+  // ---------------------------------------------------------------------------
+
+  /// Get all saved playlists
+  Future<List<Map<String, dynamic>>> getPlaylists() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/playlists'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['playlists'] ?? []);
+      }
+      throw Exception('Failed to fetch playlists: ${response.statusCode}');
+    } catch (e) {
+      throw Exception('Playlist fetch error: $e');
+    }
+  }
+
+  /// Create a new playlist
+  Future<void> createPlaylist(String name, List<Map<String, dynamic>> entries,
+      {double transitionDuration = 1.0}) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/playlists'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'name': name,
+              'entries': entries,
+              'transition_duration': transitionDuration,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 201) {
+        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
+        throw Exception(msg);
+      }
+    } catch (e) {
+      throw Exception('Playlist create error: $e');
+    }
+  }
+
+  /// Update an existing playlist
+  Future<void> updatePlaylist(String name, List<Map<String, dynamic>> entries,
+      {double? transitionDuration}) async {
+    try {
+      final body = <String, dynamic>{'entries': entries};
+      if (transitionDuration != null) {
+        body['transition_duration'] = transitionDuration;
+      }
+      final response = await http
+          .put(
+            Uri.parse('$_baseUrl/api/playlists/${Uri.encodeComponent(name)}'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
+        throw Exception(msg);
+      }
+    } catch (e) {
+      throw Exception('Playlist update error: $e');
+    }
+  }
+
+  /// Delete a playlist
+  Future<void> deletePlaylist(String name) async {
+    try {
+      final response = await http
+          .delete(Uri.parse('$_baseUrl/api/playlists/${Uri.encodeComponent(name)}'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        throw Exception('Failed to delete playlist: ${response.statusCode}');
+      }
+    } catch (e) {
+      throw Exception('Playlist delete error: $e');
+    }
+  }
+
+  /// Play a playlist
+  Future<void> playPlaylist(String name,
+      {bool loop = false, double? brightness, double playbackFps = 20.0}) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/playlist/play'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'name': name,
+              'loop': loop,
+              if (brightness != null) 'brightness': brightness,
+              'playback_fps': playbackFps,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
+        throw Exception(msg);
+      }
+    } catch (e) {
+      throw Exception('Playlist play error: $e');
+    }
+  }
+
+  /// Get available transition types
+  Future<List<String>> getTransitions() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/transitions'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<String>.from(data['transitions'] ?? []);
+      }
+      return ['none', 'fade', 'slide', 'fisheye_swirl'];
+    } catch (e) {
+      return ['none', 'fade', 'slide', 'fisheye_swirl'];
+    }
+  }
 }

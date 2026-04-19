@@ -23,6 +23,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   bool _isLooping = true;
   double _brightness = 1.0;
   final double _playbackFps = 20.0;
+
+  // Playlist state
+  List<Map<String, dynamic>> _playlists = [];
+  bool _playlistsExpanded = false;
+  String? _editingPlaylist; // name of playlist currently being edited (null = none)
   
   // Upload progress tracking
   final Map<String, double> _uploadProgress = {}; // filename -> progress (0.0 to 1.0)
@@ -105,6 +110,14 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         }
       });
       _scheduleHighlightScroll();
+
+      // Load playlists in parallel
+      try {
+        final playlists = await apiService.getPlaylists();
+        if (mounted) {
+          setState(() => _playlists = playlists);
+        }
+      } catch (_) {}
     } catch (e) {
       setState(() {
         _error = e.toString();
@@ -758,6 +771,229 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // Playlist helpers
+  // ---------------------------------------------------------------------------
+
+  Future<void> _createPlaylist() async {
+    final name = await _showTextInputDialog('New Playlist', 'Playlist name');
+    if (name == null || name.trim().isEmpty) return;
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      final api = ApiService(host: fppIp);
+      await api.createPlaylist(name.trim(), []);
+      await _loadScenes();
+      if (mounted) {
+        setState(() {
+          _playlistsExpanded = true;
+          _editingPlaylist = name.trim();
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _deletePlaylistConfirm(String name) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete Playlist'),
+        content: Text('Delete "$name"?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Delete')),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    try {
+      final api = ApiService(host: ref.read(fppIpProvider));
+      await api.deletePlaylist(name);
+      if (_editingPlaylist == name) _editingPlaylist = null;
+      await _loadScenes();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _playPlaylist(String name) async {
+    try {
+      final api = ApiService(host: ref.read(fppIpProvider));
+      await api.playPlaylist(name, loop: _isLooping, brightness: _brightness, playbackFps: _playbackFps);
+      setState(() => _currentlyPlaying = 'playlist:$name');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<void> _savePlaylistEntries(String name, List<Map<String, dynamic>> entries, {double? transitionDuration}) async {
+    try {
+      final api = ApiService(host: ref.read(fppIpProvider));
+      await api.updatePlaylist(name, entries, transitionDuration: transitionDuration);
+      await _loadScenes();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('$e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
+  Future<String?> _showTextInputDialog(String title, String hint) async {
+    final controller = TextEditingController();
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(title),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: InputDecoration(hintText: hint, border: const OutlineInputBorder()),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          TextButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('OK')),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlaylistSection() {
+    return Column(
+      children: [
+        // Header row
+        InkWell(
+          onTap: () => setState(() => _playlistsExpanded = !_playlistsExpanded),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            color: Colors.grey[850],
+            child: Row(
+              children: [
+                Icon(
+                  _playlistsExpanded ? Icons.expand_less : Icons.expand_more,
+                  color: Colors.cyanAccent, size: 20,
+                ),
+                const SizedBox(width: 8),
+                const Text('Playlists', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                const Spacer(),
+                Text('${_playlists.length}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                const SizedBox(width: 8),
+                SizedBox(
+                  height: 28,
+                  child: IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                    icon: const Icon(Icons.add, size: 18, color: Colors.cyanAccent),
+                    onPressed: _createPlaylist,
+                    tooltip: 'New playlist',
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_playlistsExpanded)
+          ..._playlists.map((pl) {
+            final name = pl['name'] as String;
+            final entries = List<Map<String, dynamic>>.from(pl['entries'] ?? []);
+            final isPlaying = _currentlyPlaying == 'playlist:$name';
+            final isEditing = _editingPlaylist == name;
+
+            return Column(
+              children: [
+                // Playlist row
+                Container(
+                  color: isPlaying ? Colors.cyan.withValues(alpha: 0.15) : null,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  child: Row(
+                    children: [
+                      // Play / stop
+                      SizedBox(
+                        width: 32,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: Icon(
+                            isPlaying ? Icons.stop : Icons.play_arrow,
+                            color: isPlaying ? Colors.cyanAccent : Colors.white70,
+                            size: 20,
+                          ),
+                          onPressed: () => isPlaying ? _stopPlayback() : _playPlaylist(name),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          name,
+                          style: TextStyle(
+                            fontWeight: isPlaying ? FontWeight.bold : FontWeight.normal,
+                            color: isPlaying ? Colors.cyanAccent : Colors.white,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${entries.length} scenes',
+                        style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                      ),
+                      const SizedBox(width: 4),
+                      // Edit toggle
+                      SizedBox(
+                        width: 32,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: Icon(
+                            isEditing ? Icons.check : Icons.edit,
+                            size: 16,
+                            color: isEditing ? Colors.cyanAccent : Colors.white54,
+                          ),
+                          onPressed: () => setState(() => _editingPlaylist = isEditing ? null : name),
+                        ),
+                      ),
+                      // Delete
+                      SizedBox(
+                        width: 32,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.delete_outline, size: 16, color: Colors.white38),
+                          onPressed: () => _deletePlaylistConfirm(name),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // Inline editor
+                if (isEditing)
+                  _PlaylistEditor(
+                    entries: entries,
+                    availableScenes: _scenes,
+                    displayName: _displayName,
+                    transitionDuration: (pl['transition_duration'] as num?)?.toDouble() ?? 1.0,
+                    onSave: (newEntries, transDur) => _savePlaylistEntries(name, newEntries, transitionDuration: transDur),
+                  ),
+              ],
+            );
+          }),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final fppIp = ref.watch(fppIpProvider);
@@ -834,6 +1070,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                       ],
                     ),
                   ),
+                  // Playlists section
+                  _buildPlaylistSection(),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
                     child: _isLoading
@@ -1476,6 +1714,281 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
             onPressed: _nameController.text.isEmpty ? null : _performUpload,
             child: const Text('Upload & Render'),
           ),
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Playlist inline editor widget
+// ---------------------------------------------------------------------------
+
+class _PlaylistEditor extends StatefulWidget {
+  final List<Map<String, dynamic>> entries;
+  final List<String> availableScenes;
+  final String Function(String) displayName;
+  final double transitionDuration;
+  final void Function(List<Map<String, dynamic>> entries, double transitionDuration) onSave;
+
+  const _PlaylistEditor({
+    required this.entries,
+    required this.availableScenes,
+    required this.displayName,
+    required this.transitionDuration,
+    required this.onSave,
+  });
+
+  @override
+  State<_PlaylistEditor> createState() => _PlaylistEditorState();
+}
+
+class _PlaylistEditorState extends State<_PlaylistEditor> {
+  late List<Map<String, dynamic>> _entries;
+  late double _transitionDuration;
+  static const _transitions = ['none', 'fade', 'slide', 'fisheye_swirl'];
+
+  @override
+  void initState() {
+    super.initState();
+    _entries = widget.entries.map((e) => Map<String, dynamic>.from(e)).toList();
+    _transitionDuration = widget.transitionDuration;
+  }
+
+  void _addScene() async {
+    // Show scenes not already in the playlist
+    final unused = widget.availableScenes
+        .where((s) => !_entries.any((e) => e['video'] == s))
+        .toList();
+    if (unused.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('All scenes already added')),
+      );
+      return;
+    }
+    final selected = await showDialog<List<String>>(
+      context: context,
+      builder: (ctx) => _ScenePickerDialog(scenes: unused, displayName: widget.displayName),
+    );
+    if (selected == null || selected.isEmpty) return;
+    setState(() {
+      for (final s in selected) {
+        _entries.add({'video': s, 'transition': 'fade'});
+      }
+    });
+    _save();
+  }
+
+  void _removeAt(int index) {
+    setState(() => _entries.removeAt(index));
+    _save();
+  }
+
+  void _reorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final item = _entries.removeAt(oldIndex);
+      _entries.insert(newIndex, item);
+    });
+    _save();
+  }
+
+  void _setTransition(int index, String transition) {
+    setState(() => _entries[index]['transition'] = transition);
+    _save();
+  }
+
+  void _save() {
+    widget.onSave(_entries, _transitionDuration);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: Colors.grey[900],
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Transition duration slider
+          Row(
+            children: [
+              Text('Transition:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+              Expanded(
+                child: Slider(
+                  value: _transitionDuration,
+                  min: 0.2,
+                  max: 3.0,
+                  divisions: 14,
+                  label: '${_transitionDuration.toStringAsFixed(1)}s',
+                  onChanged: (v) {
+                    setState(() => _transitionDuration = v);
+                    _save();
+                  },
+                ),
+              ),
+              Text('${_transitionDuration.toStringAsFixed(1)}s',
+                  style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+            ],
+          ),
+          // Entry list
+          if (_entries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Text('No scenes added yet', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+            )
+          else
+            ReorderableListView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              buildDefaultDragHandles: false,
+              itemCount: _entries.length,
+              onReorder: _reorder,
+              proxyDecorator: (child, index, animation) {
+                return Material(
+                  color: Colors.cyan.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  child: child,
+                );
+              },
+              itemBuilder: (context, index) {
+                final entry = _entries[index];
+                final video = entry['video'] as String? ?? '';
+                final transition = entry['transition'] as String? ?? 'none';
+                return Container(
+                  key: ValueKey('$video-$index'),
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      // Drag handle
+                      ReorderableDragStartListener(
+                        index: index,
+                        child: const Padding(
+                          padding: EdgeInsets.only(right: 6),
+                          child: Icon(Icons.drag_handle, size: 16, color: Colors.white30),
+                        ),
+                      ),
+                      // Index
+                      SizedBox(
+                        width: 20,
+                        child: Text(
+                          '${index + 1}',
+                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                        ),
+                      ),
+                      // Scene name
+                      Expanded(
+                        child: Text(
+                          widget.displayName(video),
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ),
+                      // Transition picker (skip for first item)
+                      if (index > 0)
+                        SizedBox(
+                          width: 110,
+                          child: DropdownButton<String>(
+                            value: _transitions.contains(transition) ? transition : 'none',
+                            isDense: true,
+                            isExpanded: true,
+                            underline: const SizedBox(),
+                            style: const TextStyle(fontSize: 12, color: Colors.cyanAccent),
+                            dropdownColor: Colors.grey[800],
+                            items: _transitions
+                                .map((t) => DropdownMenuItem(
+                                      value: t,
+                                      child: Text(t == 'fisheye_swirl' ? 'swirl' : t, style: const TextStyle(fontSize: 12)),
+                                    ))
+                                .toList(),
+                            onChanged: (v) {
+                              if (v != null) _setTransition(index, v);
+                            },
+                          ),
+                        )
+                      else
+                        const SizedBox(width: 110),
+                      // Remove button
+                      SizedBox(
+                        width: 28,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: const Icon(Icons.close, size: 14, color: Colors.white38),
+                          onPressed: () => _removeAt(index),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          // Add scene button
+          Center(
+            child: TextButton.icon(
+              onPressed: _addScene,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add scene', style: TextStyle(fontSize: 13)),
+              style: TextButton.styleFrom(foregroundColor: Colors.cyanAccent),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Scene picker dialog (multi-select)
+// ---------------------------------------------------------------------------
+
+class _ScenePickerDialog extends StatefulWidget {
+  final List<String> scenes;
+  final String Function(String) displayName;
+
+  const _ScenePickerDialog({required this.scenes, required this.displayName});
+
+  @override
+  State<_ScenePickerDialog> createState() => _ScenePickerDialogState();
+}
+
+class _ScenePickerDialogState extends State<_ScenePickerDialog> {
+  final Set<String> _selected = {};
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Add Scenes'),
+      content: SizedBox(
+        width: double.maxFinite,
+        height: 300,
+        child: ListView.builder(
+          itemCount: widget.scenes.length,
+          itemBuilder: (ctx, i) {
+            final scene = widget.scenes[i];
+            final checked = _selected.contains(scene);
+            return CheckboxListTile(
+              dense: true,
+              title: Text(widget.displayName(scene), style: const TextStyle(fontSize: 14)),
+              value: checked,
+              onChanged: (v) {
+                setState(() {
+                  if (v == true) {
+                    _selected.add(scene);
+                  } else {
+                    _selected.remove(scene);
+                  }
+                });
+              },
+            );
+          },
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        ElevatedButton(
+          onPressed: _selected.isEmpty ? null : () => Navigator.pop(context, _selected.toList()),
+          child: Text('Add ${_selected.length} scene${_selected.length == 1 ? '' : 's'}'),
+        ),
       ],
     );
   }

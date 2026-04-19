@@ -5,6 +5,7 @@ Provides REST endpoints for the Flutter app to communicate with.
 
 import atexit
 import io
+import json
 import os
 import tempfile
 import threading
@@ -25,6 +26,8 @@ from flask import Flask, jsonify, request, send_file
 from flask_cors import CORS
 
 from dotmatrix import DotMatrix
+from playlist_player import PlaylistPlayer
+from transitions import TRANSITION_NAMES
 from video_player import VideoPlayer
 from video_renderer import VideoRenderer
 from game_players import (
@@ -65,11 +68,13 @@ TMP_UPLOAD_DIR = MEDIA_ROOT / "tmp_uploads"
 rendered_videos_dir = MEDIA_ROOT / "rendered"
 source_videos_dir = Path("assets/source_videos")
 uploaded_videos_dir = MEDIA_ROOT / "uploads"
+playlists_dir = MEDIA_ROOT / "playlists"
 
 # Ensure media directories live on the large (219GB) partition, not /tmp
 os.makedirs(rendered_videos_dir, exist_ok=True)
 os.makedirs(uploaded_videos_dir, exist_ok=True)
 os.makedirs(TMP_UPLOAD_DIR, exist_ok=True)
+os.makedirs(playlists_dir, exist_ok=True)
 
 # Migrate any .npz/.png files from the legacy dotmatrix/rendered_videos/ dir
 # into the canonical rendered_videos_dir so there is one source of truth.
@@ -336,6 +341,47 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
         # Only enter idle if THIS thread is still the active generation
         # (i.e. no newer play request superseded us).  This prevents the
         # old thread from releasing the overlay that a new thread just acquired.
+        if _playback_generation == generation and playback_active:
+            playback_active = False
+            _start_idle()
+
+
+def play_playlist_thread(entries, loop, brightness, playback_fps, transition_duration, generation):
+    """Thread function to play a playlist with transitions."""
+    global current_player, current_matrix, playback_active
+
+    try:
+        log(f"[PLAYLIST_THREAD] Starting playlist ({len(entries)} entries)",
+            level='INFO', module="PLAYBACK")
+        matrix = initialize_matrix()
+
+        if _stop_event.is_set():
+            log("[PLAYLIST_THREAD] Stop requested before play started",
+                level='INFO', module="PLAYBACK")
+            return
+
+        if getattr(matrix, 'fpp', None):
+            matrix.fpp.acquire_overlay()
+
+        player = PlaylistPlayer(matrix, rendered_videos_dir, stop_event=_stop_event)
+        current_player = player
+
+        frames = player.play(
+            entries=entries,
+            loop=loop,
+            brightness=brightness,
+            playback_fps=playback_fps,
+            transition_duration=transition_duration,
+        )
+
+        log(f"[PLAYLIST_THREAD] Playback complete: {frames} frames",
+            level='INFO', module="PLAYBACK")
+
+    except Exception as e:
+        log(f"Error during playlist playback: {e}\n{traceback.format_exc()}",
+            level='ERROR', module="PLAYBACK")
+    finally:
+        current_player = None
         if _playback_generation == generation and playback_active:
             playback_active = False
             _start_idle()
@@ -1045,6 +1091,166 @@ def set_brightness():
         return jsonify({'error': 'Invalid brightness value'}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Playlist CRUD & playback
+# ---------------------------------------------------------------------------
+
+def _load_playlist(name: str) -> dict | None:
+    path = playlists_dir / f"{name}.json"
+    if not path.exists():
+        return None
+    with open(path, 'r') as f:
+        return json.load(f)
+
+
+def _save_playlist(name: str, data: dict):
+    path = playlists_dir / f"{name}.json"
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _sanitize_playlist_name(name: str) -> str:
+    return secure_filename(name).rsplit('.', 1)[0] or 'untitled'
+
+
+@app.route('/api/playlists', methods=['GET'])
+def list_playlists():
+    """Return all saved playlists."""
+    try:
+        playlists = []
+        for p in sorted(playlists_dir.glob('*.json')):
+            with open(p, 'r') as f:
+                data = json.load(f)
+            playlists.append({
+                'name': p.stem,
+                'entries': data.get('entries', []),
+                'transition_duration': data.get('transition_duration', 1.0),
+            })
+        return jsonify({'playlists': playlists})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/playlists', methods=['POST'])
+def create_playlist():
+    """Create a new playlist.
+
+    Body: {"name": "My Playlist", "entries": [{"video": "a.npz", "transition": "fade"}, ...],
+           "transition_duration": 1.0}
+    """
+    try:
+        data = request.json or {}
+        raw_name = data.get('name', '').strip()
+        if not raw_name:
+            return jsonify({'error': 'Missing playlist name'}), 400
+        name = _sanitize_playlist_name(raw_name)
+        if (playlists_dir / f"{name}.json").exists():
+            return jsonify({'error': f'Playlist "{name}" already exists'}), 409
+        entries = data.get('entries', [])
+        playlist_data = {
+            'entries': entries,
+            'transition_duration': float(data.get('transition_duration', 1.0)),
+        }
+        _save_playlist(name, playlist_data)
+        return jsonify({'status': 'created', 'name': name}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<name>', methods=['GET'])
+def get_playlist(name):
+    """Get a single playlist by name."""
+    name = _sanitize_playlist_name(unquote(name))
+    data = _load_playlist(name)
+    if data is None:
+        return jsonify({'error': f'Playlist not found: {name}'}), 404
+    return jsonify({'name': name, **data})
+
+
+@app.route('/api/playlists/<name>', methods=['PUT'])
+def update_playlist(name):
+    """Update an existing playlist (entries, transition_duration)."""
+    try:
+        name = _sanitize_playlist_name(unquote(name))
+        if not (playlists_dir / f"{name}.json").exists():
+            return jsonify({'error': f'Playlist not found: {name}'}), 404
+        data = request.json or {}
+        existing = _load_playlist(name) or {}
+        if 'entries' in data:
+            existing['entries'] = data['entries']
+        if 'transition_duration' in data:
+            existing['transition_duration'] = float(data['transition_duration'])
+        _save_playlist(name, existing)
+        return jsonify({'status': 'updated', 'name': name})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/playlists/<name>', methods=['DELETE'])
+def delete_playlist(name):
+    """Delete a playlist."""
+    name = _sanitize_playlist_name(unquote(name))
+    path = playlists_dir / f"{name}.json"
+    if not path.exists():
+        return jsonify({'error': f'Playlist not found: {name}'}), 404
+    path.unlink()
+    return jsonify({'status': 'deleted', 'name': name})
+
+
+@app.route('/api/playlist/play', methods=['POST'])
+def play_playlist():
+    """Play a saved playlist.
+
+    Body: {"name": "My Playlist", "loop": true, "brightness": 1.0, "playback_fps": 20}
+    """
+    global playback_active, playback_thread, current_video_name, _playback_generation
+
+    try:
+        data = request.json or {}
+        raw_name = data.get('name', '').strip()
+        if not raw_name:
+            return jsonify({'error': 'Missing playlist name'}), 400
+        name = _sanitize_playlist_name(raw_name)
+        playlist_data = _load_playlist(name)
+        if playlist_data is None:
+            return jsonify({'error': f'Playlist not found: {name}'}), 404
+
+        entries = playlist_data.get('entries', [])
+        if not entries:
+            return jsonify({'error': 'Playlist is empty'}), 400
+
+        loop = data.get('loop', False)
+        brightness = data.get('brightness', None)
+        playback_fps = data.get('playback_fps', 20.0)
+        transition_duration = playlist_data.get('transition_duration', 1.0)
+
+        with _playback_lock:
+            stop_current_playback()
+            _stop_event.clear()
+            _playback_generation += 1
+            gen = _playback_generation
+
+            playback_active = True
+            current_video_name = f"playlist:{name}"
+            playback_thread = threading.Thread(
+                target=play_playlist_thread,
+                args=(entries, loop, brightness, playback_fps, transition_duration, gen),
+                daemon=True,
+            )
+            playback_thread.start()
+
+        return jsonify({'status': 'playing', 'playlist': name, 'entries': len(entries)})
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/transitions', methods=['GET'])
+def list_transitions():
+    """Return available transition types."""
+    return jsonify({'transitions': TRANSITION_NAMES})
 
 
 @app.route('/api/game/join', methods=['POST'])
