@@ -873,7 +873,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     );
   }
 
-  Widget _buildPlaylistSection() {
+  Widget _buildPlaylistSection(String fppIp) {
     return Column(
       children: [
         // Header row
@@ -984,6 +984,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                     entries: entries,
                     availableScenes: _scenes,
                     displayName: _displayName,
+                    thumbnailUrl: ApiService(host: fppIp).getThumbnailUrl,
                     transitionDuration: (pl['transition_duration'] as num?)?.toDouble() ?? 1.0,
                     onSave: (newEntries, transDur) => _savePlaylistEntries(name, newEntries, transitionDuration: transDur),
                   ),
@@ -1071,7 +1072,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                     ),
                   ),
                   // Playlists section
-                  _buildPlaylistSection(),
+                  _buildPlaylistSection(fppIp),
                   Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
                     child: _isLoading
@@ -1727,6 +1728,7 @@ class _PlaylistEditor extends StatefulWidget {
   final List<Map<String, dynamic>> entries;
   final List<String> availableScenes;
   final String Function(String) displayName;
+  final String Function(String) thumbnailUrl;
   final double transitionDuration;
   final void Function(List<Map<String, dynamic>> entries, double transitionDuration) onSave;
 
@@ -1734,6 +1736,7 @@ class _PlaylistEditor extends StatefulWidget {
     required this.entries,
     required this.availableScenes,
     required this.displayName,
+    required this.thumbnailUrl,
     required this.transitionDuration,
     required this.onSave,
   });
@@ -1767,7 +1770,11 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
     }
     final selected = await showDialog<List<String>>(
       context: context,
-      builder: (ctx) => _ScenePickerDialog(scenes: unused, displayName: widget.displayName),
+      builder: (ctx) => _ScenePickerDialog(
+        scenes: unused,
+        displayName: widget.displayName,
+        thumbnailUrl: widget.thumbnailUrl,
+      ),
     );
     if (selected == null || selected.isEmpty) return;
     setState(() {
@@ -1938,14 +1945,19 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
 }
 
 // ---------------------------------------------------------------------------
-// Scene picker dialog (multi-select)
+// Scene picker dialog (multi-select icon grid)
 // ---------------------------------------------------------------------------
 
 class _ScenePickerDialog extends StatefulWidget {
   final List<String> scenes;
   final String Function(String) displayName;
+  final String Function(String) thumbnailUrl;
 
-  const _ScenePickerDialog({required this.scenes, required this.displayName});
+  const _ScenePickerDialog({
+    required this.scenes,
+    required this.displayName,
+    required this.thumbnailUrl,
+  });
 
   @override
   State<_ScenePickerDialog> createState() => _ScenePickerDialogState();
@@ -1958,36 +1970,115 @@ class _ScenePickerDialogState extends State<_ScenePickerDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Add Scenes'),
+      titlePadding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
       content: SizedBox(
         width: double.maxFinite,
-        height: 300,
-        child: ListView.builder(
+        height: 360,
+        child: GridView.builder(
           itemCount: widget.scenes.length,
+          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 3,
+            crossAxisSpacing: 6,
+            mainAxisSpacing: 6,
+            childAspectRatio: 0.85,
+          ),
           itemBuilder: (ctx, i) {
             final scene = widget.scenes[i];
-            final checked = _selected.contains(scene);
-            return CheckboxListTile(
-              dense: true,
-              title: Text(widget.displayName(scene), style: const TextStyle(fontSize: 14)),
-              value: checked,
-              onChanged: (v) {
-                setState(() {
-                  if (v == true) {
-                    _selected.add(scene);
-                  } else {
-                    _selected.remove(scene);
-                  }
-                });
-              },
+            final selected = _selected.contains(scene);
+            return GestureDetector(
+              onTap: () => setState(() {
+                if (selected) {
+                  _selected.remove(scene);
+                } else {
+                  _selected.add(scene);
+                }
+              }),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: selected ? Colors.cyanAccent : Colors.white12,
+                    width: selected ? 2 : 1,
+                  ),
+                  color: selected
+                      ? Colors.cyan.withValues(alpha: 0.15)
+                      : Colors.grey[850],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Thumbnail
+                    Expanded(
+                      child: ClipRRect(
+                        borderRadius: const BorderRadius.vertical(top: Radius.circular(5)),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            Image.network(
+                              widget.thumbnailUrl(scene),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, __, ___) => Container(
+                                color: Colors.grey[800],
+                                child: const Icon(Icons.movie, size: 28, color: Colors.white24),
+                              ),
+                            ),
+                            if (selected)
+                              Container(
+                                color: Colors.cyan.withValues(alpha: 0.25),
+                                child: const Center(
+                                  child: Icon(Icons.check_circle,
+                                      color: Colors.cyanAccent, size: 28),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    // Name label
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                      child: Text(
+                        widget.displayName(scene),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 10,
+                          color: selected ? Colors.cyanAccent : Colors.white70,
+                          fontWeight:
+                              selected ? FontWeight.bold : FontWeight.normal,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             );
           },
         ),
       ),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        ElevatedButton(
-          onPressed: _selected.isEmpty ? null : () => Navigator.pop(context, _selected.toList()),
-          child: Text('Add ${_selected.length} scene${_selected.length == 1 ? '' : 's'}'),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        ElevatedButton.icon(
+          onPressed: _selected.isEmpty
+              ? null
+              : () => Navigator.pop(context, _selected.toList()),
+          icon: const Icon(Icons.add, size: 16),
+          label: Text(
+            _selected.isEmpty
+                ? 'Add'
+                : 'Add ${_selected.length} scene${_selected.length == 1 ? '' : 's'}',
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.cyan,
+            foregroundColor: Colors.black,
+            disabledBackgroundColor: Colors.grey[700],
+          ),
         ),
       ],
     );
