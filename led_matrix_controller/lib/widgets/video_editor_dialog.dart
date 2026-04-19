@@ -39,12 +39,9 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
   double _endTime = 0.0;
   double _currentPosition = 0.0;
 
-  // Crop controls
-  bool _isCropping = false;
+  // Crop controls — always shown, aspect-locked to 9:5
   Rect? _cropRect;
-  Offset? _cropStart;
-  Offset? _cropEnd;
-  bool _isMovingCrop = false;
+  int? _activeCorner; // 0=TL 1=TR 2=BL 3=BR, -1=moving, null=idle
   Offset? _dragOffset;
 
   // Color adjustment controls (applied at render time)
@@ -106,6 +103,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
         _isInitialized = true;
         _isLoading = false;
         _endTime = _controller.value.duration.inMilliseconds / 1000.0;
+        _cropRect = _initialCropRect(_controller.value.aspectRatio);
       });
 
       _controller.addListener(() {
@@ -226,56 +224,115 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     });
   }
 
-  void _handleCropPanStart(DragStartDetails details, Size viewSize) {
-    final localPosition = details.localPosition;
-    final normalized = _normalizePosition(localPosition, viewSize);
+  /// Returns the largest 9:5 rect (in normalized 0–1 coordinates) that fits
+  /// within the video frame, centred. This is the default crop region.
+  Rect _initialCropRect(double videoAspect) {
+    // In normalised space: width_norm / height_norm = (9/5) / videoAspect
+    final adjustedAspect = _ledAspectRatio / videoAspect;
+    if (adjustedAspect >= 1.0) {
+      // Target is wider than tall in normalised space → fill full width
+      final h = 1.0 / adjustedAspect;
+      return Rect.fromLTWH(0, (1.0 - h) / 2, 1.0, h);
+    } else {
+      // Target is taller than wide in normalised space → fill full height
+      final w = adjustedAspect;
+      return Rect.fromLTWH((1.0 - w) / 2, 0, w, 1.0);
+    }
+  }
 
-    // If tapping inside existing crop, start moving it
-    if (_cropRect != null && _cropRect!.contains(normalized)) {
-      _isMovingCrop = true;
-      _dragOffset = normalized - _cropRect!.topLeft;
-      return;
+  void _handleCropPanStart(DragStartDetails details, Size viewSize) {
+    if (_cropRect == null) return;
+    final touch = details.localPosition;
+    const hitRadius = 28.0; // pixels
+
+    // Check each corner in pixel space
+    final corners = [
+      Offset(_cropRect!.left  * viewSize.width, _cropRect!.top    * viewSize.height), // 0 TL
+      Offset(_cropRect!.right * viewSize.width, _cropRect!.top    * viewSize.height), // 1 TR
+      Offset(_cropRect!.left  * viewSize.width, _cropRect!.bottom * viewSize.height), // 2 BL
+      Offset(_cropRect!.right * viewSize.width, _cropRect!.bottom * viewSize.height), // 3 BR
+    ];
+    for (int i = 0; i < corners.length; i++) {
+      if ((touch - corners[i]).distance <= hitRadius) {
+        setState(() => _activeCorner = i);
+        return;
+      }
     }
 
-    // Start a new crop selection
-    setState(() {
-      _isMovingCrop = false;
-      _cropStart = normalized;
-      _cropEnd = normalized;
-      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!, viewSize);
-    });
+    // If inside the crop rect, enter move mode
+    final norm = _normalizePosition(touch, viewSize);
+    if (_cropRect!.contains(norm)) {
+      setState(() {
+        _activeCorner = -1;
+        _dragOffset = norm - _cropRect!.topLeft;
+      });
+    }
   }
 
   void _handleCropPanUpdate(DragUpdateDetails details, Size viewSize) {
-    final localPosition = details.localPosition;
-    final normalized = _normalizePosition(localPosition, viewSize);
+    if (_cropRect == null || _activeCorner == null) return;
+    final norm = _normalizePosition(details.localPosition, viewSize);
+    final adjustedAspect = _ledAspectRatio / _controller.value.aspectRatio;
 
-    if (_isMovingCrop && _cropRect != null && _dragOffset != null) {
-      final width = _cropRect!.width;
-      final height = _cropRect!.height;
-      // Maintain size and aspect while moving
-      var newLeft = (normalized.dx - _dragOffset!.dx).clamp(0.0, 1.0 - width);
-      var newTop = (normalized.dy - _dragOffset!.dy).clamp(0.0, 1.0 - height);
-
-      setState(() {
-        _cropRect = Rect.fromLTWH(newLeft, newTop, width, height);
-      });
+    if (_activeCorner == -1) {
+      // Move the whole crop rect
+      if (_dragOffset == null) return;
+      final w = _cropRect!.width;
+      final h = _cropRect!.height;
+      final newLeft = (norm.dx - _dragOffset!.dx).clamp(0.0, 1.0 - w);
+      final newTop  = (norm.dy - _dragOffset!.dy).clamp(0.0, 1.0 - h);
+      setState(() => _cropRect = Rect.fromLTWH(newLeft, newTop, w, h));
       return;
     }
 
-    if (_cropStart == null) return;
+    // Corner drag — anchor is the opposite corner (stays fixed)
+    final Offset anchor;
+    switch (_activeCorner) {
+      case 0:  anchor = Offset(_cropRect!.right, _cropRect!.bottom); break; // TL → anchor BR
+      case 1:  anchor = Offset(_cropRect!.left,  _cropRect!.bottom); break; // TR → anchor BL
+      case 2:  anchor = Offset(_cropRect!.right, _cropRect!.top);    break; // BL → anchor TR
+      default: anchor = Offset(_cropRect!.left,  _cropRect!.top);    break; // BR → anchor TL
+    }
 
-    setState(() {
-      _cropEnd = normalized;
-      _cropRect = _buildAspectLockedRect(_cropStart!, _cropEnd!, viewSize);
-    });
+    // Least-squares projection onto the aspect-ratio diagonal to keep the
+    // cursor as close as possible to the dragged corner.
+    final dx = (norm.dx - anchor.dx).abs();
+    final dy = (norm.dy - anchor.dy).abs();
+    final t  = (adjustedAspect * dx + dy) / (adjustedAspect * adjustedAspect + 1.0);
+    var newW = (adjustedAspect * t).clamp(0.04, 1.0);
+    var newH = newW / adjustedAspect;
+
+    // Clamp to viewport while preserving aspect ratio
+    if (newW > 1.0) { newW = 1.0; newH = newW / adjustedAspect; }
+    if (newH > 1.0) { newH = 1.0; newW = newH * adjustedAspect; }
+
+    // Position based on which corner is dragged (anchor stays fixed)
+    final double left, top;
+    switch (_activeCorner) {
+      case 0: // TL → anchor BR
+        left = (anchor.dx - newW).clamp(0.0, 1.0 - newW);
+        top  = (anchor.dy - newH).clamp(0.0, 1.0 - newH);
+        break;
+      case 1: // TR → anchor BL
+        left = anchor.dx.clamp(0.0, 1.0 - newW);
+        top  = (anchor.dy - newH).clamp(0.0, 1.0 - newH);
+        break;
+      case 2: // BL → anchor TR
+        left = (anchor.dx - newW).clamp(0.0, 1.0 - newW);
+        top  = anchor.dy.clamp(0.0, 1.0 - newH);
+        break;
+      default: // BR → anchor TL
+        left = anchor.dx.clamp(0.0, 1.0 - newW);
+        top  = anchor.dy.clamp(0.0, 1.0 - newH);
+        break;
+    }
+
+    setState(() => _cropRect = Rect.fromLTWH(left, top, newW, newH));
   }
 
   void _handleCropPanEnd(DragEndDetails details) {
     setState(() {
-      _cropStart = null;
-      _cropEnd = null;
-      _isMovingCrop = false;
+      _activeCorner = null;
       _dragOffset = null;
     });
   }
@@ -288,84 +345,10 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     );
   }
 
-  Rect _buildAspectLockedRect(Offset start, Offset current, Size viewSize) {
-    // Adjust LED aspect ratio by viewport aspect ratio to account for normalized coordinates
-    final viewportAspectRatio = viewSize.width / viewSize.height;
-    final adjustedAspectRatio = _ledAspectRatio / viewportAspectRatio;
-    
-    // Create a rect that respects the LED aspect ratio and stays within bounds
-    final dx = current.dx - start.dx;
-    final dy = current.dy - start.dy;
-
-    final widthAbs = dx.abs();
-    final heightAbs = dy.abs();
-
-    // Decide size based on whichever dimension is more restrictive for the aspect ratio
-    double targetWidth;
-    double targetHeight;
-
-    if (widthAbs / (heightAbs == 0 ? 0.0001 : heightAbs) > adjustedAspectRatio) {
-      // Width is too large relative to height; limit by height
-      targetHeight = heightAbs;
-      targetWidth = targetHeight * adjustedAspectRatio;
-    } else {
-      // Height is too large; limit by width
-      targetWidth = widthAbs;
-      targetHeight = targetWidth / adjustedAspectRatio;
-    }
-
-    // Maintain aspect ratio when clamping to viewport bounds
-    // If width exceeds bounds, scale both down proportionally
-    if (targetWidth > 1.0) {
-      final scale = 1.0 / targetWidth;
-      targetWidth = 1.0;
-      targetHeight *= scale;
-    }
-    // If height exceeds bounds, scale both down proportionally
-    if (targetHeight > 1.0) {
-      final scale = 1.0 / targetHeight;
-      targetHeight = 1.0;
-      targetWidth *= scale;
-    }
-
-    // Ensure minimum size
-    const double minSize = 0.02; // 2% of the view
-    targetWidth = targetWidth.clamp(minSize, 1.0);
-    
-    // CRITICAL: Always recalculate height from width to maintain exact aspect ratio
-    // This prevents the independent height clamp from breaking the 90:50 ratio
-    targetHeight = targetWidth / adjustedAspectRatio;
-    targetHeight = targetHeight.clamp(minSize / adjustedAspectRatio, 1.0);
-    
-    // If height was clamped, adjust width to match
-    if (targetHeight < targetWidth / adjustedAspectRatio) {
-      targetWidth = targetHeight * adjustedAspectRatio;
-    }
-
-    // Determine orientation (drag direction)
-    final left = dx >= 0 ? start.dx : start.dx - targetWidth;
-    final top = dy >= 0 ? start.dy : start.dy - targetHeight;
-
-    // Clamp to viewport
-    final clampedLeft = left.clamp(0.0, 1.0 - targetWidth);
-    final clampedTop = top.clamp(0.0, 1.0 - targetHeight);
-
-    return Rect.fromLTWH(
-      clampedLeft,
-      clampedTop,
-      targetWidth,
-      targetHeight,
-    );
-  }
-
   Widget _buildCropOverlay(Size videoSize) {
-    if (!_isCropping) return const SizedBox.shrink();
-
     return CustomPaint(
       painter: CropOverlayPainter(
         cropRect: _cropRect,
-        cropStart: _cropStart,
-        cropEnd: _cropEnd,
         videoSize: videoSize,
       ),
       child: Container(),
@@ -451,14 +434,10 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                   builder: (context, constraints) {
                     final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
                     return GestureDetector(
-                      onTap: _isCropping ? null : _togglePlayPause,
-                      onPanStart: _isCropping
-                          ? (details) => _handleCropPanStart(details, viewSize)
-                          : null,
-                      onPanUpdate: _isCropping
-                          ? (details) => _handleCropPanUpdate(details, viewSize)
-                          : null,
-                      onPanEnd: _isCropping ? _handleCropPanEnd : null,
+                      onTap: _togglePlayPause,
+                      onPanStart: (details) => _handleCropPanStart(details, viewSize),
+                      onPanUpdate: (details) => _handleCropPanUpdate(details, viewSize),
+                      onPanEnd: _handleCropPanEnd,
                       child: ClipRRect(
                         borderRadius: BorderRadius.circular(8),
                         child: Stack(
@@ -470,9 +449,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                               Image.memory(_previewBytes!, fit: BoxFit.fill)
                             else
                               VideoPlayer(_controller),
-                            if (_isCropping) _buildCropOverlay(viewSize),
-                            if (_cropRect != null && !_isCropping)
-                              IgnorePointer(child: _buildCropOverlay(viewSize)),
+                            IgnorePointer(child: _buildCropOverlay(viewSize)),
                             // Loading spinner while generating preview
                             if (_previewMode && _generatingPreview)
                               Container(
@@ -484,7 +461,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                                   ),
                                 ),
                               ),
-                            if (!_previewMode && !_controller.value.isPlaying && !_isCropping)
+                            if (!_previewMode && !_controller.value.isPlaying)
                               Center(
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -833,53 +810,35 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
             const SizedBox(width: 8),
             const Text('Crop', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             const SizedBox(width: 8),
-            Text('90:50', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+            Text('9:5', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
             const Spacer(),
-            if (_cropRect != null && !_isCropping)
-              TextButton(
-                onPressed: () => setState(() => _cropRect = null),
-                style: TextButton.styleFrom(
-                  foregroundColor: Colors.redAccent,
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                child: const Text('Clear', style: TextStyle(fontSize: 12)),
-              ),
-            const SizedBox(width: 4),
-            FilledButton.tonalIcon(
-              onPressed: () {
-                setState(() {
-                  _isCropping = !_isCropping;
-                  if (!_isCropping) {
-                    _cropStart = null;
-                    _cropEnd = null;
-                  }
-                });
-              },
-              icon: Icon(_isCropping ? Icons.check : Icons.crop, size: 16),
-              label: Text(_isCropping ? 'Done' : 'Select', style: const TextStyle(fontSize: 12)),
-              style: FilledButton.styleFrom(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            TextButton(
+              onPressed: _isInitialized
+                  ? () => setState(
+                      () => _cropRect = _initialCropRect(_controller.value.aspectRatio))
+                  : null,
+              style: TextButton.styleFrom(
+                foregroundColor: cs.primary,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
                 minimumSize: Size.zero,
                 tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               ),
+              child: const Text('Reset', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
-        if (_isCropping)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              'Drag on the video to select the crop area. Tap and drag inside the selection to move it.',
-              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
-            ),
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(
+            'Drag corners to resize • Drag inside to reposition',
+            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
           ),
+        ),
         if (_cropRect != null)
           Padding(
-            padding: const EdgeInsets.only(top: 6),
+            padding: const EdgeInsets.only(top: 4),
             child: Text(
-              'Crop: ${(_cropRect!.width * 100).toStringAsFixed(0)}% × ${(_cropRect!.height * 100).toStringAsFixed(0)}%',
+              'Selection: ${(_cropRect!.width * 100).toStringAsFixed(0)}% × ${(_cropRect!.height * 100).toStringAsFixed(0)}% of frame',
               style: TextStyle(fontSize: 12, color: Colors.grey[400]),
             ),
           ),
@@ -898,78 +857,60 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
 
 class CropOverlayPainter extends CustomPainter {
   final Rect? cropRect;
-  final Offset? cropStart;
-  final Offset? cropEnd;
   final Size videoSize;
 
   CropOverlayPainter({
     required this.cropRect,
-    required this.cropStart,
-    required this.cropEnd,
     required this.videoSize,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = Colors.black.withValues(alpha: 0.5)
-      ..style = PaintingStyle.fill;
+    if (cropRect == null) return;
 
-    final cropPaint = Paint()
+    final rect = Rect.fromLTRB(
+      cropRect!.left  * size.width,
+      cropRect!.top   * size.height,
+      cropRect!.right * size.width,
+      cropRect!.bottom * size.height,
+    );
+
+    // Darken areas outside crop
+    final dimPaint = Paint()
+      ..color = Colors.black.withValues(alpha: 0.55)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, rect.top), dimPaint);
+    canvas.drawRect(Rect.fromLTRB(0, rect.top, rect.left, rect.bottom), dimPaint);
+    canvas.drawRect(Rect.fromLTRB(rect.right, rect.top, size.width, rect.bottom), dimPaint);
+    canvas.drawRect(Rect.fromLTRB(0, rect.bottom, size.width, size.height), dimPaint);
+
+    // Crop border
+    final borderPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.9)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.5;
+    canvas.drawRect(rect, borderPaint);
+
+    // L-shaped corner handles (easier to grab on touch screens)
+    final handlePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
-      ..strokeWidth = 2.0;
+      ..strokeWidth = 3.5
+      ..strokeCap = StrokeCap.round;
+    const arm = 18.0; // length of each handle arm in pixels
 
-    // Draw semi-transparent overlay
-    if (cropRect != null) {
-      final rect = Rect.fromLTRB(
-        cropRect!.left * size.width,
-        cropRect!.top * size.height,
-        cropRect!.right * size.width,
-        cropRect!.bottom * size.height,
-      );
-
-      // Draw darkened areas outside crop
-      canvas.drawRect(Rect.fromLTRB(0, 0, size.width, rect.top), paint);
-      canvas.drawRect(Rect.fromLTRB(0, rect.top, rect.left, rect.bottom), paint);
-      canvas.drawRect(Rect.fromLTRB(rect.right, rect.top, size.width, rect.bottom), paint);
-      canvas.drawRect(Rect.fromLTRB(0, rect.bottom, size.width, size.height), paint);
-
-      // Draw crop rectangle
-      canvas.drawRect(rect, cropPaint);
-
-      // Draw corner handles
-      final handleSize = 12.0;
-      final handlePaint = Paint()
-        ..color = Colors.white
-        ..style = PaintingStyle.fill;
-
-      canvas.drawCircle(Offset(rect.left, rect.top), handleSize / 2, handlePaint);
-      canvas.drawCircle(Offset(rect.right, rect.top), handleSize / 2, handlePaint);
-      canvas.drawCircle(Offset(rect.left, rect.bottom), handleSize / 2, handlePaint);
-      canvas.drawCircle(Offset(rect.right, rect.bottom), handleSize / 2, handlePaint);
+    void drawCorner(Offset corner, double hSign, double vSign) {
+      canvas.drawLine(corner, corner + Offset(arm * hSign, 0), handlePaint);
+      canvas.drawLine(corner, corner + Offset(0, arm * vSign), handlePaint);
     }
 
-    // Draw in-progress crop selection
-    if (cropStart != null && cropEnd != null) {
-      final tempRect = Rect.fromPoints(
-        Offset(cropStart!.dx * size.width, cropStart!.dy * size.height),
-        Offset(cropEnd!.dx * size.width, cropEnd!.dy * size.height),
-      );
-
-      final dashedPaint = Paint()
-        ..color = Colors.yellow
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.0;
-
-      canvas.drawRect(tempRect, dashedPaint);
-    }
+    drawCorner(rect.topLeft,     1,  1);
+    drawCorner(rect.topRight,   -1,  1);
+    drawCorner(rect.bottomLeft,  1, -1);
+    drawCorner(rect.bottomRight,-1, -1);
   }
 
   @override
-  bool shouldRepaint(CropOverlayPainter oldDelegate) {
-    return oldDelegate.cropRect != cropRect ||
-        oldDelegate.cropStart != cropStart ||
-        oldDelegate.cropEnd != cropEnd;
-  }
+  bool shouldRepaint(CropOverlayPainter oldDelegate) =>
+      oldDelegate.cropRect != cropRect;
 }
