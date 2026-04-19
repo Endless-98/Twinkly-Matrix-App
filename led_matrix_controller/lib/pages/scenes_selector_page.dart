@@ -891,13 +891,26 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             child: Row(
               children: [
                 Icon(
-                  _playlistsExpanded ? Icons.expand_less : Icons.expand_more,
+                  _playlistsExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
                   color: Colors.cyanAccent, size: 20,
                 ),
                 const SizedBox(width: 8),
-                const Text('Playlists', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                const Spacer(),
-                Text('${_playlists.length}', style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Playlists', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text(
+                        'Queue scenes to play in sequence',
+                        style: TextStyle(fontSize: 11, color: Colors.grey[500]),
+                      ),
+                    ],
+                  ),
+                ),
+                Text(
+                  '${_playlists.length} playlist${_playlists.length == 1 ? '' : 's'}',
+                  style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                ),
                 const SizedBox(width: 8),
                 SizedBox(
                   height: 28,
@@ -1059,11 +1072,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                         const Text('Brightness:'),
                         Expanded(
                           child: Slider(
-                            value: _brightness,
-                            min: 0.05,
-                            max: 3.0,
-                            divisions: 59,
-                            label: '${(_brightness * 100).round()}%',
+                            value: _brightness.clamp(0.1, 2.0),
+                            min: 0.1,
+                            max: 2.0,
+                            divisions: 19,
+                            label: '${_brightness.toStringAsFixed(1)}×',
                             onChanged: (value) {
                               setState(() {
                                 _brightness = value;
@@ -1073,7 +1086,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                             },
                           ),
                         ),
-                        Text('${(_brightness * 100).round()}%'),
+                        Text('${_brightness.toStringAsFixed(1)}×'),
                       ],
                     ),
                   ),

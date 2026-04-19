@@ -77,7 +77,8 @@ class _RenderedVideoTrimmerDialogState
       if (!mounted) return;
 
       await controller.setVolume(0.0); // No audio in rendered preview
-      await controller.seekTo(Duration.zero); // Show first frame on Android
+      await controller.seekTo(Duration.zero);
+      await controller.play(); // Force first frame render on Android (muted autoplay)
 
       // Use video duration if available (more accurate than metadata)
       final videoDur = controller.value.duration.inMilliseconds / 1000.0;
