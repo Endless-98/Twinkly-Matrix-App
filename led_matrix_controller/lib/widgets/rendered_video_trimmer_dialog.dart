@@ -4,53 +4,48 @@ import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 
 /// A robust frame viewer that maintains a single displayed image and never flickers.
-/// Uses a simple double-buffering approach: always show current image until next is ready.
 class _FrameBuffer {
   final Map<int, Uint8List> _cache = {};
   Uint8List? _currentDisplay;
   int _displayedIndex = -1;
-  
+
   static const int maxSize = 400;
-  
+
   Uint8List? get current => _currentDisplay;
   int get displayedIndex => _displayedIndex;
-  
-  /// Store a frame in cache. Returns true if this is a new frame.
+
   bool store(int index, Uint8List bytes) {
     final isNew = !_cache.containsKey(index);
     _cache[index] = bytes;
     return isNew;
   }
-  
-  /// Get the best frame to display for target index.
-  /// Updates internal display state. Never returns null if any frame exists.
+
   Uint8List? getBestFrame(int targetIndex) {
-    // Exact match - update display
     if (_cache.containsKey(targetIndex)) {
       _currentDisplay = _cache[targetIndex];
       _displayedIndex = targetIndex;
       return _currentDisplay;
     }
-    
-    // Find nearest frame (prefer behind for smooth forward playback)
+
     int? bestIndex;
     for (final idx in _cache.keys) {
       if (idx <= targetIndex) {
         if (bestIndex == null || idx > bestIndex) bestIndex = idx;
       }
     }
-    // If nothing behind, take anything
-    bestIndex ??= _cache.keys.isNotEmpty ? _cache.keys.reduce((a, b) => (a - targetIndex).abs() < (b - targetIndex).abs() ? a : b) : null;
-    
+    bestIndex ??= _cache.keys.isNotEmpty
+        ? _cache.keys.reduce(
+            (a, b) => (a - targetIndex).abs() < (b - targetIndex).abs() ? a : b)
+        : null;
+
     if (bestIndex != null) {
       _currentDisplay = _cache[bestIndex];
       _displayedIndex = bestIndex;
     }
-    
+
     return _currentDisplay;
   }
-  
-  /// Evict frames far from center to keep memory bounded.
+
   void evict(int center) {
     if (_cache.length <= maxSize) return;
     final sorted = _cache.keys.toList()
@@ -59,7 +54,7 @@ class _FrameBuffer {
       _cache.remove(sorted[i]);
     }
   }
-  
+
   bool has(int index) => _cache.containsKey(index);
   void clear() {
     _cache.clear();
@@ -71,7 +66,7 @@ class _FrameBuffer {
 class RenderedVideoTrimmerDialog extends StatefulWidget {
   final String videoPath; // Kept for compatibility, not used
   final String fileName;
-  final Function(double startTime, double endTime) onConfirm;
+  final Function(double startTime, double endTime, String outputName) onConfirm;
   final double? duration;
   final int? totalFrames;
   final double? fps;
@@ -104,10 +99,11 @@ class _RenderedVideoTrimmerDialogState
   double _startTime = 0.0;
   double _endTime = 0.0;
   double _currentPosition = 0.0;
-  
-  // Playback state
+
   bool _isPlaying = false;
   Timer? _playbackTimer;
+
+  late TextEditingController _outputNameController;
 
   @override
   void initState() {
@@ -116,39 +112,45 @@ class _RenderedVideoTrimmerDialogState
     _totalFrames = widget.totalFrames ?? 200;
     _fps = widget.fps ?? 20.0;
     _endTime = _duration;
+
+    final stem = widget.fileName.contains('.')
+        ? widget.fileName.substring(0, widget.fileName.lastIndexOf('.'))
+        : widget.fileName;
+    _outputNameController = TextEditingController(text: '${stem}_trim');
   }
 
   @override
   void dispose() {
     _playbackTimer?.cancel();
+    _outputNameController.dispose();
     super.dispose();
   }
 
   void _togglePlayPause() {
-    setState(() {
-      _isPlaying = !_isPlaying;
-    });
-
     if (_isPlaying) {
-      // Start playback timer
+      _playbackTimer?.cancel();
+      _playbackTimer = null;
+      setState(() => _isPlaying = false);
+    } else {
+      // Snap to start of trim region if outside
+      if (_currentPosition < _startTime || _currentPosition >= _endTime) {
+        setState(() => _currentPosition = _startTime);
+      }
+      setState(() => _isPlaying = true);
+
       final frameDuration = Duration(milliseconds: (1000 / _fps).round());
       _playbackTimer = Timer.periodic(frameDuration, (timer) {
         if (!mounted) {
           timer.cancel();
           return;
         }
-        
         setState(() {
           _currentPosition += 1 / _fps;
-          if (_currentPosition >= _duration) {
-            _currentPosition = 0.0; // Loop
+          if (_currentPosition >= _endTime) {
+            _currentPosition = _startTime; // Loop within trim region
           }
         });
       });
-    } else {
-      // Stop playback
-      _playbackTimer?.cancel();
-      _playbackTimer = null;
     }
   }
 
@@ -158,242 +160,393 @@ class _RenderedVideoTrimmerDialogState
     });
   }
 
+  void _updateTrimRange(RangeValues values) {
+    setState(() {
+      _startTime = values.start;
+      _endTime = values.end;
+      // Clamp current position to the new trim range
+      _currentPosition = _currentPosition.clamp(_startTime, _endTime);
+    });
+  }
+
+  String _displayName(String fileName) {
+    final nameOnly =
+        fileName.contains('/') ? fileName.split('/').last : fileName;
+    final stem = nameOnly.contains('.')
+        ? nameOnly.substring(0, nameOnly.lastIndexOf('.'))
+        : nameOnly;
+    return stem.replaceAll('_', ' ');
+  }
+
   @override
   Widget build(BuildContext context) {
+    final trimDuration = _endTime - _startTime;
+    final selectedFrames =
+        ((trimDuration * _fps).round()).clamp(0, _totalFrames);
+    final outputNameEmpty = _outputNameController.text.trim().isEmpty;
+    final canConfirm = !outputNameEmpty && trimDuration >= 1 / _fps;
+
     return Dialog(
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: Container(
-        width: MediaQuery.of(context).size.width * 0.9,
-        height: MediaQuery.of(context).size.height * 0.75,
+        width: MediaQuery.of(context).size.width * 0.92,
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.88,
+        ),
         padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    'Trim Rendered Video',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.fileName,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const Divider(),
-
-            // Video preview with frame playback
-            Expanded(
-              child: Column(
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Header
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  // Frame viewer with LED wall aspect ratio
-                  AspectRatio(
-                    aspectRatio: 90 / 50,
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Container(
-                        color: Colors.black,
-                        child: _RenderedVideoFrameViewer(
-                          fileName: widget.fileName,
-                          currentPosition: _currentPosition,
-                          fps: _fps,
-                          totalFrames: _totalFrames,
-                          apiHost: widget.apiHost,
-                          apiPort: widget.apiPort,
-                        ),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-
-                  // Video info
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[200],
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Column(
-                          children: [
-                            const Text('Frames', style: TextStyle(fontSize: 12)),
-                            Text('$_totalFrames', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
+                        Text(
+                          'Trim Video',
+                          style: Theme.of(context).textTheme.titleLarge,
                         ),
-                        Column(
-                          children: [
-                            const Text('FPS', style: TextStyle(fontSize: 12)),
-                            Text('${_fps.toStringAsFixed(1)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
-                        ),
-                        Column(
-                          children: [
-                            const Text('Duration', style: TextStyle(fontSize: 12)),
-                            Text(_formatDuration(_duration), style: const TextStyle(fontWeight: FontWeight.bold)),
-                          ],
+                        Text(
+                          _displayName(widget.fileName),
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.white54),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ],
                     ),
                   ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
                 ],
               ),
-            ),
+              const SizedBox(height: 8),
 
-            const SizedBox(height: 16),
-            const Divider(),
+              // Frame viewer
+              AspectRatio(
+                aspectRatio: 90 / 50,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    color: Colors.black,
+                    child: _RenderedVideoFrameViewer(
+                      fileName: widget.fileName,
+                      currentPosition: _currentPosition,
+                      fps: _fps,
+                      totalFrames: _totalFrames,
+                      apiHost: widget.apiHost,
+                      apiPort: widget.apiPort,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
 
-            // Timeline controls
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Current position display
-                Row(
+              // Video stats strip
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 6, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[900],
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
-                    IconButton(
-                      icon: Icon(_isPlaying ? Icons.pause : Icons.play_arrow),
+                    _statChip('Frames', '$_totalFrames'),
+                    _divider(),
+                    _statChip('FPS', _fps.toStringAsFixed(1)),
+                    _divider(),
+                    _statChip('Length', _formatDuration(_duration)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 10),
+
+              // Seek bar (full video)
+              Row(
+                children: [
+                  SizedBox(
+                    width: 40,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      icon: Icon(
+                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        color: Colors.cyanAccent,
+                      ),
                       onPressed: _togglePlayPause,
                     ),
-                    Expanded(
+                  ),
+                  Expanded(
+                    child: SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        activeTrackColor: Colors.cyanAccent.withAlpha(200),
+                        inactiveTrackColor: Colors.grey[700],
+                        thumbColor: Colors.cyanAccent,
+                        overlayColor: Colors.cyanAccent.withAlpha(50),
+                        thumbShape: const RoundSliderThumbShape(
+                            enabledThumbRadius: 6),
+                        trackHeight: 3,
+                      ),
                       child: Slider(
                         value: _currentPosition,
                         min: 0,
                         max: _duration,
-                        onChanged: (value) {
-                          _seekToPosition(value);
-                        },
+                        onChanged: _seekToPosition,
                       ),
                     ),
-                    Text(
-                      _formatDuration(_currentPosition),
-                      style: const TextStyle(fontSize: 12),
+                  ),
+                  SizedBox(
+                    width: 78,
+                    child: Text(
+                      '${_formatDuration(_currentPosition)} / ${_formatDuration(_duration)}',
+                      style: const TextStyle(
+                          fontSize: 10, color: Colors.white70),
+                      textAlign: TextAlign.right,
                     ),
-                  ],
+                  ),
+                ],
+              ),
+
+              // Trim region (RangeSlider)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[900],
+                  borderRadius: BorderRadius.circular(8),
+                  border:
+                      Border.all(color: Colors.cyanAccent.withAlpha(60)),
                 ),
-
-                const SizedBox(height: 8),
-
-                // Trim controls
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text('Trim Video',
-                        style: TextStyle(fontWeight: FontWeight.bold)),
-                    TextButton.icon(
-                      icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('Reset'),
-                      onPressed: () {
-                        setState(() {
-                          _startTime = 0.0;
-                          _endTime = _duration;
-                        });
-                      },
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Trim  •  ${_formatDuration(trimDuration)}  ($selectedFrames frames)',
+                          style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.cyanAccent),
+                        ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 0),
+                            minimumSize: Size.zero,
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          icon: const Icon(Icons.refresh, size: 14),
+                          label: const Text('Reset',
+                              style: TextStyle(fontSize: 12)),
+                          onPressed: () {
+                            setState(() {
+                              _startTime = 0.0;
+                              _endTime = _duration;
+                              _currentPosition =
+                                  _currentPosition.clamp(0.0, _duration);
+                            });
+                          },
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const SizedBox(width: 50, child: Text('Start:')),
-                    Expanded(
-                      child: Slider(
-                        value: _startTime,
+                    const SizedBox(height: 2),
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        activeTrackColor:
+                            Colors.cyanAccent.withAlpha(200),
+                        inactiveTrackColor: Colors.grey[700],
+                        thumbColor: Colors.cyanAccent,
+                        overlayColor: Colors.cyanAccent.withAlpha(50),
+                        rangeThumbShape:
+                            const RoundRangeSliderThumbShape(
+                                enabledThumbRadius: 8),
+                        trackHeight: 4,
+                      ),
+                      child: RangeSlider(
+                        values: RangeValues(_startTime, _endTime),
                         min: 0,
-                        max: _endTime,
-                        onChanged: (value) {
-                          setState(() {
-                            _startTime = value;
-                            if (_startTime >= _endTime) {
-                              _endTime = _startTime + 0.1;
-                            }
-                          });
-                        },
-                      ),
-                    ),
-                    SizedBox(
-                      width: 60,
-                      child: Text(_formatDuration(_startTime)),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    const SizedBox(width: 50, child: Text('End:')),
-                    Expanded(
-                      child: Slider(
-                        value: _endTime,
-                        min: _startTime,
                         max: _duration,
-                        onChanged: (value) {
-                          setState(() {
-                            _endTime = value;
-                          });
+                        onChanged: (values) {
+                          if (values.end - values.start < 1 / _fps) return;
+                          _updateTrimRange(values);
                         },
                       ),
                     ),
-                    SizedBox(
-                      width: 60,
-                      child: Text(_formatDuration(_endTime)),
+                    // Start / End tap-to-seek chips
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        GestureDetector(
+                          onTap: () => _seekToPosition(_startTime),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[850],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.skip_previous,
+                                    size: 14,
+                                    color: Colors.cyanAccent),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _formatDuration(_startTime),
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.cyanAccent,
+                                      fontWeight: FontWeight.w500),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () => _seekToPosition(_endTime),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.grey[850],
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _formatDuration(_endTime),
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.cyanAccent,
+                                      fontWeight: FontWeight.w500),
+                                ),
+                                const SizedBox(width: 4),
+                                const Icon(Icons.skip_next,
+                                    size: 14,
+                                    color: Colors.cyanAccent),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                Center(
-                  child: Text(
-                    'Duration: ${_formatDuration(_endTime - _startTime)}',
-                    style: const TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+
+              // Output name
+              TextField(
+                controller: _outputNameController,
+                style: const TextStyle(fontSize: 13),
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Save as',
+                  labelStyle: const TextStyle(color: Colors.white54),
+                  hintText: 'output_name',
+                  hintStyle: const TextStyle(color: Colors.white30),
+                  suffixText: '.npz',
+                  suffixStyle: const TextStyle(color: Colors.white38),
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  enabledBorder: OutlineInputBorder(
+                    borderSide: BorderSide(color: Colors.grey[700]!),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderSide:
+                        const BorderSide(color: Colors.cyanAccent),
+                    borderRadius: BorderRadius.circular(8),
                   ),
                 ),
-              ],
-            ),
+              ),
+              const SizedBox(height: 12),
 
-            const SizedBox(height: 16),
-
-            // Action buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    widget.onConfirm(_startTime, _endTime);
-                  },
-                  child: const Text('Trim'),
-                ),
-              ],
-            ),
-          ],
+              // Action buttons
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    child: const Text('Cancel'),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.cyanAccent,
+                      foregroundColor: Colors.black,
+                      disabledBackgroundColor: Colors.grey[700],
+                      disabledForegroundColor: Colors.white38,
+                    ),
+                    icon: const Icon(Icons.content_cut, size: 16),
+                    label:
+                        Text('Trim  ${_formatDuration(trimDuration)}'),
+                    onPressed: canConfirm
+                        ? () {
+                            final outputName =
+                                '${_outputNameController.text.trim()}.npz';
+                            Navigator.of(context).pop();
+                            widget.onConfirm(
+                                _startTime, _endTime, outputName);
+                          }
+                        : null,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 
+  Widget _statChip(String label, String value) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text(label,
+            style:
+                const TextStyle(fontSize: 11, color: Colors.white54)),
+        Text(value,
+            style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 13,
+                color: Colors.white)),
+      ],
+    );
+  }
+
+  Widget _divider() => Container(
+        height: 24,
+        width: 1,
+        color: Colors.grey[700],
+      );
+
   String _formatDuration(double seconds) {
-    final duration = Duration(milliseconds: (seconds * 1000).toInt());
-    final minutes = duration.inMinutes;
-    final secs = duration.inSeconds % 60;
-    final millis = (duration.inMilliseconds % 1000) ~/ 100;
-    return '${minutes.toString().padLeft(2, '0')}:${secs.toString().padLeft(2, '0')}.${millis}';
+    final d = Duration(milliseconds: (seconds * 1000).toInt());
+    final m = d.inMinutes;
+    final s = d.inSeconds % 60;
+    final ms = (d.inMilliseconds % 1000) ~/ 100;
+    return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.$ms';
   }
 }
 
-// Frame viewer widget that fetches and displays frames from the API
-/// Stateless wrapper for the frame viewer.
+// ── Frame viewer ──────────────────────────────────────────────────────────────
+
 class _RenderedVideoFrameViewer extends StatefulWidget {
   final String fileName;
   final double currentPosition;
@@ -412,20 +565,19 @@ class _RenderedVideoFrameViewer extends StatefulWidget {
   });
 
   @override
-  State<_RenderedVideoFrameViewer> createState() => _RenderedVideoFrameViewerState();
+  State<_RenderedVideoFrameViewer> createState() =>
+      _RenderedVideoFrameViewerState();
 }
 
-/// Robust frame viewer with simple double-buffer pattern.
-/// Key principle: ALWAYS show something. Never clear the display.
-class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
+class _RenderedVideoFrameViewerState
+    extends State<_RenderedVideoFrameViewer> {
   final _FrameBuffer _buffer = _FrameBuffer();
   final Set<int> _pending = {};
   final http.Client _client = http.Client();
-  
-  // Prefetch window
+
   static const int _prefetchAhead = 80;
   static const int _prefetchBehind = 20;
-  
+
   int _lastRequestedFrame = -1;
   bool _disposed = false;
 
@@ -450,12 +602,15 @@ class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
     _ensureFramesLoaded();
   }
 
-  int get _targetFrame => (widget.currentPosition * widget.fps).floor().clamp(0, widget.totalFrames - 1);
+  int get _targetFrame =>
+      (widget.currentPosition * widget.fps)
+          .floor()
+          .clamp(0, widget.totalFrames - 1);
 
   String _frameUrl(int idx) =>
-      'http://${widget.apiHost}:${widget.apiPort}/api/videos/${Uri.encodeComponent(widget.fileName)}/frame/$idx';
+      'http://${widget.apiHost}:${widget.apiPort}/api/videos/'
+      '${Uri.encodeComponent(widget.fileName)}/frame/$idx';
 
-  /// Initial prefetch of first N frames for instant playback start.
   void _prefetchInitial() {
     const batchSize = 60;
     for (int i = 0; i < batchSize && i < widget.totalFrames; i++) {
@@ -464,32 +619,26 @@ class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
     _ensureFramesLoaded();
   }
 
-  /// Ensure current frame and surrounding window are being fetched.
   void _ensureFramesLoaded() {
     final target = _targetFrame;
     if (target == _lastRequestedFrame) return;
     _lastRequestedFrame = target;
 
-    // Fetch target first (highest priority)
     _fetchFrame(target);
 
-    // Prefetch ahead (more important for forward playback)
     for (int i = 1; i <= _prefetchAhead; i++) {
       final idx = target + i;
       if (idx < widget.totalFrames) _fetchFrame(idx);
     }
 
-    // Prefetch behind (for scrubbing backwards)
     for (int i = 1; i <= _prefetchBehind; i++) {
       final idx = target - i;
       if (idx >= 0) _fetchFrame(idx);
     }
 
-    // Evict distant frames to bound memory
     _buffer.evict(target);
   }
 
-  /// Fetch a single frame. Fires and forgets; updates UI only when ready.
   Future<void> _fetchFrame(int idx) async {
     if (_buffer.has(idx) || _pending.contains(idx)) return;
     _pending.add(idx);
@@ -497,12 +646,10 @@ class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
     try {
       final response = await _client.get(Uri.parse(_frameUrl(idx)));
       if (_disposed) return;
-      
+
       if (response.statusCode == 200) {
         _buffer.store(idx, response.bodyBytes);
-        
-        // Only rebuild if this frame is what we're currently trying to show
-        // OR if we have nothing displayed yet
+
         if (mounted && (idx == _targetFrame || _buffer.current == null)) {
           setState(() {});
         }
@@ -521,14 +668,12 @@ class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
 
     Widget content;
     if (bytes != null) {
-      // gaplessPlayback is critical: keeps old image until new one decodes
       content = Image.memory(
         bytes,
         fit: BoxFit.contain,
         gaplessPlayback: true,
       );
     } else {
-      // Only show loading spinner before first frame arrives
       content = const Center(
         child: CircularProgressIndicator(color: Colors.white54),
       );
@@ -541,7 +686,8 @@ class _RenderedVideoFrameViewerState extends State<_RenderedVideoFrameViewer> {
           bottom: 8,
           right: 8,
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
               color: Colors.black54,
               borderRadius: BorderRadius.circular(4),

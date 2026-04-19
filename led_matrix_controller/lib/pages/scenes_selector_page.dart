@@ -357,9 +357,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             totalFrames: totalFrames,
             fps: fps,
             apiHost: fppIp,
-            onConfirm: (startTime, endTime) {
-              Navigator.of(context).pop(true);
-              _performTrim(videoName, startTime, endTime);
+            onConfirm: (startTime, endTime, outputName) {
+              _performTrim(videoName, startTime, endTime, outputName);
             },
           ),
         );
@@ -380,17 +379,12 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     String videoName,
     double startTime,
     double endTime,
+    String outputName,
   ) async {
     final fppIp = ref.read(fppIpProvider);
     final apiService = ApiService(host: fppIp);
-    
-    try {
-      // Extract base name without extension
-      final baseName = videoName.contains('.')
-          ? videoName.substring(0, videoName.lastIndexOf('.'))
-          : videoName;
-      final outputName = '${baseName}_trim.npz';
 
+    try {
       _pendingHighlight = outputName;
 
       await apiService.trimRenderedVideo(
