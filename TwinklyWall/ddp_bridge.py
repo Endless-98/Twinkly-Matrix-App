@@ -22,6 +22,12 @@ except Exception:
 
 from dotmatrix.fpp_output import FPPOutput
 
+try:
+    from frame_buffer import get_background, touch_ddp
+    HAS_FRAME_BUFFER = True
+except ImportError:
+    HAS_FRAME_BUFFER = False
+
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -319,6 +325,20 @@ class DdpBridge:
                         arr = np.frombuffer(
                             latest.buf, dtype=np.uint8
                         ).reshape(self.height, self.width, 3)
+
+                        # Composite bubble over scene background:
+                        # DDP frame has non-zero pixels in the bubble area
+                        # and zeros (black) outside.  Replace zeros with the
+                        # current scene (video/tetris/idle) so the bubble
+                        # overlays instead of competing.
+                        if HAS_FRAME_BUFFER:
+                            bg = get_background()
+                            mask = np.any(arr != 0, axis=2)
+                            composited = bg.copy()
+                            composited[mask] = arr[mask]
+                            arr = composited
+                            touch_ddp()
+
                         write_ms = self.out.write(arr)
                     else:
                         view = [

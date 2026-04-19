@@ -1,9 +1,11 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/ddp_sender.dart';
 import '../services/command_sender.dart';
 
 enum ActiveMode { games, mirroring, scenes }
 enum CaptureMode { desktop, appWindow, region }
+enum CastMode { fullScreen, bubble }
 
 // FPP IP Address Provider
 final fppIpProvider = StateProvider<String>((ref) {
@@ -20,6 +22,11 @@ final activeModeProvider = StateProvider<ActiveMode>((ref) {
   return ActiveMode.games;
 });
 
+// Cast Mode Provider (full screen or bubble overlay)
+final castModeProvider = StateProvider<CastMode>((ref) {
+  return CastMode.fullScreen;
+});
+
 // Capture Mode Provider (for screen mirroring)
 final captureModeProvider = StateProvider<CaptureMode>((ref) {
   return CaptureMode.desktop;
@@ -33,6 +40,23 @@ final selectedWindowProvider = StateProvider<String?>((ref) {
 // Capture Region Provider (for region capture: x, y, width, height)
 final captureRegionProvider = StateProvider<Map<String, int>>((ref) {
   return {'x': 0, 'y': 0, 'width': 800, 'height': 600};
+});
+
+// Bubble position on the LED curtain (in LED pixel coordinates, 0-89 x, 0-49 y)
+final bubblePositionProvider = StateProvider<Offset>((ref) {
+  return const Offset(22.5, 12.5); // centered for default 45×25 bubble
+});
+
+// Bubble size on the LED curtain (width x height in LED pixels)
+// Default: half the curtain at 90:50 = 1.8:1 aspect ratio
+final bubbleSizeProvider = StateProvider<Size>((ref) {
+  return const Size(45.0, 25.0);
+});
+
+// Screen crop region for bubble mode (portion of phone screen to capture)
+// Values are 0.0-1.0 normalized fractions of screen dimensions
+final screenCropProvider = StateProvider<Rect>((ref) {
+  return const Rect.fromLTWH(0.0, 0.0, 1.0, 1.0); // default: full screen
 });
 
 // DDP Sender Provider

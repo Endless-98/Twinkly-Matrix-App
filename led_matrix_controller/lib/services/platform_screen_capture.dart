@@ -107,6 +107,10 @@ class PlatformScreenCaptureService {
   static int _regionWidth = 800;
   static int _regionHeight = 600;
   
+  // Custom capture resolution for bubble mode (Android only)
+  static int? _customCaptureWidth;
+  static int? _customCaptureHeight;
+  
   /// Get platform-specific capabilities
   static ScreenCaptureCapabilities getCapabilities() {
     if (Platform.isAndroid) {
@@ -334,11 +338,17 @@ class PlatformScreenCaptureService {
   }
 
   /// Start screen capture
-  static Future<bool> startCapture() async {
+  /// [captureWidth] and [captureHeight] override the default capture resolution
+  /// (used for bubble mode on Android where higher-res capture is needed for cropping).
+  static Future<bool> startCapture({int? captureWidth, int? captureHeight}) async {
     if (_isCapturing) {
       debugPrint('[CAPTURE] Already capturing');
       return true;
     }
+
+    // Store custom capture dimensions for Android
+    _customCaptureWidth = captureWidth;
+    _customCaptureHeight = captureHeight;
 
     try {
       if (Platform.isAndroid) {
@@ -417,11 +427,36 @@ class PlatformScreenCaptureService {
   }
 
   /// Capture a single frame
+  /// Get native capture diagnostic info (Android only)
+  static Future<Map<String, dynamic>?> captureDebugInfo() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      final result = await _channel.invokeMethod('captureDebugInfo');
+      if (result is Map) {
+        return Map<String, dynamic>.from(result);
+      }
+      return null;
+    } catch (e) {
+      return {'error': e.toString()};
+    }
+  }
+
+  /// On Android with custom capture dimensions, returns raw RGB at capture resolution.
+  /// Otherwise returns a processed 90x50 frame.
   static Future<Uint8List?> captureFrame() async {
     try {
       if (Platform.isAndroid) {
         final result = await _channel.invokeMethod('captureScreenshot');
-        return result is Uint8List ? result : null;
+        if (result is! Uint8List) {
+          // Log the type for diagnostics
+          logger.warn('captureFrame: platform returned ${result.runtimeType} (expected Uint8List)', module: 'CAPTURE');
+          return null;
+        }
+        // If using custom capture dimensions (bubble mode), return raw frame as-is
+        if (_customCaptureWidth != null && _customCaptureHeight != null) {
+          return result;
+        }
+        return result;
       }
       
       if (Platform.isWindows) {
@@ -443,12 +478,27 @@ class PlatformScreenCaptureService {
   
   static Future<bool> _startAndroidCapture() async {
     try {
-      final result = await _channel.invokeMethod<bool>('startScreenCapture');
+      final args = <String, dynamic>{};
+      if (_customCaptureWidth != null) args['width'] = _customCaptureWidth;
+      if (_customCaptureHeight != null) args['height'] = _customCaptureHeight;
+      logger.info('Android: invoking startScreenCapture with args=$args', module: 'CAPTURE');
+      final result = await _channel.invokeMethod<bool>('startScreenCapture', args);
+      logger.info('Android: startScreenCapture returned $result', module: 'CAPTURE');
       _isCapturing = result ?? false;
       _isInitialized = _isCapturing;
+      if (_isCapturing) {
+        logger.success('Android capture active (${_customCaptureWidth ?? 90}x${_customCaptureHeight ?? 50})', module: 'CAPTURE');
+      } else {
+        logger.error('Android capture failed: platform returned false', module: 'CAPTURE');
+      }
       return _isCapturing;
     } on PlatformException catch (e) {
+      logger.error('Android capture PlatformException: code=${e.code}, message=${e.message}, details=${e.details}', module: 'CAPTURE');
       debugPrint('[ANDROID] Capture failed: ${e.message}');
+      return false;
+    } catch (e, stackTrace) {
+      logger.error('Android capture unexpected error: $e', module: 'CAPTURE');
+      logger.error('Stack: ${stackTrace.toString().split('\n').take(5).join('\n')}', module: 'CAPTURE');
       return false;
     }
   }

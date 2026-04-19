@@ -216,6 +216,11 @@ def _start_idle():
         idle_animation.stop()
         idle_animation = None
     try:
+        from frame_buffer import clear_background
+        clear_background()
+    except ImportError:
+        pass
+    try:
         m = current_matrix
         if m and getattr(m, 'fpp', None):
             m.fpp.set_dark()

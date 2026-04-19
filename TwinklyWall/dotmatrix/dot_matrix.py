@@ -20,6 +20,18 @@ from .fpp_output import FPPOutput
 import os
 import sys
 
+# Lazy import to avoid circular dependency; resolved at first use.
+_frame_buffer = None
+def _get_frame_buffer():
+    global _frame_buffer
+    if _frame_buffer is None:
+        try:
+            import frame_buffer as _fb
+            _frame_buffer = _fb
+        except ImportError:
+            pass
+    return _frame_buffer
+
 
 class DotMatrix:
     """
@@ -192,9 +204,17 @@ class DotMatrix:
         self._visualize()
         self.monitor.record('visualization', (time.perf_counter() - t4) * 1000)
         
+        # Publish frame to shared buffer (for DDP overlay compositing)
+        fb = _get_frame_buffer()
+        if fb and HAS_NUMPY and isinstance(self.dot_colors, np.ndarray):
+            fb.set_background(self.dot_colors)
+
         # Write to output (FPP mmap or DDP network)
+        # When DDP bridge is actively casting, it owns mmap writes (composites
+        # the bubble over this scene frame).  Skip our write to avoid flicker.
         t5 = time.perf_counter()
-        if self.fpp:
+        ddp_active = fb.is_ddp_active() if fb else False
+        if self.fpp and not ddp_active:
             # Local FPP memory-mapped output
             fpp_time = self.fpp.write(self.dot_colors)
             self.monitor.record('fpp_write', fpp_time)
@@ -247,8 +267,14 @@ class DotMatrix:
         self._visualize()
         self.monitor.record('visualization', (time.perf_counter() - t_vis) * 1000)
 
-        # Write to FPP if enabled
-        if self.fpp:
+        # Publish frame to shared buffer (for DDP overlay compositing)
+        fb = _get_frame_buffer()
+        if fb and HAS_NUMPY and isinstance(self.dot_colors, np.ndarray):
+            fb.set_background(self.dot_colors)
+
+        # Write to FPP if enabled (skip when DDP bridge owns mmap writes)
+        ddp_active = fb.is_ddp_active() if fb else False
+        if self.fpp and not ddp_active:
             fpp_time = self.fpp.write(self.dot_colors)
             self.monitor.record('fpp_write', fpp_time)
 

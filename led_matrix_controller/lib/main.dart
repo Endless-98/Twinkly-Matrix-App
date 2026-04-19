@@ -1,11 +1,24 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/games_page.dart';
-import 'pages/mirroring_page.dart';
+import 'pages/cast_bubble_page.dart';
 import 'pages/scenes_selector_page.dart';
 import 'providers/app_state.dart';
+import 'services/app_logger.dart';
 
 void main() {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Catch unhandled Flutter errors
+  FlutterError.onError = (details) {
+    logger.error('Flutter error: ${details.exceptionAsString()}', module: 'CRASH');
+    if (details.stack != null) {
+      logger.error('Stack: ${details.stack.toString().split('\n').take(10).join('\n')}', module: 'CRASH');
+    }
+  };
+
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -22,11 +35,151 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class HomePage extends ConsumerWidget {
+class HomePage extends ConsumerStatefulWidget {
   const HomePage({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _initSession();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    logger.endSession();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.paused || state == AppLifecycleState.detached) {
+      logger.endSession();
+    } else if (state == AppLifecycleState.resumed) {
+      logger.startSession();
+    }
+  }
+
+  Future<void> _initSession() async {
+    // Check for previous crash
+    final crashData = await AppLogger.checkForCrash();
+    if (crashData != null && mounted) {
+      // Show crash report dialog
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showCrashReport(crashData);
+      });
+    }
+    await AppLogger.clearCrashData();
+    await logger.startSession();
+  }
+
+  void _showCrashReport(Map<String, String> crashData) {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final logText = crashData['log'] ?? '';
+        final infoText = crashData['info'] ?? '';
+        final sessionStart = crashData['sessionStart'] ?? 'unknown';
+
+        final fullReport = StringBuffer();
+        fullReport.writeln('=== TwinklyWall Crash Report ===');
+        fullReport.writeln('Session started: $sessionStart');
+        fullReport.writeln('App did not exit cleanly (likely crashed or was killed).');
+        fullReport.writeln('');
+        fullReport.writeln('--- Summary ---');
+        fullReport.writeln(infoText);
+        fullReport.writeln('');
+        fullReport.writeln('--- Full Log ---');
+        fullReport.writeln(logText);
+
+        return AlertDialog(
+          title: const Row(
+            children: [
+              Icon(Icons.warning_amber_rounded, color: Colors.orange, size: 28),
+              SizedBox(width: 12),
+              Expanded(child: Text('Previous Session Crashed')),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'The app did not exit cleanly last time. '
+                  'Here is the log from that session.',
+                  style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+                ),
+                const SizedBox(height: 8),
+                if (infoText.isNotEmpty) ...[
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
+                    ),
+                    child: Text(
+                      infoText,
+                      style: const TextStyle(fontSize: 11, fontFamily: 'monospace'),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                const Text('Full Log:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.black,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: SingleChildScrollView(
+                      child: SelectableText(
+                        logText,
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontFamily: 'monospace',
+                          color: Colors.white70,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: fullReport.toString()));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Crash report copied to clipboard')),
+                );
+              },
+              icon: const Icon(Icons.copy, size: 18),
+              label: const Text('Copy to Clipboard'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Dismiss'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final fppIp = ref.watch(fppIpProvider);
 
     return Scaffold(
@@ -127,12 +280,12 @@ class HomePage extends ConsumerWidget {
                       ),
                       const SizedBox(height: 16),
                       _ModeButton(
-                        label: 'Mirroring',
-                        icon: Icons.screen_share,
+                        label: 'Cast',
+                        icon: Icons.cast,
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
-                              builder: (context) => const MirroringPage(),
+                              builder: (context) => const CastBubblePage(),
                             ),
                           );
                         },
