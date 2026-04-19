@@ -1,8 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:video_player/video_player.dart';
+import 'package:video_thumbnail/video_thumbnail.dart';
+import 'package:image/image.dart' as img;
 import 'dart:io';
 import 'dart:ui';
 import 'dart:math' as math;
+import 'dart:async';
+import 'dart:typed_data';
 
 class VideoEditorDialog extends StatefulWidget {
   final String videoPath;
@@ -46,6 +51,12 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
   double _brightness = 0.0;  // -100 to +100
   double _contrast = 1.0;    // 0.5 to 2.0
   double _hue = 0.0;         // -180 to +180 degrees
+
+  // Color preview state
+  bool _previewMode = false;
+  Uint8List? _previewBytes;
+  bool _generatingPreview = false;
+  Timer? _previewDebounce;
 
   /// Builds a combined ColorFilter matrix for live preview.
   /// Combines brightness offset, contrast scaling, and hue rotation in RGB space.
@@ -117,12 +128,92 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
 
   @override
   void dispose() {
+    _previewDebounce?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
+  /// Schedules a preview frame regeneration after a short debounce.
+  void _schedulePreviewUpdate() {
+    if (!_previewMode) return;
+    _previewDebounce?.cancel();
+    _previewDebounce = Timer(const Duration(milliseconds: 350), _generatePreview);
+  }
+
+  /// Extracts the current frame from the video and applies the color matrix,
+  /// then stores the result in [_previewBytes] for display.
+  Future<void> _generatePreview() async {
+    if (!_isInitialized || !mounted) return;
+    setState(() => _generatingPreview = true);
+    try {
+      final frameBytes = await VideoThumbnail.thumbnailData(
+        video: widget.videoPath,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 540,
+        quality: 88,
+        timeMs: (_currentPosition * 1000).toInt(),
+      );
+      if (frameBytes == null || !mounted) {
+        if (mounted) setState(() => _generatingPreview = false);
+        return;
+      }
+      final adjusted = await compute(_applyColorAdjustments, {
+        'bytes': frameBytes,
+        'brightness': _brightness,
+        'contrast': _contrast,
+        'hue': _hue,
+      });
+      if (mounted) setState(() { _previewBytes = adjusted; _generatingPreview = false; });
+    } catch (_) {
+      if (mounted) setState(() => _generatingPreview = false);
+    }
+  }
+
+  /// Runs in an isolate. Applies the same RGB color matrix used by the Python
+  /// renderer so the preview matches the rendered output exactly.
+  static Uint8List _applyColorAdjustments(Map<String, dynamic> args) {
+    final bytes = args['bytes'] as Uint8List;
+    final c = args['contrast'] as double;
+    final b = args['brightness'] as double;
+    final hueDeg = args['hue'] as double;
+
+    final src = img.decodeImage(bytes);
+    if (src == null) return bytes;
+
+    final hRad = hueDeg * math.pi / 180.0;
+    final cosH = math.cos(hRad);
+    final sinH = math.sin(hRad);
+    final sq3 = 1.0 / math.sqrt(3.0);
+
+    final h00 = cosH + (1 - cosH) / 3;
+    final h01 = (1 - cosH) / 3 - sinH * sq3;
+    final h02 = (1 - cosH) / 3 + sinH * sq3;
+    final h10 = (1 - cosH) / 3 + sinH * sq3;
+    final h11 = cosH + (1 - cosH) / 3;
+    final h12 = (1 - cosH) / 3 - sinH * sq3;
+    final h20 = (1 - cosH) / 3 - sinH * sq3;
+    final h21 = (1 - cosH) / 3 + sinH * sq3;
+    final h22 = cosH + (1 - cosH) / 3;
+    final offset = 128.0 * (1 - c) + b;
+
+    final dst = img.Image(width: src.width, height: src.height, numChannels: 3);
+    for (final pixel in src) {
+      final r = pixel.r.toDouble();
+      final g = pixel.g.toDouble();
+      final bv = pixel.b.toDouble();
+      dst.setPixelRgb(
+        pixel.x, pixel.y,
+        (c * h00 * r + c * h01 * g + c * h02 * bv + offset).clamp(0.0, 255.0),
+        (c * h10 * r + c * h11 * g + c * h12 * bv + offset).clamp(0.0, 255.0),
+        (c * h20 * r + c * h21 * g + c * h22 * bv + offset).clamp(0.0, 255.0),
+      );
+    }
+    return Uint8List.fromList(img.encodeJpg(dst, quality: 88));
+  }
+
   void _seekToPosition(double seconds) {
     _controller.seekTo(Duration(milliseconds: (seconds * 1000).toInt()));
+    _schedulePreviewUpdate();
   }
 
   void _togglePlayPause() {
@@ -373,11 +464,27 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            VideoPlayer(_controller),
+                            // Show color-adjusted still frame in preview mode,
+                            // otherwise show the live video player.
+                            if (_previewMode && _previewBytes != null)
+                              Image.memory(_previewBytes!, fit: BoxFit.fill)
+                            else
+                              VideoPlayer(_controller),
                             if (_isCropping) _buildCropOverlay(viewSize),
                             if (_cropRect != null && !_isCropping)
                               IgnorePointer(child: _buildCropOverlay(viewSize)),
-                            if (!_controller.value.isPlaying && !_isCropping)
+                            // Loading spinner while generating preview
+                            if (_previewMode && _generatingPreview)
+                              Container(
+                                color: Colors.black54,
+                                child: const Center(
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white70,
+                                  ),
+                                ),
+                              ),
+                            if (!_previewMode && !_controller.value.isPlaying && !_isCropping)
                               Center(
                                 child: Container(
                                   decoration: BoxDecoration(
@@ -576,13 +683,49 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
             const Spacer(),
             if (hasAdj)
               GestureDetector(
-                onTap: () => setState(() {
-                  _brightness = 0.0;
-                  _contrast = 1.0;
-                  _hue = 0.0;
-                }),
-                child: Text('Reset', style: TextStyle(fontSize: 12, color: cs.primary)),
+                onTap: () {
+                  setState(() {
+                    _brightness = 0.0;
+                    _contrast = 1.0;
+                    _hue = 0.0;
+                  });
+                  _schedulePreviewUpdate();
+                },
+                child: Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Text('Reset', style: TextStyle(fontSize: 12, color: cs.primary)),
+                ),
               ),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                final entering = !_previewMode;
+                setState(() {
+                  _previewMode = entering;
+                  if (!entering) _previewBytes = null;
+                });
+                if (entering) {
+                  _controller.pause();
+                  _generatePreview();
+                }
+              },
+              icon: Icon(
+                _previewMode ? Icons.videocam_rounded : Icons.preview_rounded,
+                size: 15,
+              ),
+              label: Text(
+                _previewMode ? 'Live' : 'Preview',
+                style: const TextStyle(fontSize: 12),
+              ),
+              style: FilledButton.styleFrom(
+                backgroundColor: _previewMode
+                    ? cs.primary.withValues(alpha: 0.25)
+                    : null,
+                foregroundColor: _previewMode ? cs.primary : null,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: 12),
@@ -595,7 +738,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
           max: 100,
           defaultValue: 0,
           displayText: _brightness == 0 ? '0' : '${_brightness > 0 ? "+" : ""}${_brightness.toStringAsFixed(0)}',
-          onChanged: (v) => setState(() => _brightness = v),
+          onChanged: (v) { setState(() => _brightness = v); _schedulePreviewUpdate(); },
           cs: cs,
         ),
         const SizedBox(height: 8),
@@ -608,7 +751,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
           max: 2.0,
           defaultValue: 1.0,
           displayText: '${_contrast.toStringAsFixed(2)}×',
-          onChanged: (v) => setState(() => _contrast = v),
+          onChanged: (v) { setState(() => _contrast = v); _schedulePreviewUpdate(); },
           cs: cs,
         ),
         const SizedBox(height: 8),
@@ -621,7 +764,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
           max: 180,
           defaultValue: 0,
           displayText: _hue == 0 ? '0°' : '${_hue > 0 ? "+" : ""}${_hue.toStringAsFixed(0)}°',
-          onChanged: (v) => setState(() => _hue = v),
+          onChanged: (v) { setState(() => _hue = v); _schedulePreviewUpdate(); },
           cs: cs,
         ),
       ],
