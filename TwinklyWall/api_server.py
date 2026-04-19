@@ -833,7 +833,8 @@ def upload_video():
         return jsonify({'error': str(e)}), 500
 
 
-def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None, output_name=None):
+def render_video_thread(video_path, render_fps, start_time=None, end_time=None, crop_rect=None, output_name=None,
+                        brightness=0.0, contrast=1.0, hue=0.0):
     """Thread function to render an uploaded video."""
     filename = Path(video_path).name
     # Use output_name for progress tracking if provided, otherwise use input filename
@@ -850,6 +851,8 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
             log(f"  Crop: {crop_rect}", module="API")
         if output_name:
             log(f"  Output name: {output_name}", module="API")
+        if brightness != 0.0 or contrast != 1.0 or hue != 0.0:
+            log(f"  Color: brightness={brightness:+.0f}, contrast={contrast:.2f}x, hue={hue:+.0f}°", module="API")
         
         # Define progress callback with frame counts for UI display
         def progress_callback(current_frame, total_frames):
@@ -866,7 +869,10 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
             end_time=end_time,
             crop_rect=crop_rect,
             output_name=output_name,
-            progress_callback=progress_callback
+            progress_callback=progress_callback,
+            brightness=brightness,
+            contrast=contrast,
+            hue=hue,
         )
         
         if output_path:
@@ -911,6 +917,9 @@ def render_uploaded_video():
         start_time = data.get('start_time')
         end_time = data.get('end_time')
         output_name = data.get('output_name')
+        brightness = float(data.get('brightness', 0.0))
+        contrast = float(data.get('contrast', 1.0))
+        hue = float(data.get('hue', 0.0))
         
         log(f"Render request: filename={filename}, output_name={output_name}, fps={render_fps}", module="API")
         
@@ -953,6 +962,7 @@ def render_uploaded_video():
         render_thread = threading.Thread(
             target=render_video_thread,
             args=(str(video_path), render_fps, start_time, end_time, crop_rect, output_name),
+            kwargs={'brightness': brightness, 'contrast': contrast, 'hue': hue},
             daemon=True
         )
         render_thread.start()

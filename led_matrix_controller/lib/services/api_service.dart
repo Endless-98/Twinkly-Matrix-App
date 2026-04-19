@@ -339,6 +339,9 @@ class ApiService {
     double? endTime,
     Rect? cropRect,
     String? outputName,
+    double brightness = 0.0,
+    double contrast = 1.0,
+    double hue = 0.0,
   }) async {
     try {
       final body = {
@@ -353,6 +356,9 @@ class ApiService {
           'crop_bottom': cropRect.bottom,
         },
         if (outputName != null) 'output_name': outputName,
+        if (brightness != 0.0) 'brightness': brightness,
+        if (contrast != 1.0) 'contrast': contrast,
+        if (hue != 0.0) 'hue': hue,
       };
 
       final response = await http

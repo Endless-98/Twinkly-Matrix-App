@@ -536,8 +536,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           builder: (context) => VideoEditorDialog(
             videoPath: filePath,
             fileName: fileName,
-            onConfirm: (startTime, endTime, cropRect) {
-              _showUploadDialog(filePath, fileName, startTime, endTime, cropRect);
+            onConfirm: (startTime, endTime, cropRect, brightness, contrast, hue) {
+              _showUploadDialog(filePath, fileName, startTime, endTime, cropRect,
+                  brightness: brightness, contrast: contrast, hue: hue);
             },
           ),
         );
@@ -683,8 +684,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             builder: (context) => VideoEditorDialog(
               videoPath: localFilePath,
               fileName: fileName,
-              onConfirm: (startTime, endTime, cropRect) {
-                _showUploadDialog(localFilePath, fileName, startTime, endTime, cropRect);
+              onConfirm: (startTime, endTime, cropRect, brightness, contrast, hue) {
+                _showUploadDialog(localFilePath, fileName, startTime, endTime, cropRect,
+                    brightness: brightness, contrast: contrast, hue: hue);
               },
             ),
           );
@@ -716,8 +718,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     String fileName,
     double startTime,
     double endTime,
-    Rect? cropRect,
-  ) {
+    Rect? cropRect, {
+    double brightness = 0.0,
+    double contrast = 1.0,
+    double hue = 0.0,
+  }) {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -728,6 +733,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           startTime: startTime,
           endTime: endTime,
           cropRect: cropRect,
+          brightness: brightness,
+          contrast: contrast,
+          hue: hue,
           fppIp: ref.read(fppIpProvider),
           onUploadStarted: (uploadFileName) {
             setState(() {
@@ -1511,6 +1519,9 @@ class _UploadDialogContent extends StatefulWidget {
   final double startTime;
   final double endTime;
   final Rect? cropRect;
+  final double brightness;
+  final double contrast;
+  final double hue;
   final String fppIp;
   final Function(String) onUploadStarted;
   final Function(String, double) onUploadProgress;
@@ -1523,6 +1534,9 @@ class _UploadDialogContent extends StatefulWidget {
     required this.startTime,
     required this.endTime,
     required this.cropRect,
+    required this.brightness,
+    required this.contrast,
+    required this.hue,
     required this.fppIp,
     required this.onUploadStarted,
     required this.onUploadProgress,
@@ -1615,6 +1629,9 @@ class _UploadDialogContentState extends State<_UploadDialogContent> {
         endTime: widget.endTime,
         cropRect: widget.cropRect,
         outputName: _nameController.text,
+        brightness: widget.brightness,
+        contrast: widget.contrast,
+        hue: widget.hue,
       );
 
       if (!mounted) return;

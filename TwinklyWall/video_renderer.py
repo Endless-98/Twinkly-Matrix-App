@@ -47,7 +47,9 @@ class VideoRenderer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
     
-    def render_video(self, video_path, output_fps=None, output_name=None, start_time=None, end_time=None, crop_rect=None, progress_callback=None):
+    def render_video(self, video_path, output_fps=None, output_name=None, start_time=None, end_time=None,
+                     crop_rect=None, progress_callback=None,
+                     brightness=0.0, contrast=1.0, hue=0.0):
         """
         Render a video file to optimized color data.
         
@@ -114,6 +116,9 @@ class VideoRenderer:
         print(f"  FPS: {source_fps:.2f} -> {target_fps:.2f}")
         print(f"  Total frames: {end_frame - start_frame}")
         print(f"  Payload reduction: {self._estimate_payload_reduction():.1f}%")
+        has_color_adj = brightness != 0.0 or contrast != 1.0 or hue != 0.0
+        if has_color_adj:
+            print(f"  Color adjust: brightness={brightness:+.0f}, contrast={contrast:.2f}x, hue={hue:+.0f}°")
         
         # Seek to start frame
         if start_frame > 0:
@@ -157,6 +162,21 @@ class VideoRenderer:
             
             # Convert BGR to RGB
             resized_rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+
+            # Apply user-requested color adjustments (hue → contrast → brightness)
+            if has_color_adj:
+                if hue != 0.0:
+                    # Hue shift in HSV space.
+                    # OpenCV HSV: H ∈ [0, 179] represents 0–358°, so shift by hue_degrees/2.
+                    hsv = cv2.cvtColor(resized_rgb, cv2.COLOR_RGB2HSV).astype(np.int16)
+                    hue_shift = int(round(hue / 2.0))
+                    hsv[:, :, 0] = (hsv[:, :, 0] + hue_shift) % 180
+                    resized_rgb = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB)
+                if contrast != 1.0 or brightness != 0.0:
+                    arr_f = resized_rgb.astype(np.float32)
+                    # Contrast scales around midpoint 128; brightness adds a flat offset.
+                    arr_f = np.clip(128.0 + (arr_f - 128.0) * contrast + brightness, 0.0, 255.0)
+                    resized_rgb = arr_f.astype(np.uint8)
 
             # Apply quantization if needed
             if self.quantize_bits < 8:
