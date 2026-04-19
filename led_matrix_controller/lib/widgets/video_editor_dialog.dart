@@ -88,6 +88,8 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     try {
       _controller = VideoPlayerController.file(File(widget.videoPath));
       await _controller.initialize();
+      await _controller.setVolume(0.0); // No audio — LED wall plays silently
+      await _controller.seekTo(Duration.zero); // Show first frame
       
       setState(() {
         _isInitialized = true;
@@ -371,10 +373,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            ColorFiltered(
-                              colorFilter: ColorFilter.matrix(_buildColorMatrix()),
-                              child: VideoPlayer(_controller),
-                            ),
+                            VideoPlayer(_controller),
                             if (_isCropping) _buildCropOverlay(viewSize),
                             if (_cropRect != null && !_isCropping)
                               IgnorePointer(child: _buildCropOverlay(viewSize)),
