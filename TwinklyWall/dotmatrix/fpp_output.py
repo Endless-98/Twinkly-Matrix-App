@@ -153,12 +153,12 @@ class FPPOutput:
         if model_name is None:
             model_name = getattr(self, '_overlay_model_name', 'Light_Wall')
 
-        # ── Path 1: direct SHM control-block write ────────────────────────────
+        # ── Path 1: direct SHM control-block write (fast path) ────────────────
         # FPP stores the overlay state as a 4-byte little-endian int32
         # (isActive) at offset 0 of /dev/shm/FPP-PixelOverlay-<SafeName>.
+        # When this succeeds we return immediately — no HTTP needed.
         import struct
         control_file = f"/dev/shm/FPP-PixelOverlay-{model_name}"
-        shm_written = False
         if os.path.exists(control_file):
             try:
                 with open(control_file, 'r+b') as cf:
@@ -166,7 +166,7 @@ class FPPOutput:
                     cf.write(struct.pack('<i', state))
                     cf.flush()
                 print(f"[FPP_OVERLAY] Wrote isActive={state} directly to {control_file}", flush=True)
-                shm_written = True
+                return True  # SHM write succeeded — skip slow HTTP round-trip
             except Exception as e:
                 print(f"[FPP_OVERLAY] Control block direct write failed: {e}", flush=True)
         else:
@@ -180,7 +180,7 @@ class FPPOutput:
                 except Exception:
                     pass
 
-        # ── Path 2: HTTP PUT to FPP API ───────────────────────────────────────
+        # ── Path 2: HTTP PUT to FPP API (fallback when SHM write failed) ────────
         url_set = f"http://localhost/api/overlays/model/{model_name}/state"
         max_attempts = 3
         for attempt in range(1, max_attempts + 1):
@@ -200,11 +200,6 @@ class FPPOutput:
             if attempt < max_attempts:
                 import time as _t; _t.sleep(1)
 
-        if shm_written:
-            # SHM write succeeded even if HTTP failed
-            print(f"[FPP_OVERLAY] HTTP PUT failed but SHM control block was written — overlay should be active", flush=True)
-            return True
-
         print(f"[FPP_OVERLAY] WARNING: both SHM write and HTTP PUT failed for overlay state {state}", flush=True)
         return False
 
@@ -217,8 +212,37 @@ class FPPOutput:
             self._keepalive_thread.join(timeout=1)
             self._keepalive_thread = None
         self._enable_overlay_state(state=3)
-        self._start_overlay_keepalive(interval=5)
+        self._start_overlay_keepalive(interval=2)
         print("[FPP_OVERLAY] Overlay acquired — broadcasting enabled", flush=True)
+
+    def set_dark(self):
+        """Zero the mmap buffer so all LEDs show black, while keeping overlay state 3
+        active so fppd continues sending RT frames to the Twinkly controllers.
+
+        Use this instead of release_overlay() whenever you want lights dark but need
+        to preserve Twinkly RT mode.  Twinkly controllers exit RT mode if they receive
+        no UDP frames for ~3 seconds; set_dark() prevents that by keeping data flowing.
+        """
+        if self.memory_map:
+            try:
+                self.memory_map.seek(0)
+                self.memory_map.write(b'\x00' * self.buffer_size)
+                self.memory_map.flush()
+            except Exception as e:
+                print(f"[FPP_OVERLAY] set_dark mmap write failed: {e}", flush=True)
+        # Re-assert overlay state 3 in case fppd reset it
+        self._enable_overlay_state(state=3)
+        # Start keepalive if not already running
+        keepalive_alive = (
+            hasattr(self, '_keepalive_thread') and
+            self._keepalive_thread is not None and
+            self._keepalive_thread.is_alive() and
+            hasattr(self, '_keepalive_stop') and
+            not self._keepalive_stop.is_set()
+        )
+        if not keepalive_alive:
+            self._start_overlay_keepalive(interval=2)
+        print("[FPP_OVERLAY] set_dark: mmap zeroed, RT mode maintained", flush=True)
 
     def release_overlay(self):
         """Disable FPP overlay (state 0) and stop keepalive. Zero mmap traffic from our app."""
@@ -230,11 +254,13 @@ class FPPOutput:
         self._enable_overlay_state(state=0)
         print("[FPP_OVERLAY] Overlay released — our app sends nothing", flush=True)
 
-    def _start_overlay_keepalive(self, interval: int = 5):
+    def _start_overlay_keepalive(self, interval: int = 2):
         """Daemon thread that re-asserts overlay state 3 every *interval* seconds.
 
         fppd resets the overlay isActive to 0 on internal state transitions
         (e.g. sequence load/stop).  This keeps the mmap path live continuously.
+        interval defaults to 2s — intentionally below the Twinkly RT mode timeout
+        (~3s) so fppd never goes silent long enough for the controller to revert.
         """
         import threading
         self._keepalive_stop = threading.Event()

@@ -203,7 +203,14 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Release the FPP overlay so fppd sends zeros → lights go dark."""
+    """Zero the mmap buffer so lights go dark while keeping Twinkly RT mode alive.
+
+    We intentionally do NOT release the FPP overlay (state 0) here because that
+    would stop fppd from sending RT frames, and Twinkly controllers exit RT mode
+    after ~3 seconds of silence — causing them to show their built-in default
+    pattern on the next play.  set_dark() writes zeros (black) to the mmap so
+    the lights are visually off while fppd keeps the RT mode connection alive.
+    """
     global idle_animation
     if idle_animation:
         idle_animation.stop()
@@ -211,10 +218,10 @@ def _start_idle():
     try:
         m = current_matrix
         if m and getattr(m, 'fpp', None):
-            m.fpp.release_overlay()
+            m.fpp.set_dark()
     except Exception as e:
-        log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
-    log("FPP overlay released — lights dark", module="Idle")
+        log(f"Failed to set FPP dark: {e}", level='WARNING', module="Idle")
+    log("FPP mmap zeroed — lights dark, RT mode maintained", module="Idle")
 
 
 def _stop_idle():
@@ -248,13 +255,8 @@ def stop_current_playback():
             log("[STOP] Playback thread did not exit in 5s — abandoning it (daemon)",
                 level="WARNING", module="PLAYBACK")
     playback_thread = None
-
-    # Release overlay
-    try:
-        if current_matrix and getattr(current_matrix, 'fpp', None):
-            current_matrix.fpp.release_overlay()
-    except Exception:
-        pass
+    # Overlay stays in state 3 — set_dark() is called by _start_idle() / stop_playback()
+    # to zero the mmap (lights dark) without dropping Twinkly RT mode.
 
 
 def play_video_thread(video_path, loop, speed, brightness, playback_fps, generation):
@@ -1502,6 +1504,12 @@ def cleanup():
     global current_matrix, cleanup_active
     cleanup_active = False
     stop_current_playback()
+    # Release overlay on shutdown so fppd stops sending RT frames when our app exits
+    try:
+        if current_matrix and getattr(current_matrix, 'fpp', None):
+            current_matrix.fpp.release_overlay()
+    except Exception:
+        pass
     if current_matrix:
         current_matrix.shutdown()
 
