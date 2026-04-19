@@ -594,7 +594,7 @@ class ApiService {
 
   /// Update an existing playlist
   Future<void> updatePlaylist(String name, List<Map<String, dynamic>> entries,
-      {double? transitionDuration, String? color}) async {
+      {double? transitionDuration, String? color, double? playDuration, bool? shuffle}) async {
     try {
       final body = <String, dynamic>{'entries': entries};
       if (transitionDuration != null) {
@@ -602,6 +602,12 @@ class ApiService {
       }
       if (color != null) {
         body['color'] = color;
+      }
+      if (playDuration != null) {
+        body['play_duration'] = playDuration;
+      }
+      if (shuffle != null) {
+        body['shuffle'] = shuffle;
       }
       final response = await http
           .put(

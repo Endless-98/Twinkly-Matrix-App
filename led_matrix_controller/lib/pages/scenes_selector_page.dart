@@ -796,10 +796,12 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
   }
 
   Future<void> _saveFolderEntries(String name, List<Map<String, dynamic>> entries,
-      {double? transitionDuration, String? color}) async {
+      {double? transitionDuration, String? color, double? playDuration, bool? shuffle}) async {
     try {
       final api = ApiService(host: ref.read(fppIpProvider));
-      await api.updatePlaylist(name, entries, transitionDuration: transitionDuration, color: color);
+      await api.updatePlaylist(name, entries,
+          transitionDuration: transitionDuration, color: color,
+          playDuration: playDuration, shuffle: shuffle);
       await _loadScenes();
       if (_currentlyPlaying == 'playlist:$name') await _playFolder(name);
     } catch (e) {
@@ -904,7 +906,11 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     );
     if (result == null || result == currentColor) return;
     final entries = List<Map<String, dynamic>>.from(folder['entries'] ?? []);
-    await _saveFolderEntries(folderName, entries, color: result);
+    final td = (folder['transition_duration'] as num?)?.toDouble();
+    final pd = (folder['play_duration'] as num?)?.toDouble();
+    final sh = folder['shuffle'] as bool?;
+    await _saveFolderEntries(folderName, entries, color: result,
+        transitionDuration: td, playDuration: pd, shuffle: sh);
   }
 
   // ---------------------------------------------------------------------------
@@ -971,6 +977,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
     final folderColor = _colorFromHex(folder?['color'] as String? ?? '#42A5F5');
     final isFolderPlaying = _currentlyPlaying == 'playlist:${_currentFolder}';
     final transitionDuration = (folder?['transition_duration'] as num?)?.toDouble() ?? 1.0;
+    final playDuration = (folder?['play_duration'] as num?)?.toDouble() ?? 5.0;
+    final isShuffle = folder?['shuffle'] as bool? ?? false;
 
     return Scaffold(
       appBar: AppBar(
@@ -1000,6 +1008,22 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             tooltip: 'Add scenes',
             onPressed: () => _addScenesToFolder(_currentFolder!),
           ),
+          // Shuffle toggle
+          IconButton(
+            icon: Icon(
+              Icons.shuffle,
+              color: isShuffle ? Colors.cyanAccent : Colors.grey[500],
+            ),
+            tooltip: isShuffle ? 'Shuffle: On' : 'Shuffle: Off',
+            onPressed: () {
+              _saveFolderEntries(
+                _currentFolder!, entries,
+                transitionDuration: transitionDuration,
+                playDuration: playDuration,
+                shuffle: !isShuffle,
+              );
+            },
+          ),
           PopupMenuButton<String>(
             onSelected: (v) {
               if (v == 'color') _changeFolderColor(_currentFolder!);
@@ -1015,24 +1039,63 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       body: Column(
         children: [
           _buildControlsBar(),
-          // Transition duration
+          // Play duration + Transition duration
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+            child: Column(
               children: [
-                Text('Transition:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
-                Expanded(
-                  child: Slider(
-                    value: transitionDuration,
-                    min: 0.2, max: 3.0, divisions: 14,
-                    label: '${transitionDuration.toStringAsFixed(1)}s',
-                    onChanged: (v) => _saveFolderEntries(
-                      _currentFolder!, entries, transitionDuration: v,
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 72,
+                      child: Text('Play:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
                     ),
-                  ),
+                    Expanded(
+                      child: Slider(
+                        value: playDuration,
+                        min: 1.0, max: 30.0, divisions: 29,
+                        label: '${playDuration.toStringAsFixed(0)}s',
+                        onChanged: (v) => _saveFolderEntries(
+                          _currentFolder!, entries,
+                          transitionDuration: transitionDuration,
+                          playDuration: v,
+                          shuffle: isShuffle,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 32,
+                      child: Text('${playDuration.toStringAsFixed(0)}s',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                  ],
                 ),
-                Text('${transitionDuration.toStringAsFixed(1)}s',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                Row(
+                  children: [
+                    SizedBox(
+                      width: 72,
+                      child: Text('Transition:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: transitionDuration,
+                        min: 0.2, max: 3.0, divisions: 14,
+                        label: '${transitionDuration.toStringAsFixed(1)}s',
+                        onChanged: (v) => _saveFolderEntries(
+                          _currentFolder!, entries,
+                          transitionDuration: v,
+                          playDuration: playDuration,
+                          shuffle: isShuffle,
+                        ),
+                      ),
+                    ),
+                    SizedBox(
+                      width: 32,
+                      child: Text('${transitionDuration.toStringAsFixed(1)}s',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -1067,8 +1130,51 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                       final entry = entries[index];
                       final video = entry['video'] as String? ?? '';
                       final transition = entry['transition'] as String? ?? 'fade';
-                      return _buildSceneCardInFolder(
-                        video, index, transition, fppIp,
+                      return DragTarget<int>(
+                        onWillAcceptWithDetails: (details) => details.data != index,
+                        onAcceptWithDetails: (details) {
+                          final fromIndex = details.data;
+                          final newEntries = List<Map<String, dynamic>>.from(entries);
+                          final moved = newEntries.removeAt(fromIndex);
+                          newEntries.insert(index, moved);
+                          _saveFolderEntries(
+                            _currentFolder!, newEntries,
+                            transitionDuration: transitionDuration,
+                            playDuration: playDuration,
+                            shuffle: isShuffle,
+                          );
+                        },
+                        builder: (context, candidateData, rejectedData) {
+                          final isHovering = candidateData.isNotEmpty;
+                          return LongPressDraggable<int>(
+                            data: index,
+                            delay: const Duration(milliseconds: 200),
+                            feedback: Material(
+                              color: Colors.transparent,
+                              child: SizedBox(
+                                width: 130, height: 130,
+                                child: Opacity(
+                                  opacity: 0.85,
+                                  child: _buildSceneCardInFolder(video, index, transition, fppIp),
+                                ),
+                              ),
+                            ),
+                            childWhenDragging: Opacity(
+                              opacity: 0.3,
+                              child: _buildSceneCardInFolder(video, index, transition, fppIp),
+                            ),
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+                              decoration: isHovering
+                                  ? BoxDecoration(
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(color: Colors.cyanAccent, width: 2),
+                                    )
+                                  : null,
+                              child: _buildSceneCardInFolder(video, index, transition, fppIp),
+                            ),
+                          );
+                        },
                       );
                     },
                   ),
@@ -1201,6 +1307,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               key: key,
               child: LongPressDraggable<String>(
                 data: item.name!,
+                delay: const Duration(milliseconds: 200),
                 feedback: Material(
                   color: Colors.transparent,
                   child: SizedBox(
@@ -1250,31 +1357,39 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             child: Stack(
               children: [
                 // Content
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(Icons.folder_rounded, size: 48, color: color),
-                      const SizedBox(height: 10),
-                      Text(
-                        name,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                          color: Colors.white,
-                        ),
+                Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Expanded(
+                      child: Center(
+                        child: Icon(Icons.folder_rounded,
+                            size: 64, color: color),
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        '${entries.length} scene${entries.length == 1 ? '' : 's'}',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(8, 0, 8, 10),
+                      child: Column(
+                        children: [
+                          Text(
+                            name,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                              color: Colors.white,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            '${entries.length} scene${entries.length == 1 ? '' : 's'}',
+                            style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
                 // Playing indicator
                 if (isPlaying)
@@ -1489,18 +1604,21 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                // Title
-                Text(
-                  _displayName(sceneName),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                    shadows: [Shadow(offset: Offset(1, 1), blurRadius: 3, color: Colors.black)],
+                // Title (pushed down below the transition badge)
+                Padding(
+                  padding: const EdgeInsets.only(top: 18, left: 40),
+                  child: Text(
+                    _displayName(sceneName),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 13,
+                      shadows: [Shadow(offset: Offset(1, 1), blurRadius: 3, color: Colors.black)],
+                    ),
+                    textAlign: TextAlign.center,
                   ),
-                  textAlign: TextAlign.center,
                 ),
                 // Controls
                 Row(
