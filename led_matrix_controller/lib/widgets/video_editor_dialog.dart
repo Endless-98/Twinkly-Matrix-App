@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 import 'dart:io';
+import 'dart:ui';
 
 class VideoEditorDialog extends StatefulWidget {
   final String videoPath;
@@ -242,275 +243,343 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      child: Container(
-        width: MediaQuery.of(context).size.width * 0.9,
-        height: MediaQuery.of(context).size.height * 0.85,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Header
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    'Edit Video',
-                    style: Theme.of(context).textTheme.headlineSmall,
-                  ),
+    final theme = Theme.of(context);
+    final cs = theme.colorScheme;
+
+    return Dialog.fullscreen(
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        appBar: AppBar(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: Text(
+            widget.fileName,
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+            overflow: TextOverflow.ellipsis,
+          ),
+          actions: [
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: FilledButton.icon(
+                onPressed: _isInitialized
+                    ? () {
+                        Navigator.of(context).pop();
+                        widget.onConfirm(_startTime, _endTime, _cropRect);
+                      }
+                    : null,
+                icon: const Icon(Icons.upload, size: 18),
+                label: const Text('Render'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: cs.primary,
+                  foregroundColor: cs.onPrimary,
                 ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.of(context).pop(),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              widget.fileName,
-              style: Theme.of(context).textTheme.bodyMedium,
-            ),
-            const Divider(),
-            
-            // Video Player
-            Expanded(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator())
-                  : _error != null
-                      ? Center(child: Text('Error: $_error'))
-                      : _isInitialized
-                          ? AspectRatio(
-                              aspectRatio: _controller.value.aspectRatio,
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
-                                  return GestureDetector(
-                                    onPanStart: _isCropping
-                                        ? (details) => _handleCropPanStart(details, viewSize)
-                                        : null,
-                                    onPanUpdate: _isCropping
-                                        ? (details) => _handleCropPanUpdate(details, viewSize)
-                                        : null,
-                                    onPanEnd: _isCropping ? _handleCropPanEnd : null,
-                                    child: Stack(
-                                      fit: StackFit.expand,
-                                      children: [
-                                        // Always show full video to avoid aspect ratio distortion
-                                        VideoPlayer(_controller),
-                                        // Show overlay and selection only while actively cropping
-                                        if (_isCropping)
-                                          _buildCropOverlay(viewSize),
-                                        // After crop confirmed, show it as a permanent overlay
-                                        if (_cropRect != null && !_isCropping)
-                                          IgnorePointer(
-                                            child: _buildCropOverlay(viewSize),
-                                          ),
-                                        if (!_controller.value.isPlaying && !_isCropping)
-                                          Center(
-                                            child: IconButton(
-                                              icon: const Icon(
-                                                Icons.play_circle_outline,
-                                                size: 64,
-                                                color: Colors.white,
-                                              ),
-                                              onPressed: _togglePlayPause,
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  );
-                                },
-                              ),
-                            )
-                          : const Center(child: Text('Failed to load video')),
-            ),
-            
-            const SizedBox(height: 16),
-            
-            // Playback controls
-            if (_isInitialized) ...[
-              Row(
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      _controller.value.isPlaying ? Icons.pause : Icons.play_arrow,
-                    ),
-                    onPressed: _togglePlayPause,
-                  ),
-                  Expanded(
-                    child: Slider(
-                      value: _currentPosition,
-                      min: 0,
-                      max: _endTime,
-                      onChanged: (value) {
-                        _seekToPosition(value);
-                      },
-                    ),
-                  ),
-                  Text(
-                    '${_formatDuration(_currentPosition)} / ${_formatDuration(_endTime)}',
-                  ),
-                ],
               ),
-              
-              const Divider(),
-              
-              // Trim controls
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Trim Video', style: TextStyle(fontWeight: FontWeight.bold)),
-                      TextButton.icon(
-                        icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('Reset'),
-                        onPressed: () {
-                          setState(() {
-                            _startTime = 0.0;
-                            _endTime = _controller.value.duration.inMilliseconds / 1000.0;
-                          });
-                        },
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      const SizedBox(width: 60, child: Text('Start:')),
-                      Expanded(
-                        child: Slider(
-                          value: _startTime,
-                          min: 0,
-                          max: _endTime,
-                          onChanged: (value) {
-                            setState(() {
-                              _startTime = value;
-                              if (_startTime >= _endTime) {
-                                _endTime = _startTime + 0.1;
-                              }
-                            });
-                          },
-                        ),
-                      ),
-                      SizedBox(
-                        width: 60,
-                        child: Text(_formatDuration(_startTime)),
-                      ),
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      const SizedBox(width: 60, child: Text('End:')),
-                      Expanded(
-                        child: Slider(
-                          value: _endTime,
-                          min: _startTime,
-                          max: _controller.value.duration.inMilliseconds / 1000.0,
-                          onChanged: (value) {
-                            setState(() {
-                              _endTime = value;
-                            });
-                          },
-                        ),
-                      ),
-                      SizedBox(
-                        width: 60,
-                        child: Text(_formatDuration(_endTime)),
-                      ),
-                    ],
-                  ),
-                  Center(
-                    child: Text(
-                      'Duration: ${_formatDuration(_endTime - _startTime)}',
-                      style: const TextStyle(fontStyle: FontStyle.italic),
-                    ),
-                  ),
-                ],
-              ),
-              
-              const Divider(),
-              
-              // Crop controls
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Crop Video', style: TextStyle(fontWeight: FontWeight.bold)),
-                      Row(
-                        children: [
-                          if (_cropRect != null)
-                            TextButton.icon(
-                              icon: const Icon(Icons.clear, size: 16),
-                              label: const Text('Clear'),
-                              onPressed: () {
-                                setState(() {
-                                  _cropRect = null;
-                                });
-                              },
-                            ),
-                          const SizedBox(width: 8),
-                          ElevatedButton.icon(
-                            icon: Icon(_isCropping ? Icons.check : Icons.crop),
-                            label: Text(_isCropping ? 'Done' : 'Enable'),
-                            onPressed: () {
-                              setState(() {
-                                _isCropping = !_isCropping;
-                                if (!_isCropping) {
-                                  _cropStart = null;
-                                  _cropEnd = null;
-                                }
-                              });
-                            },
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                  if (_isCropping)
-                    const Padding(
-                      padding: EdgeInsets.symmetric(vertical: 8.0),
-                      child: Text(
-                        'Drag on the video to select crop area',
-                        style: TextStyle(fontStyle: FontStyle.italic, fontSize: 12),
-                      ),
-                    ),
-                  if (_cropRect != null)
-                    Text(
-                      'Crop: ${(_cropRect!.width * 100).toStringAsFixed(0)}% × ${(_cropRect!.height * 100).toStringAsFixed(0)}%',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                ],
-              ),
-            ],
-            
-            const Divider(),
-            
-            // Action buttons
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Cancel'),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  onPressed: _isInitialized
-                      ? () {
-                          Navigator.of(context).pop();
-                          widget.onConfirm(_startTime, _endTime, _cropRect);
-                        }
-                      : null,
-                  child: const Text('Upload & Render'),
-                ),
-              ],
             ),
           ],
         ),
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.error_outline, size: 48, color: cs.error),
+                        const SizedBox(height: 12),
+                        Text('Failed to load video', style: TextStyle(color: cs.error)),
+                        const SizedBox(height: 4),
+                        Text(_error!, style: TextStyle(fontSize: 12, color: Colors.grey[500])),
+                      ],
+                    ),
+                  )
+                : _isInitialized
+                    ? _buildEditorBody(cs)
+                    : const Center(child: Text('Failed to initialize')),
       ),
+    );
+  }
+
+  Widget _buildEditorBody(ColorScheme cs) {
+    return Column(
+      children: [
+        // --- Video preview ---
+        Expanded(
+          flex: 3,
+          child: Container(
+            color: Colors.black,
+            child: Center(
+              child: AspectRatio(
+                aspectRatio: _controller.value.aspectRatio,
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
+                    return GestureDetector(
+                      onTap: _isCropping ? null : _togglePlayPause,
+                      onPanStart: _isCropping
+                          ? (details) => _handleCropPanStart(details, viewSize)
+                          : null,
+                      onPanUpdate: _isCropping
+                          ? (details) => _handleCropPanUpdate(details, viewSize)
+                          : null,
+                      onPanEnd: _isCropping ? _handleCropPanEnd : null,
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          children: [
+                            VideoPlayer(_controller),
+                            if (_isCropping) _buildCropOverlay(viewSize),
+                            if (_cropRect != null && !_isCropping)
+                              IgnorePointer(child: _buildCropOverlay(viewSize)),
+                            if (!_controller.value.isPlaying && !_isCropping)
+                              Center(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.black38,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  padding: const EdgeInsets.all(12),
+                                  child: const Icon(Icons.play_arrow, size: 48, color: Colors.white),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ),
+        ),
+
+        // --- Playback scrubber ---
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: Row(
+            children: [
+              IconButton(
+                icon: Icon(
+                  _controller.value.isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  color: Colors.white,
+                  size: 28,
+                ),
+                onPressed: _togglePlayPause,
+              ),
+              Text(
+                _formatDuration(_currentPosition),
+                style: TextStyle(fontSize: 12, color: Colors.grey[400], fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderThemeData(
+                    trackHeight: 3,
+                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                    activeTrackColor: cs.primary,
+                    inactiveTrackColor: Colors.white12,
+                    thumbColor: cs.primary,
+                  ),
+                  child: Slider(
+                    value: _currentPosition.clamp(0.0, _controller.value.duration.inMilliseconds / 1000.0),
+                    min: 0,
+                    max: _controller.value.duration.inMilliseconds / 1000.0,
+                    onChanged: _seekToPosition,
+                  ),
+                ),
+              ),
+              Text(
+                _formatDuration(_controller.value.duration.inMilliseconds / 1000.0),
+                style: TextStyle(fontSize: 12, color: Colors.grey[400], fontFeatures: const [FontFeature.tabularFigures()]),
+              ),
+            ],
+          ),
+        ),
+
+        // --- Controls panel ---
+        Expanded(
+          flex: 2,
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.grey[900],
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+            ),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Drag handle
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildTrimSection(cs),
+                  const SizedBox(height: 20),
+                  _buildCropSection(cs),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTrimSection(ColorScheme cs) {
+    final maxDuration = _controller.value.duration.inMilliseconds / 1000.0;
+    final trimmedDuration = _endTime - _startTime;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.content_cut_rounded, size: 18, color: cs.primary),
+            const SizedBox(width: 8),
+            const Text('Trim', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: cs.primary.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                _formatDuration(trimmedDuration),
+                style: TextStyle(fontSize: 12, color: cs.primary, fontWeight: FontWeight.w500),
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (_startTime > 0 || _endTime < maxDuration)
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _startTime = 0.0;
+                    _endTime = maxDuration;
+                  });
+                },
+                child: Text('Reset', style: TextStyle(fontSize: 12, color: cs.primary)),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        _buildTrimSlider('Start', _startTime, 0, _endTime - 0.1, (v) {
+          setState(() => _startTime = v);
+        }, cs),
+        const SizedBox(height: 8),
+        _buildTrimSlider('End', _endTime, _startTime + 0.1, maxDuration, (v) {
+          setState(() => _endTime = v);
+        }, cs),
+      ],
+    );
+  }
+
+  Widget _buildTrimSlider(String label, double value, double min, double max, ValueChanged<double> onChanged, ColorScheme cs) {
+    return Row(
+      children: [
+        SizedBox(
+          width: 38,
+          child: Text(label, style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+        ),
+        Text(
+          _formatDuration(value),
+          style: TextStyle(fontSize: 12, color: Colors.grey[300], fontFeatures: const [FontFeature.tabularFigures()]),
+        ),
+        Expanded(
+          child: SliderTheme(
+            data: SliderThemeData(
+              trackHeight: 2,
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 12),
+              activeTrackColor: cs.primary.withValues(alpha: 0.6),
+              inactiveTrackColor: Colors.white10,
+              thumbColor: cs.primary,
+            ),
+            child: Slider(
+              value: value.clamp(min, max),
+              min: min,
+              max: max,
+              onChanged: onChanged,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCropSection(ColorScheme cs) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.crop_rounded, size: 18, color: cs.primary),
+            const SizedBox(width: 8),
+            const Text('Crop', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            Text('90:50', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+            const Spacer(),
+            if (_cropRect != null && !_isCropping)
+              TextButton(
+                onPressed: () => setState(() => _cropRect = null),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.redAccent,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('Clear', style: TextStyle(fontSize: 12)),
+              ),
+            const SizedBox(width: 4),
+            FilledButton.tonalIcon(
+              onPressed: () {
+                setState(() {
+                  _isCropping = !_isCropping;
+                  if (!_isCropping) {
+                    _cropStart = null;
+                    _cropEnd = null;
+                  }
+                });
+              },
+              icon: Icon(_isCropping ? Icons.check : Icons.crop, size: 16),
+              label: Text(_isCropping ? 'Done' : 'Select', style: const TextStyle(fontSize: 12)),
+              style: FilledButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                minimumSize: Size.zero,
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+            ),
+          ],
+        ),
+        if (_isCropping)
+          Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: Text(
+              'Drag on the video to select the crop area. Tap and drag inside the selection to move it.',
+              style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+            ),
+          ),
+        if (_cropRect != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(
+              'Crop: ${(_cropRect!.width * 100).toStringAsFixed(0)}% × ${(_cropRect!.height * 100).toStringAsFixed(0)}%',
+              style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+            ),
+          ),
+      ],
     );
   }
 
@@ -539,7 +608,7 @@ class CropOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
-      ..color = Colors.black.withOpacity(0.5)
+      ..color = Colors.black.withValues(alpha: 0.5)
       ..style = PaintingStyle.fill;
 
     final cropPaint = Paint()

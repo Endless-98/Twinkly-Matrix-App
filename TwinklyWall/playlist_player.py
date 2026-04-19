@@ -51,7 +51,7 @@ class PlaylistPlayer:
     def _render_frame(self, arr: np.ndarray):
         """Apply contrast + brightness then push to matrix."""
         arr_f = arr.astype(np.float32)
-        arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.20, 0.0, 255.0)
+        arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.15, 0.0, 255.0)
         br = self._brightness
         if br is not None and br != 1.0:
             arr_f = np.minimum(255.0, arr_f * float(br))
@@ -103,6 +103,7 @@ class PlaylistPlayer:
 
                 video_name = entry.get("video", "")
                 transition_name = entry.get("transition", "none")
+                entry_duration = entry.get("duration", 0)  # 0 = play full video
                 trans_fn = TRANSITIONS.get(transition_name, TRANSITIONS["none"])
 
                 # Load clip
@@ -121,9 +122,19 @@ class PlaylistPlayer:
                 frame_dt = 1.0 / fps
                 trans_frames = max(1, int(transition_duration * fps))
 
+                # Compute end frame based on entry duration (0 = full video)
+                total_clip_frames = frames.shape[0]
+                if entry_duration and entry_duration > 0:
+                    max_frames = int(entry_duration * fps)
+                    clip_end_frame = min(max_frames, total_clip_frames)
+                else:
+                    clip_end_frame = total_clip_frames
+
                 first_frame = frames[0]
+                dur_label = f"{entry_duration}s" if entry_duration else "full"
                 print(f"  [{idx + 1}/{len(entries)}] {video_name}  "
-                      f"({frames.shape[0]} frames, transition={transition_name})")
+                      f"({clip_end_frame}/{total_clip_frames} frames, "
+                      f"duration={dur_label}, transition={transition_name})")
 
                 # --- Transition from previous clip (or loop-back if idx==0) ---
                 # prev_last_frame is None only on the very first clip of the very
@@ -136,7 +147,7 @@ class PlaylistPlayer:
                             return total_rendered
                         t = (ti + 1) / trans_frames
                         # Use advancing frames of incoming clip during transition
-                        in_fi = min(ti, frames.shape[0] - 1)
+                        in_fi = min(ti, clip_end_frame - 1)
                         blended = trans_fn(prev_last_frame, frames[in_fi], t)
                         t0 = time.perf_counter()
                         self._render_frame(blended)
@@ -145,12 +156,12 @@ class PlaylistPlayer:
                         if frame_dt - elapsed > 0:
                             time.sleep(frame_dt - elapsed)
                     # Skip the frames already shown during transition
-                    clip_start_frame = min(trans_frames, frames.shape[0])
+                    clip_start_frame = min(trans_frames, clip_end_frame)
                 else:
                     clip_start_frame = 0
 
                 # --- Play remaining clip frames ---
-                for fi in range(clip_start_frame, frames.shape[0]):
+                for fi in range(clip_start_frame, clip_end_frame):
                     if self._should_stop:
                         return total_rendered
                     t0 = time.perf_counter()
@@ -160,7 +171,7 @@ class PlaylistPlayer:
                     if frame_dt - elapsed > 0:
                         time.sleep(frame_dt - elapsed)
 
-                prev_last_frame = frames[-1].copy()
+                prev_last_frame = frames[min(clip_end_frame - 1, total_clip_frames - 1)].copy()
 
             # Carry the last frame into the next loop iteration for loop-back
             loop_last_frame = prev_last_frame

@@ -222,6 +222,7 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   size: 170,
                   onPressed: () => _sendCommand('MOVE_DOWN'),
                   onHeld: () => _sendCommand('HARD_DROP'),
+                  onReleased: () => _sendCommand('MOVE_DOWN_RELEASE'),
                 ),
               ),
               
@@ -234,7 +235,6 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.blue,
                   size: 170,
                   onPressed: () => _sendCommand('MOVE_LEFT'),
-                  onHeld: () => _sendCommand('MOVE_LEFT_HELD'),
                   enableAutoRepeat: true,
                 ),
               ),
@@ -261,7 +261,6 @@ class _TetrisControllerPageState extends ConsumerState<TetrisControllerPage> {
                   color: Colors.green,
                   size: 170,
                   onPressed: () => _sendCommand('MOVE_RIGHT'),
-                  onHeld: () => _sendCommand('MOVE_RIGHT_HELD'),
                   enableAutoRepeat: true,
                 ),
               ),
@@ -293,6 +292,7 @@ class _TetrisButton extends StatefulWidget {
   final double size;
   final VoidCallback onPressed;
   final VoidCallback? onHeld;
+  final VoidCallback? onReleased;
   final bool enableAutoRepeat;
 
   const _TetrisButton({
@@ -301,6 +301,7 @@ class _TetrisButton extends StatefulWidget {
     required this.size,
     required this.onPressed,
     this.onHeld,
+    this.onReleased,
     this.enableAutoRepeat = false,
   });
 
@@ -389,6 +390,9 @@ class _TetrisButtonState extends State<_TetrisButton> {
     if (shouldFireOnPressed) {
       widget.onPressed();
     }
+
+    // Fire onReleased callback (e.g., MOVE_DOWN_RELEASE for soft drop)
+    widget.onReleased?.call();
 
     // If feedback timer hasn't fired yet, keep visual feedback until it does
     // The timer will handle resetting the visual state after 150ms

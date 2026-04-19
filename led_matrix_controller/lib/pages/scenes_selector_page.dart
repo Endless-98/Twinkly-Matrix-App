@@ -838,6 +838,10 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
       final api = ApiService(host: ref.read(fppIpProvider));
       await api.updatePlaylist(name, entries, transitionDuration: transitionDuration);
       await _loadScenes();
+      // If this playlist is currently playing, restart it with updated entries
+      if (_currentlyPlaying == 'playlist:$name') {
+        await _playPlaylist(name);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1813,6 +1817,7 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
   /// Builds a single scene row with ▲/▼ reorder buttons.
   Widget _buildSceneRow(int index) {
     final video = _entries[index]['video'] as String? ?? '';
+    final duration = (_entries[index]['duration'] as num?)?.toDouble() ?? 0;
     final isFirst = index == 0;
     final isLast = index == _entries.length - 1;
     return Padding(
@@ -1850,6 +1855,25 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
               style: const TextStyle(fontSize: 13),
             ),
           ),
+          // Duration control
+          GestureDetector(
+            onTap: () => _editDuration(index, duration),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                duration > 0 ? '${duration.toStringAsFixed(0)}s' : 'Full',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: duration > 0 ? Colors.orangeAccent : Colors.grey[500],
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 4),
           // Remove
           IconButton(
             padding: EdgeInsets.zero,
@@ -1860,6 +1884,56 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
         ],
       ),
     );
+  }
+
+  void _editDuration(int index, double currentDuration) async {
+    final controller = TextEditingController(
+      text: currentDuration > 0 ? currentDuration.toStringAsFixed(0) : '',
+    );
+    final result = await showDialog<double?>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Scene Duration', style: TextStyle(fontSize: 16)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'How long should this scene play (seconds)?\nLeave empty for full video length.',
+              style: TextStyle(fontSize: 13, color: Colors.grey[400]),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              autofocus: true,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                hintText: 'e.g. 30',
+                suffixText: 'seconds',
+                isDense: true,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 0.0),
+            child: const Text('Full Length'),
+          ),
+          TextButton(
+            onPressed: () {
+              final val = double.tryParse(controller.text) ?? 0;
+              Navigator.pop(ctx, val > 0 ? val : 0.0);
+            },
+            child: const Text('Set'),
+          ),
+        ],
+      ),
+    );
+    if (result != null) {
+      setState(() => _entries[index]['duration'] = result > 0 ? result : 0);
+      _save();
+    }
   }
 
   /// Builds the transition selector shown between scene [sourceIndex] and the

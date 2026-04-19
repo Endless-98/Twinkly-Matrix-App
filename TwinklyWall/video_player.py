@@ -159,7 +159,7 @@ class VideoPlayer:
         def render_frame(arr_uint8: np.ndarray):
             # Apply +20% contrast enhancement around the midpoint
             arr_f = arr_uint8.astype(np.float32)
-            arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.20, 0.0, 255.0)
+            arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.15, 0.0, 255.0)
             # Use dynamic brightness - check current value each frame
             br = self._brightness
             if br is not None:

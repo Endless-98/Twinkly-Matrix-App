@@ -269,7 +269,6 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                       _ModeButton(
                         label: 'Scenes',
                         icon: Icons.movie,
-                        iconSize: 5.6,
                         onPressed: () {
                           Navigator.of(context).push(
                             MaterialPageRoute(
