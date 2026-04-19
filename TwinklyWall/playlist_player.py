@@ -2,7 +2,12 @@
 Playlist Player: plays an ordered list of rendered videos with transitions.
 
 Each playlist entry specifies a video name and the transition to use *before*
-it plays (the first entry's transition is ignored — it starts immediately).
+it plays:
+  • entries[1..n].transition  — transition played between the previous clip and
+                                this one.
+  • entries[0].transition     — loop-back transition played between the last clip
+                                and the first clip when the playlist loops.
+                                Ignored on the first play-through.
 """
 
 import time
@@ -84,8 +89,13 @@ class PlaylistPlayer:
 
         print(f"\n[PlaylistPlayer] Starting playlist ({len(entries)} entries, loop={loop})")
 
+        # last frame carried across loop iterations for the loop-back transition
+        loop_last_frame: Optional[np.ndarray] = None
+
         while True:
-            prev_last_frame: Optional[np.ndarray] = None
+            # On subsequent loop iterations prev_last_frame starts as the last
+            # frame of the previous run so the loop-back transition can fire.
+            prev_last_frame: Optional[np.ndarray] = loop_last_frame
 
             for idx, entry in enumerate(entries):
                 if self._should_stop:
@@ -115,8 +125,10 @@ class PlaylistPlayer:
                 print(f"  [{idx + 1}/{len(entries)}] {video_name}  "
                       f"({frames.shape[0]} frames, transition={transition_name})")
 
-                # --- Transition from previous clip ---
-                if prev_last_frame is not None and idx > 0 and transition_name != "none":
+                # --- Transition from previous clip (or loop-back if idx==0) ---
+                # prev_last_frame is None only on the very first clip of the very
+                # first play-through, so no transition fires then.
+                if prev_last_frame is not None and transition_name != "none":
                     for ti in range(trans_frames):
                         if self._should_stop:
                             return total_rendered
@@ -141,6 +153,9 @@ class PlaylistPlayer:
                         time.sleep(frame_dt - elapsed)
 
                 prev_last_frame = frames[-1].copy()
+
+            # Carry the last frame into the next loop iteration for loop-back
+            loop_last_frame = prev_last_frame
 
             if not loop:
                 break

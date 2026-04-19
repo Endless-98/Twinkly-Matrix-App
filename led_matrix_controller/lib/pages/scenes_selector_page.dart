@@ -1790,22 +1790,151 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
     _save();
   }
 
-  void _reorder(int oldIndex, int newIndex) {
+  void _moveUp(int index) {
+    if (index <= 0) return;
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
-      final item = _entries.removeAt(oldIndex);
-      _entries.insert(newIndex, item);
+      final item = _entries.removeAt(index);
+      _entries.insert(index - 1, item);
     });
     _save();
   }
 
-  void _setTransition(int index, String transition) {
-    setState(() => _entries[index]['transition'] = transition);
+  void _moveDown(int index) {
+    if (index >= _entries.length - 1) return;
+    setState(() {
+      final item = _entries.removeAt(index);
+      _entries.insert(index + 1, item);
+    });
     _save();
   }
 
   void _save() {
     widget.onSave(_entries, _transitionDuration);
+  }
+
+  /// Builds a single scene row with ▲/▼ reorder buttons.
+  Widget _buildSceneRow(int index) {
+    final video = _entries[index]['video'] as String? ?? '';
+    final isFirst = index == 0;
+    final isLast = index == _entries.length - 1;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          // Up / down reorder buttons
+          Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              GestureDetector(
+                onTap: isFirst ? null : () => _moveUp(index),
+                child: Icon(Icons.keyboard_arrow_up, size: 16,
+                    color: isFirst ? Colors.white12 : Colors.white54),
+              ),
+              GestureDetector(
+                onTap: isLast ? null : () => _moveDown(index),
+                child: Icon(Icons.keyboard_arrow_down, size: 16,
+                    color: isLast ? Colors.white12 : Colors.white54),
+              ),
+            ],
+          ),
+          const SizedBox(width: 4),
+          // Index badge
+          SizedBox(
+            width: 20,
+            child: Text('${index + 1}',
+                style: TextStyle(fontSize: 11, color: Colors.grey[500])),
+          ),
+          // Scene name
+          Expanded(
+            child: Text(
+              widget.displayName(video),
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 13),
+            ),
+          ),
+          // Remove
+          IconButton(
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+            icon: const Icon(Icons.close, size: 14, color: Colors.white38),
+            onPressed: () => _removeAt(index),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Builds the transition selector shown between scene [sourceIndex] and the
+  /// next scene.  When [sourceIndex] == last index the arrow loops back to
+  /// scene 0 and shows the loop-back label.
+  ///
+  /// Data convention:
+  ///   • entry[i].transition (i > 0)  → transition played BEFORE scene i
+  ///   • entry[0].transition           → loop-back transition (last → first)
+  Widget _buildTransitionSeparator(int sourceIndex) {
+    final isLoopBack = sourceIndex == _entries.length - 1;
+    // destIndex is where the transition value is stored
+    final destIndex = isLoopBack ? 0 : sourceIndex + 1;
+    final raw = _entries[destIndex]['transition'] as String? ?? 'none';
+    final transition = _transitions.contains(raw) ? raw : 'none';
+    final firstSceneName =
+        widget.displayName(_entries[0]['video'] as String? ?? '');
+
+    return Padding(
+      padding: const EdgeInsets.only(left: 28, bottom: 2),
+      child: Row(
+        children: [
+          Icon(
+            isLoopBack ? Icons.loop : Icons.arrow_downward,
+            size: 12,
+            color: isLoopBack ? Colors.cyanAccent.withValues(alpha: 0.5) : Colors.white24,
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 96,
+            child: DropdownButton<String>(
+              value: transition,
+              isDense: true,
+              isExpanded: true,
+              underline: const SizedBox(),
+              style: TextStyle(
+                fontSize: 11,
+                color: isLoopBack ? Colors.cyanAccent : Colors.cyanAccent.withValues(alpha: 0.7),
+              ),
+              dropdownColor: Colors.grey[800],
+              items: _transitions
+                  .map((t) => DropdownMenuItem(
+                        value: t,
+                        child: Text(
+                          t == 'fisheye_swirl' ? 'swirl' : t,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) {
+                  setState(() => _entries[destIndex]['transition'] = v);
+                  _save();
+                }
+              },
+            ),
+          ),
+          if (isLoopBack) ...[
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(
+                '→ $firstSceneName',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 10,
+                    color: Colors.white30,
+                    fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
   }
 
   @override
@@ -1819,7 +1948,7 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
           // Transition duration slider
           Row(
             children: [
-              Text('Transition:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
+              Text('Duration:', style: TextStyle(fontSize: 12, color: Colors.grey[400])),
               Expanded(
                 child: Slider(
                   value: _transitionDuration,
@@ -1841,93 +1970,20 @@ class _PlaylistEditorState extends State<_PlaylistEditor> {
           if (_entries.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 8),
-              child: Text('No scenes added yet', style: TextStyle(color: Colors.grey[600], fontSize: 13)),
+              child: Text('No scenes added yet',
+                  style: TextStyle(color: Colors.grey[600], fontSize: 13)),
             )
           else
-            ReorderableListView.builder(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              buildDefaultDragHandles: false,
-              itemCount: _entries.length,
-              onReorder: _reorder,
-              proxyDecorator: (child, index, animation) {
-                return Material(
-                  color: Colors.cyan.withValues(alpha: 0.2),
-                  borderRadius: BorderRadius.circular(4),
-                  child: child,
-                );
-              },
-              itemBuilder: (context, index) {
-                final entry = _entries[index];
-                final video = entry['video'] as String? ?? '';
-                final transition = entry['transition'] as String? ?? 'none';
-                return Container(
-                  key: ValueKey('$video-$index'),
-                  padding: const EdgeInsets.symmetric(vertical: 2),
-                  child: Row(
-                    children: [
-                      // Drag handle
-                      ReorderableDragStartListener(
-                        index: index,
-                        child: const Padding(
-                          padding: EdgeInsets.only(right: 6),
-                          child: Icon(Icons.drag_handle, size: 16, color: Colors.white30),
-                        ),
-                      ),
-                      // Index
-                      SizedBox(
-                        width: 20,
-                        child: Text(
-                          '${index + 1}',
-                          style: TextStyle(fontSize: 11, color: Colors.grey[500]),
-                        ),
-                      ),
-                      // Scene name
-                      Expanded(
-                        child: Text(
-                          widget.displayName(video),
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      // Transition picker (skip for first item)
-                      if (index > 0)
-                        SizedBox(
-                          width: 110,
-                          child: DropdownButton<String>(
-                            value: _transitions.contains(transition) ? transition : 'none',
-                            isDense: true,
-                            isExpanded: true,
-                            underline: const SizedBox(),
-                            style: const TextStyle(fontSize: 12, color: Colors.cyanAccent),
-                            dropdownColor: Colors.grey[800],
-                            items: _transitions
-                                .map((t) => DropdownMenuItem(
-                                      value: t,
-                                      child: Text(t == 'fisheye_swirl' ? 'swirl' : t, style: const TextStyle(fontSize: 12)),
-                                    ))
-                                .toList(),
-                            onChanged: (v) {
-                              if (v != null) _setTransition(index, v);
-                            },
-                          ),
-                        )
-                      else
-                        const SizedBox(width: 110),
-                      // Remove button
-                      SizedBox(
-                        width: 28,
-                        child: IconButton(
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                          icon: const Icon(Icons.close, size: 14, color: Colors.white38),
-                          onPressed: () => _removeAt(index),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (int i = 0; i < _entries.length; i++) ...[
+                  _buildSceneRow(i),
+                  // Show transition separator after every row.
+                  // Single-item playlists don't loop so skip the separator.
+                  if (_entries.length > 1) _buildTransitionSeparator(i),
+                ],
+              ],
             ),
           // Add scene button
           Center(
