@@ -531,6 +531,21 @@ class ApiService {
   // Playlists
   // ---------------------------------------------------------------------------
 
+  /// Safely extract an error message from an HTTP response body.
+  /// Returns a status-code-based message if the body is not valid JSON.
+  String _parseError(http.Response response) {
+    try {
+      final data = jsonDecode(response.body);
+      if (data is Map) return data['error']?.toString() ?? 'Unknown error';
+    } catch (_) {}
+    // HTML or non-JSON body — show a helpful message instead of a stack trace
+    if (response.body.trimLeft().startsWith('<')) {
+      return 'Backend returned HTML (status ${response.statusCode}). '
+          'Run setup_fpp.sh on FPP to deploy the latest code.';
+    }
+    return 'Server error ${response.statusCode}';
+  }
+
   /// Get all saved playlists
   Future<List<Map<String, dynamic>>> getPlaylists() async {
     try {
@@ -541,7 +556,7 @@ class ApiService {
         final data = jsonDecode(response.body);
         return List<Map<String, dynamic>>.from(data['playlists'] ?? []);
       }
-      throw Exception('Failed to fetch playlists: ${response.statusCode}');
+      throw Exception(_parseError(response));
     } catch (e) {
       throw Exception('Playlist fetch error: $e');
     }
@@ -563,8 +578,7 @@ class ApiService {
           )
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 201) {
-        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
-        throw Exception(msg);
+        throw Exception(_parseError(response));
       }
     } catch (e) {
       throw Exception('Playlist create error: $e');
@@ -587,8 +601,7 @@ class ApiService {
           )
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) {
-        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
-        throw Exception(msg);
+        throw Exception(_parseError(response));
       }
     } catch (e) {
       throw Exception('Playlist update error: $e');
@@ -602,7 +615,7 @@ class ApiService {
           .delete(Uri.parse('$_baseUrl/api/playlists/${Uri.encodeComponent(name)}'))
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) {
-        throw Exception('Failed to delete playlist: ${response.statusCode}');
+        throw Exception(_parseError(response));
       }
     } catch (e) {
       throw Exception('Playlist delete error: $e');
@@ -626,8 +639,7 @@ class ApiService {
           )
           .timeout(const Duration(seconds: 5));
       if (response.statusCode != 200) {
-        final msg = jsonDecode(response.body)['error'] ?? 'Unknown error';
-        throw Exception(msg);
+        throw Exception(_parseError(response));
       }
     } catch (e) {
       throw Exception('Playlist play error: $e');
