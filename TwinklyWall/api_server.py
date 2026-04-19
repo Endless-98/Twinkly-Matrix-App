@@ -1102,13 +1102,30 @@ def _load_playlist(name: str) -> dict | None:
     if not path.exists():
         return None
     with open(path, 'r') as f:
-        return json.load(f)
+        content = f.read()
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        # Recover from concurrent-write corruption (extra / truncated data).
+        # Try to extract the first valid JSON object and repair the file.
+        try:
+            data, _ = json.JSONDecoder().raw_decode(content.lstrip())
+            if isinstance(data, dict):
+                _save_playlist(name, data)   # repair on disk
+                return data
+        except Exception:
+            pass
+        return None
 
 
 def _save_playlist(name: str, data: dict):
     path = playlists_dir / f"{name}.json"
-    with open(path, 'w') as f:
+    # Write to a temp file then rename — atomic on POSIX, prevents readers
+    # from ever seeing a partially-written file.
+    tmp = path.with_suffix('.tmp')
+    with open(tmp, 'w') as f:
         json.dump(data, f, indent=2)
+    tmp.rename(path)
 
 
 def _sanitize_playlist_name(name: str) -> str:
@@ -1121,8 +1138,9 @@ def list_playlists():
     try:
         playlists = []
         for p in sorted(playlists_dir.glob('*.json')):
-            with open(p, 'r') as f:
-                data = json.load(f)
+            data = _load_playlist(p.stem)
+            if data is None:
+                continue
             playlists.append({
                 'name': p.stem,
                 'entries': data.get('entries', []),
