@@ -36,6 +36,9 @@ class OverlayService : Service() {
         // Needed because without FLAG_LAYOUT_NO_LIMITS, layoutParams.y is relative to the
         // usable area (below status bar), but MediaProjection captures from the absolute top.
         @Volatile var statusBarHeight: Int = 0
+        // Callback set by MainActivity — invoked when the X button is tapped so Flutter
+        // can stop the bubble cast before the overlay service shuts down.
+        var onStopCastRequested: (() -> Unit)? = null
 
         fun setCropState(left: Float, top: Float, width: Float, height: Float) {
             cropLeft = left; cropTop = top; cropWidth = width; cropHeight = height
@@ -122,6 +125,8 @@ class OverlayService : Service() {
 
         overlayView = CropOverlayView(this, params, windowManager!!,
             onClose = {
+                // Notify Flutter to stop casting before tearing down the overlay
+                onStopCastRequested?.invoke()
                 removeOverlay()
                 stopSelf()
             },

@@ -818,8 +818,8 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                           child: Slider(
                             value: _brightness,
                             min: 0.05,
-                            max: 2.0,
-                            divisions: 39,
+                            max: 3.0,
+                            divisions: 59,
                             label: '${(_brightness * 100).round()}%',
                             onChanged: (value) {
                               setState(() {

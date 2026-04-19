@@ -97,6 +97,12 @@ class MainActivity : FlutterActivity() {
         Log.d(TAG, "configureFlutterEngine")
 
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
+
+        // Allow OverlayService to notify Flutter when the X button is tapped
+        OverlayService.onStopCastRequested = {
+            methodChannel?.invokeMethod("stopCast", null)
+        }
+
         methodChannel!!.setMethodCallHandler { call, result ->
             Log.d(TAG, "MethodChannel call: ${call.method}")
             when (call.method) {

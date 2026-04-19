@@ -37,9 +37,9 @@ class VideoPlayer:
     
     @brightness.setter
     def brightness(self, value: Optional[float]):
-        """Set brightness dynamically (0.05-2.0 range, or None for default)."""
+        """Set brightness dynamically (0.05-3.0 range, or None for default)."""
         if value is not None:
-            value = max(0.05, min(2.0, float(value)))
+            value = max(0.05, min(3.0, float(value)))
         self._brightness = value
 
     def stop(self):
@@ -157,16 +157,17 @@ class VideoPlayer:
             print(f"  Initial brightness: {brightness}")
 
         def render_frame(arr_uint8: np.ndarray):
+            # Apply +20% contrast enhancement around the midpoint
+            arr_f = arr_uint8.astype(np.float32)
+            arr_f = np.clip(128.0 + (arr_f - 128.0) * 1.20, 0.0, 255.0)
             # Use dynamic brightness - check current value each frame
             br = self._brightness
             if br is not None:
-                # Scale brightness: values 0.05-2.0 map to 5%-200%
+                # Scale brightness: values 0.05-3.0 map to 5%-300%
                 scale = float(br)
                 if scale != 1.0:
-                    scaled = np.minimum(255.0, arr_uint8.astype(np.float32) * scale).astype(np.uint8)
-                    self.matrix.render_colors(scaled)
-                    return
-            self.matrix.render_colors(arr_uint8)
+                    arr_f = np.minimum(255.0, arr_f * scale)
+            self.matrix.render_colors(arr_f.astype(np.uint8))
 
         frames_rendered = 0
 

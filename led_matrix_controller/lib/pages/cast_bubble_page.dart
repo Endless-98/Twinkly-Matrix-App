@@ -23,6 +23,7 @@ Uint8List _composeBubbleFrameIsolate(Map<String, dynamic> args) {
   final double cropT = args['ct'];
   final double cropW = args['cw'];
   final double cropH = args['ch'];
+  final double brightness = (args['brightness'] as num? ?? 1.0).toDouble();
 
   const matrixW = 90;
   const matrixH = 50;
@@ -113,6 +114,13 @@ Uint8List _composeBubbleFrameIsolate(Map<String, dynamic> args) {
     }
   }
 
+  // Apply brightness scaling (0.05–3.0)
+  if (brightness != 1.0) {
+    for (int i = 0; i < fullFrame.length; i++) {
+      fullFrame[i] = (fullFrame[i] * brightness).round().clamp(0, 255);
+    }
+  }
+
   return fullFrame;
 }
 
@@ -134,6 +142,7 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
   int frameCount = 0;
   double currentFps = 0.0;
   bool _overlayActive = false;
+  double _brightness = 1.0;
 
   static const _channel = MethodChannel('com.twinklywall.led_matrix_controller/screen_capture');
 
@@ -175,7 +184,15 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _channel.setMethodCallHandler(_handleMethodCall);
     logger.info('Cast Bubble page initialized', module: 'UI');
+  }
+
+  Future<dynamic> _handleMethodCall(MethodCall call) async {
+    if (call.method == 'stopCast' && isCapturing) {
+      logger.info('Overlay X button — stopping cast', module: 'CAST');
+      await _stopCapture();
+    }
   }
 
   @override
@@ -189,6 +206,7 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
 
   @override
   void dispose() {
+    _channel.setMethodCallHandler(null);
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -354,6 +372,7 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
             'ct': _cropRect.top,
             'cw': _cropRect.width,
             'ch': _cropRect.height,
+            'brightness': _brightness,
           });
           lastComposedFrame = fullFrame;
         } else {
@@ -460,6 +479,14 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
       setState(() { frameCount = localFrameCount; });
     }
     logger.info('Bubble cast loop ended ($localFrameCount frames)', module: 'CAST');
+
+    // If the loop exited unexpectedly (error break) while the UI still shows
+    // casting as active, run a proper stop to close the DDP socket and release
+    // the screen capture service.
+    if (mounted && isCapturing) {
+      logger.warn('Loop exited while isCapturing=true — running cleanup', module: 'CAST');
+      await _stopCapture();
+    }
   }
 
   @override
@@ -641,6 +668,33 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Brightness slider
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Row(
+            children: [
+              const Icon(Icons.brightness_6, size: 18, color: Colors.cyan),
+              const SizedBox(width: 8),
+              const Text('Brightness:'),
+              Expanded(
+                child: Slider(
+                  value: _brightness,
+                  min: 0.05,
+                  max: 3.0,
+                  divisions: 59,
+                  label: '${(_brightness * 100).round()}%',
+                  onChanged: (v) => setState(() => _brightness = v),
+                ),
+              ),
+              SizedBox(
+                width: 48,
+                child: Text('${(_brightness * 100).round()}%',
+                    style: const TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 8),
         // Desktop-only: full-screen toggle
         if (!Platform.isAndroid && !Platform.isIOS) ...[
           SizedBox(
