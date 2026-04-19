@@ -1320,10 +1320,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
           fit: StackFit.expand,
           children: [
             // Thumbnail or default background
-            Image.network(
-              thumbnailUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
+            Container(
+              color: Colors.black,
+              child: Image.network(
+                thumbnailUrl,
+                fit: BoxFit.cover,
+                gaplessPlayback: true,
+                errorBuilder: (context, error, stackTrace) {
                 return Container(
                   color: Colors.grey[700],
                   child: Center(
@@ -1351,6 +1354,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
                   ),
                 );
               },
+            ),
             ),
             // Dark overlay for better text visibility
             Container(
@@ -1742,7 +1746,7 @@ class _PlaylistEditor extends StatefulWidget {
 class _PlaylistEditorState extends State<_PlaylistEditor> {
   late List<Map<String, dynamic>> _entries;
   late double _transitionDuration;
-  static const _transitions = ['none', 'fade', 'slide', 'fisheye_swirl'];
+  static const _transitions = ['none', 'fade', 'slide', 'slide_up', 'wipe', 'dissolve', 'zoom', 'iris', 'fisheye_swirl'];
 
   @override
   void initState() {
@@ -2066,12 +2070,16 @@ class _ScenePickerDialogState extends State<_ScenePickerDialog> {
                         child: Stack(
                           fit: StackFit.expand,
                           children: [
-                            Image.network(
-                              widget.thumbnailUrl(scene),
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, __, ___) => Container(
-                                color: Colors.grey[800],
-                                child: const Icon(Icons.movie, size: 28, color: Colors.white24),
+                            Container(
+                              color: Colors.black,
+                              child: Image.network(
+                                widget.thumbnailUrl(scene),
+                                fit: BoxFit.cover,
+                                gaplessPlayback: true,
+                                errorBuilder: (_, __, ___) => Container(
+                                  color: Colors.grey[800],
+                                  child: const Icon(Icons.movie, size: 28, color: Colors.white24),
+                                ),
                               ),
                             ),
                             if (selected)

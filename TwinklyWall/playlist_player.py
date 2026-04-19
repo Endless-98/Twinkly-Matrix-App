@@ -128,21 +128,29 @@ class PlaylistPlayer:
                 # --- Transition from previous clip (or loop-back if idx==0) ---
                 # prev_last_frame is None only on the very first clip of the very
                 # first play-through, so no transition fires then.
+                # The incoming clip starts playing immediately — we blend its
+                # advancing frames over the outgoing clip's last frame.
                 if prev_last_frame is not None and transition_name != "none":
                     for ti in range(trans_frames):
                         if self._should_stop:
                             return total_rendered
                         t = (ti + 1) / trans_frames
-                        blended = trans_fn(prev_last_frame, first_frame, t)
+                        # Use advancing frames of incoming clip during transition
+                        in_fi = min(ti, frames.shape[0] - 1)
+                        blended = trans_fn(prev_last_frame, frames[in_fi], t)
                         t0 = time.perf_counter()
                         self._render_frame(blended)
                         total_rendered += 1
                         elapsed = time.perf_counter() - t0
                         if frame_dt - elapsed > 0:
                             time.sleep(frame_dt - elapsed)
+                    # Skip the frames already shown during transition
+                    clip_start_frame = min(trans_frames, frames.shape[0])
+                else:
+                    clip_start_frame = 0
 
-                # --- Play clip frames ---
-                for fi in range(frames.shape[0]):
+                # --- Play remaining clip frames ---
+                for fi in range(clip_start_frame, frames.shape[0]):
                     if self._should_stop:
                         return total_rendered
                     t0 = time.perf_counter()

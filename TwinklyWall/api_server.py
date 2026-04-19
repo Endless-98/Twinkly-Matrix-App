@@ -494,6 +494,64 @@ def get_video_thumbnail(video_stem):
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/videos/<filename>/preview', methods=['GET'])
+def get_video_preview(filename):
+    """Return an MP4 preview of a rendered .npz video, upscaled for viewing."""
+    try:
+        filename = unquote(filename)
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            fallback_path = Path(__file__).parent / 'dotmatrix' / 'rendered_videos' / filename
+            if fallback_path.exists():
+                file_path = fallback_path
+            else:
+                return jsonify({'error': 'Video not found'}), 404
+
+        # Cache in a previews directory
+        preview_dir = rendered_videos_dir / '.previews'
+        preview_dir.mkdir(exist_ok=True)
+        preview_path = preview_dir / (Path(filename).stem + '.mp4')
+
+        # Rebuild if source is newer
+        if preview_path.exists() and preview_path.stat().st_mtime >= file_path.stat().st_mtime:
+            return send_file(str(preview_path), mimetype='video/mp4')
+
+        if not HAS_CV2:
+            return jsonify({'error': 'cv2 not available'}), 500
+
+        arr = np.load(file_path)
+        frames = arr['frames']
+        fps = float(arr['fps']) if 'fps' in arr else 20.0
+
+        # Upscale for viewability (each LED pixel → 8×8 block)
+        scale = 8
+        h, w = frames.shape[1], frames.shape[2]
+        out_w, out_h = w * scale, h * scale
+
+        tmp_path = str(preview_path) + '.tmp.mp4'
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(tmp_path, fourcc, fps, (out_w, out_h))
+        try:
+            for i in range(len(frames)):
+                bgr = cv2.cvtColor(frames[i], cv2.COLOR_RGB2BGR)
+                big = cv2.resize(bgr, (out_w, out_h), interpolation=cv2.INTER_NEAREST)
+                writer.write(big)
+        finally:
+            writer.release()
+
+        # Atomic rename
+        os.replace(tmp_path, str(preview_path))
+        log(f"Generated preview: {preview_path.name} ({len(frames)} frames)", module="API")
+
+        return send_file(str(preview_path), mimetype='video/mp4')
+    except Exception as e:
+        log(f"Preview error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/videos/<filename>/meta', methods=['GET'])
 def get_video_metadata(filename):
     """Return basic metadata for a rendered video (.npz)."""

@@ -1,70 +1,9 @@
 import 'package:flutter/material.dart';
 import 'dart:async';
-import 'dart:typed_data';
-import 'package:http/http.dart' as http;
-
-/// A robust frame viewer that maintains a single displayed image and never flickers.
-class _FrameBuffer {
-  final Map<int, Uint8List> _cache = {};
-  Uint8List? _currentDisplay;
-  int _displayedIndex = -1;
-
-  static const int maxSize = 400;
-
-  Uint8List? get current => _currentDisplay;
-  int get displayedIndex => _displayedIndex;
-
-  bool store(int index, Uint8List bytes) {
-    final isNew = !_cache.containsKey(index);
-    _cache[index] = bytes;
-    return isNew;
-  }
-
-  Uint8List? getBestFrame(int targetIndex) {
-    if (_cache.containsKey(targetIndex)) {
-      _currentDisplay = _cache[targetIndex];
-      _displayedIndex = targetIndex;
-      return _currentDisplay;
-    }
-
-    int? bestIndex;
-    for (final idx in _cache.keys) {
-      if (idx <= targetIndex) {
-        if (bestIndex == null || idx > bestIndex) bestIndex = idx;
-      }
-    }
-    bestIndex ??= _cache.keys.isNotEmpty
-        ? _cache.keys.reduce(
-            (a, b) => (a - targetIndex).abs() < (b - targetIndex).abs() ? a : b)
-        : null;
-
-    if (bestIndex != null) {
-      _currentDisplay = _cache[bestIndex];
-      _displayedIndex = bestIndex;
-    }
-
-    return _currentDisplay;
-  }
-
-  void evict(int center) {
-    if (_cache.length <= maxSize) return;
-    final sorted = _cache.keys.toList()
-      ..sort((a, b) => (a - center).abs().compareTo((b - center).abs()));
-    for (int i = maxSize; i < sorted.length; i++) {
-      _cache.remove(sorted[i]);
-    }
-  }
-
-  bool has(int index) => _cache.containsKey(index);
-  void clear() {
-    _cache.clear();
-    _currentDisplay = null;
-    _displayedIndex = -1;
-  }
-}
+import 'package:video_player/video_player.dart';
 
 class RenderedVideoTrimmerDialog extends StatefulWidget {
-  final String videoPath; // Kept for compatibility, not used
+  final String videoPath;
   final String fileName;
   final Function(double startTime, double endTime, String outputName) onConfirm;
   final double? duration;
@@ -100,8 +39,12 @@ class _RenderedVideoTrimmerDialogState
   double _endTime = 0.0;
   double _currentPosition = 0.0;
 
-  bool _isPlaying = false;
-  Timer? _playbackTimer;
+  VideoPlayerController? _controller;
+  bool _videoReady = false;
+  bool _videoError = false;
+  String? _errorMessage;
+
+  Timer? _positionTimer;
 
   late TextEditingController _outputNameController;
 
@@ -117,56 +60,96 @@ class _RenderedVideoTrimmerDialogState
         ? widget.fileName.substring(0, widget.fileName.lastIndexOf('.'))
         : widget.fileName;
     _outputNameController = TextEditingController(text: '${stem}_trim');
+
+    _initVideo();
+  }
+
+  Future<void> _initVideo() async {
+    final encoded = Uri.encodeComponent(widget.fileName);
+    final url = 'http://${widget.apiHost}:${widget.apiPort}'
+        '/api/videos/$encoded/preview';
+
+    try {
+      final controller = VideoPlayerController.networkUrl(Uri.parse(url));
+      _controller = controller;
+
+      await controller.initialize();
+      if (!mounted) return;
+
+      // Use video duration if available (more accurate than metadata)
+      final videoDur = controller.value.duration.inMilliseconds / 1000.0;
+      if (videoDur > 0) {
+        _duration = videoDur;
+        _endTime = _duration;
+      }
+
+      controller.setLooping(false);
+      controller.addListener(_onVideoUpdate);
+
+      setState(() => _videoReady = true);
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _videoError = true;
+          _errorMessage = e.toString();
+        });
+      }
+    }
+  }
+
+  void _onVideoUpdate() {
+    if (!mounted || _controller == null) return;
+    final pos = _controller!.value.position.inMilliseconds / 1000.0;
+    setState(() => _currentPosition = pos);
+
+    // Loop within trim region during playback
+    if (_controller!.value.isPlaying && pos >= _endTime) {
+      _controller!.seekTo(Duration(milliseconds: (_startTime * 1000).round()));
+    }
   }
 
   @override
   void dispose() {
-    _playbackTimer?.cancel();
+    _positionTimer?.cancel();
+    _controller?.removeListener(_onVideoUpdate);
+    _controller?.dispose();
     _outputNameController.dispose();
     super.dispose();
   }
 
   void _togglePlayPause() {
-    if (_isPlaying) {
-      _playbackTimer?.cancel();
-      _playbackTimer = null;
-      setState(() => _isPlaying = false);
-    } else {
-      // Snap to start of trim region if outside
-      if (_currentPosition < _startTime || _currentPosition >= _endTime) {
-        setState(() => _currentPosition = _startTime);
-      }
-      setState(() => _isPlaying = true);
+    if (_controller == null || !_videoReady) return;
 
-      final frameDuration = Duration(milliseconds: (1000 / _fps).round());
-      _playbackTimer = Timer.periodic(frameDuration, (timer) {
-        if (!mounted) {
-          timer.cancel();
-          return;
-        }
-        setState(() {
-          _currentPosition += 1 / _fps;
-          if (_currentPosition >= _endTime) {
-            _currentPosition = _startTime; // Loop within trim region
-          }
-        });
-      });
+    if (_controller!.value.isPlaying) {
+      _controller!.pause();
+    } else {
+      // Snap to trim start if outside trim region
+      if (_currentPosition < _startTime || _currentPosition >= _endTime) {
+        _controller!.seekTo(
+            Duration(milliseconds: (_startTime * 1000).round()));
+      }
+      _controller!.play();
     }
   }
 
   void _seekToPosition(double seconds) {
-    setState(() {
-      _currentPosition = seconds.clamp(0.0, _duration);
-    });
+    final clamped = seconds.clamp(0.0, _duration);
+    _controller?.seekTo(Duration(milliseconds: (clamped * 1000).round()));
+    setState(() => _currentPosition = clamped);
   }
 
   void _updateTrimRange(RangeValues values) {
     setState(() {
       _startTime = values.start;
       _endTime = values.end;
-      // Clamp current position to the new trim range
-      _currentPosition = _currentPosition.clamp(_startTime, _endTime);
     });
+    // If playing and current position is outside new range, seek to start
+    if (_controller != null &&
+        _controller!.value.isPlaying &&
+        (_currentPosition < _startTime || _currentPosition > _endTime)) {
+      _controller!.seekTo(
+          Duration(milliseconds: (_startTime * 1000).round()));
+    }
   }
 
   String _displayName(String fileName) {
@@ -185,6 +168,7 @@ class _RenderedVideoTrimmerDialogState
         ((trimDuration * _fps).round()).clamp(0, _totalFrames);
     final outputNameEmpty = _outputNameController.text.trim().isEmpty;
     final canConfirm = !outputNameEmpty && trimDuration >= 1 / _fps;
+    final isPlaying = _controller?.value.isPlaying ?? false;
 
     return Dialog(
       backgroundColor: const Color(0xFF1E1E1E),
@@ -207,10 +191,8 @@ class _RenderedVideoTrimmerDialogState
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Trim Video',
-                          style: Theme.of(context).textTheme.titleLarge,
-                        ),
+                        Text('Trim Video',
+                            style: Theme.of(context).textTheme.titleLarge),
                         Text(
                           _displayName(widget.fileName),
                           style: Theme.of(context)
@@ -230,21 +212,14 @@ class _RenderedVideoTrimmerDialogState
               ),
               const SizedBox(height: 8),
 
-              // Frame viewer
+              // Video player
               AspectRatio(
                 aspectRatio: 90 / 50,
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: Container(
                     color: Colors.black,
-                    child: _RenderedVideoFrameViewer(
-                      fileName: widget.fileName,
-                      currentPosition: _currentPosition,
-                      fps: _fps,
-                      totalFrames: _totalFrames,
-                      apiHost: widget.apiHost,
-                      apiPort: widget.apiPort,
-                    ),
+                    child: _buildVideoArea(),
                   ),
                 ),
               ),
@@ -262,16 +237,16 @@ class _RenderedVideoTrimmerDialogState
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
                     _statChip('Frames', '$_totalFrames'),
-                    _divider(),
+                    _vertDivider(),
                     _statChip('FPS', _fps.toStringAsFixed(1)),
-                    _divider(),
+                    _vertDivider(),
                     _statChip('Length', _formatDuration(_duration)),
                   ],
                 ),
               ),
               const SizedBox(height: 10),
 
-              // Seek bar (full video)
+              // Seek bar
               Row(
                 children: [
                   SizedBox(
@@ -279,7 +254,7 @@ class _RenderedVideoTrimmerDialogState
                     child: IconButton(
                       padding: EdgeInsets.zero,
                       icon: Icon(
-                        _isPlaying ? Icons.pause : Icons.play_arrow,
+                        isPlaying ? Icons.pause : Icons.play_arrow,
                         color: Colors.cyanAccent,
                       ),
                       onPressed: _togglePlayPause,
@@ -297,7 +272,7 @@ class _RenderedVideoTrimmerDialogState
                         trackHeight: 3,
                       ),
                       child: Slider(
-                        value: _currentPosition,
+                        value: _currentPosition.clamp(0.0, _duration),
                         min: 0,
                         max: _duration,
                         onChanged: _seekToPosition,
@@ -316,7 +291,7 @@ class _RenderedVideoTrimmerDialogState
                 ],
               ),
 
-              // Trim region (RangeSlider)
+              // Trim region
               Container(
                 padding:
                     const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
@@ -333,7 +308,7 @@ class _RenderedVideoTrimmerDialogState
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         Text(
-                          'Trim  •  ${_formatDuration(trimDuration)}  ($selectedFrames frames)',
+                          'Trim  \u2022  ${_formatDuration(trimDuration)}  ($selectedFrames frames)',
                           style: const TextStyle(
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
@@ -353,8 +328,6 @@ class _RenderedVideoTrimmerDialogState
                             setState(() {
                               _startTime = 0.0;
                               _endTime = _duration;
-                              _currentPosition =
-                                  _currentPosition.clamp(0.0, _duration);
                             });
                           },
                         ),
@@ -383,63 +356,19 @@ class _RenderedVideoTrimmerDialogState
                         },
                       ),
                     ),
-                    // Start / End tap-to-seek chips
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        GestureDetector(
+                        _seekChip(
+                          icon: Icons.skip_previous,
+                          label: _formatDuration(_startTime),
                           onTap: () => _seekToPosition(_startTime),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[850],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                const Icon(Icons.skip_previous,
-                                    size: 14,
-                                    color: Colors.cyanAccent),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _formatDuration(_startTime),
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.cyanAccent,
-                                      fontWeight: FontWeight.w500),
-                                ),
-                              ],
-                            ),
-                          ),
                         ),
-                        GestureDetector(
+                        _seekChip(
+                          icon: Icons.skip_next,
+                          label: _formatDuration(_endTime),
                           onTap: () => _seekToPosition(_endTime),
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[850],
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _formatDuration(_endTime),
-                                  style: const TextStyle(
-                                      fontSize: 12,
-                                      color: Colors.cyanAccent,
-                                      fontWeight: FontWeight.w500),
-                                ),
-                                const SizedBox(width: 4),
-                                const Icon(Icons.skip_next,
-                                    size: 14,
-                                    color: Colors.cyanAccent),
-                              ],
-                            ),
-                          ),
+                          iconFirst: false,
                         ),
                       ],
                     ),
@@ -514,6 +443,105 @@ class _RenderedVideoTrimmerDialogState
     );
   }
 
+  Widget _buildVideoArea() {
+    if (_videoError) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.error_outline,
+                  color: Colors.redAccent, size: 32),
+              const SizedBox(height: 8),
+              Text(
+                'Could not load preview',
+                style: const TextStyle(color: Colors.white70, fontSize: 13),
+              ),
+              if (_errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    _errorMessage!,
+                    style: const TextStyle(
+                        color: Colors.white38, fontSize: 10),
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    if (!_videoReady || _controller == null) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(color: Colors.cyanAccent),
+            SizedBox(height: 8),
+            Text('Generating preview...',
+                style: TextStyle(color: Colors.white54, fontSize: 12)),
+          ],
+        ),
+      );
+    }
+
+    return GestureDetector(
+      onTap: _togglePlayPause,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          VideoPlayer(_controller!),
+          if (!_controller!.value.isPlaying)
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.black38,
+                shape: BoxShape.circle,
+              ),
+              padding: const EdgeInsets.all(12),
+              child: const Icon(Icons.play_arrow,
+                  color: Colors.white, size: 36),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _seekChip({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+    bool iconFirst = true,
+  }) {
+    final iconW = Icon(icon, size: 14, color: Colors.cyanAccent);
+    final textW = Text(
+      label,
+      style: const TextStyle(
+          fontSize: 12,
+          color: Colors.cyanAccent,
+          fontWeight: FontWeight.w500),
+    );
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.grey[850],
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: iconFirst
+              ? [iconW, const SizedBox(width: 4), textW]
+              : [textW, const SizedBox(width: 4), iconW],
+        ),
+      ),
+    );
+  }
+
   Widget _statChip(String label, String value) {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -530,7 +558,7 @@ class _RenderedVideoTrimmerDialogState
     );
   }
 
-  Widget _divider() => Container(
+  Widget _vertDivider() => Container(
         height: 24,
         width: 1,
         color: Colors.grey[700],
@@ -542,167 +570,5 @@ class _RenderedVideoTrimmerDialogState
     final s = d.inSeconds % 60;
     final ms = (d.inMilliseconds % 1000) ~/ 100;
     return '${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}.$ms';
-  }
-}
-
-// ── Frame viewer ──────────────────────────────────────────────────────────────
-
-class _RenderedVideoFrameViewer extends StatefulWidget {
-  final String fileName;
-  final double currentPosition;
-  final double fps;
-  final int totalFrames;
-  final String apiHost;
-  final int apiPort;
-
-  const _RenderedVideoFrameViewer({
-    required this.fileName,
-    required this.currentPosition,
-    required this.fps,
-    required this.totalFrames,
-    required this.apiHost,
-    required this.apiPort,
-  });
-
-  @override
-  State<_RenderedVideoFrameViewer> createState() =>
-      _RenderedVideoFrameViewerState();
-}
-
-class _RenderedVideoFrameViewerState
-    extends State<_RenderedVideoFrameViewer> {
-  final _FrameBuffer _buffer = _FrameBuffer();
-  final Set<int> _pending = {};
-  final http.Client _client = http.Client();
-
-  static const int _prefetchAhead = 80;
-  static const int _prefetchBehind = 20;
-
-  int _lastRequestedFrame = -1;
-  bool _disposed = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _prefetchInitial();
-  }
-
-  @override
-  void dispose() {
-    _disposed = true;
-    _client.close();
-    _buffer.clear();
-    _pending.clear();
-    super.dispose();
-  }
-
-  @override
-  void didUpdateWidget(covariant _RenderedVideoFrameViewer oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _ensureFramesLoaded();
-  }
-
-  int get _targetFrame =>
-      (widget.currentPosition * widget.fps)
-          .floor()
-          .clamp(0, widget.totalFrames - 1);
-
-  String _frameUrl(int idx) =>
-      'http://${widget.apiHost}:${widget.apiPort}/api/videos/'
-      '${Uri.encodeComponent(widget.fileName)}/frame/$idx';
-
-  void _prefetchInitial() {
-    const batchSize = 60;
-    for (int i = 0; i < batchSize && i < widget.totalFrames; i++) {
-      _fetchFrame(i);
-    }
-    _ensureFramesLoaded();
-  }
-
-  void _ensureFramesLoaded() {
-    final target = _targetFrame;
-    if (target == _lastRequestedFrame) return;
-    _lastRequestedFrame = target;
-
-    _fetchFrame(target);
-
-    for (int i = 1; i <= _prefetchAhead; i++) {
-      final idx = target + i;
-      if (idx < widget.totalFrames) _fetchFrame(idx);
-    }
-
-    for (int i = 1; i <= _prefetchBehind; i++) {
-      final idx = target - i;
-      if (idx >= 0) _fetchFrame(idx);
-    }
-
-    _buffer.evict(target);
-  }
-
-  Future<void> _fetchFrame(int idx) async {
-    if (_buffer.has(idx) || _pending.contains(idx)) return;
-    _pending.add(idx);
-
-    try {
-      final response = await _client.get(Uri.parse(_frameUrl(idx)));
-      if (_disposed) return;
-
-      if (response.statusCode == 200) {
-        _buffer.store(idx, response.bodyBytes);
-
-        if (mounted && (idx == _targetFrame || _buffer.current == null)) {
-          setState(() {});
-        }
-      }
-    } catch (_) {
-      // Silently ignore fetch errors
-    } finally {
-      _pending.remove(idx);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final target = _targetFrame;
-    final bytes = _buffer.getBestFrame(target);
-
-    Widget content;
-    if (bytes != null) {
-      content = Image.memory(
-        bytes,
-        fit: BoxFit.contain,
-        gaplessPlayback: true,
-      );
-    } else {
-      content = const Center(
-        child: CircularProgressIndicator(color: Colors.white54),
-      );
-    }
-
-    return Stack(
-      children: [
-        Positioned.fill(child: content),
-        Positioned(
-          bottom: 8,
-          right: 8,
-          child: Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.black54,
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Text(
-              'Frame $target / ${widget.totalFrames}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
   }
 }

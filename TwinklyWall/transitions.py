@@ -35,6 +35,70 @@ def slide_left(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndar
     return result
 
 
+def slide_up(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
+    """Slide the incoming frame in from the bottom."""
+    h, w, c = frame_out.shape
+    offset = int(round(t * h))
+    result = np.zeros_like(frame_out)
+    if h - offset > 0:
+        result[:h - offset] = frame_out[offset:]
+    if offset > 0:
+        result[h - offset:] = frame_in[:offset]
+    return result
+
+
+def wipe_right(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
+    """Hard wipe revealing incoming from left to right."""
+    h, w, c = frame_out.shape
+    col = int(round(t * w))
+    result = frame_out.copy()
+    if col > 0:
+        result[:, :col] = frame_in[:, :col]
+    return result
+
+
+def dissolve(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
+    """Random pixel dissolve: pixels randomly flip to incoming frame."""
+    rng = np.random.RandomState(42)
+    mask = rng.random(frame_out.shape[:2]) < t
+    result = frame_out.copy()
+    result[mask] = frame_in[mask]
+    return result
+
+
+def zoom_in(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
+    """Incoming frame zooms up from center over outgoing."""
+    h, w, c = frame_out.shape
+    # Scale goes from 0.05 → 1.0
+    scale = max(0.05, t)
+    new_h = max(1, int(h * scale))
+    new_w = max(1, int(w * scale))
+    # Resize incoming to the scaled size then paste centered
+    # Use simple nearest-neighbour slicing for speed (90×50 is tiny)
+    y_indices = np.linspace(0, h - 1, new_h).astype(np.intp)
+    x_indices = np.linspace(0, w - 1, new_w).astype(np.intp)
+    small = frame_in[np.ix_(y_indices, x_indices)]
+    top = (h - new_h) // 2
+    left = (w - new_w) // 2
+    result = frame_out.copy()
+    result[top:top + new_h, left:left + new_w] = small
+    return result
+
+
+def iris_circle(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
+    """Circular iris wipe expanding from center."""
+    h, w, c = frame_out.shape
+    cy, cx = h / 2.0, w / 2.0
+    max_r = np.sqrt(cx * cx + cy * cy)
+    radius = t * max_r
+    y_coords, x_coords = np.mgrid[0:h, 0:w].astype(np.float32)
+    dist = np.sqrt((x_coords - cx) ** 2 + (y_coords - cy) ** 2)
+    mask = dist <= radius
+    result = frame_out.copy()
+    result[mask] = frame_in[mask]
+    return result
+
+
 def fisheye_swirl(frame_out: np.ndarray, frame_in: np.ndarray, t: float) -> np.ndarray:
     """Fisheye swirl distortion that morphs from outgoing to incoming.
 
@@ -102,6 +166,11 @@ TRANSITIONS: dict[str, TransitionFn] = {
     "none": lambda a, b, t: b if t >= 0.5 else a,
     "fade": fade,
     "slide": slide_left,
+    "slide_up": slide_up,
+    "wipe": wipe_right,
+    "dissolve": dissolve,
+    "zoom": zoom_in,
+    "iris": iris_circle,
     "fisheye_swirl": fisheye_swirl,
 }
 
