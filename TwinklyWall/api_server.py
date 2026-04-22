@@ -243,13 +243,16 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Release the FPP overlay (state 0) so fppd stops forwarding pixel data.
+    """Stop all data to the Twinkly controllers while idle.
 
-    fppd maintains its own connection and auth tokens with the Twinkly controllers
-    independently of the overlay state.  Setting state 0 simply tells fppd to stop
-    sending our mmap data; the controllers go dark (or fall back to their built-in
-    pattern) on their own.  When playback resumes, acquire_overlay() sets state 3
-    again and fppd immediately resumes forwarding — no re-auth needed.
+    1. release_overlay() — sets FPP overlay state 0, stops our keepalive thread,
+       fppd no longer reads from our mmap.
+    2. set_all_off() — one HTTP call per controller sets Twinkly mode to 'off',
+       stopping RT mode and all frame traffic from fppd's channel output.
+
+    On resume, play_video_thread / play_playlist_thread call set_all_rt() before
+    acquire_overlay().  fppd re-enters RT mode in ~100–200 ms (one HTTP round-trip
+    using its existing auth token — no full re-login needed).
     """
     global idle_animation
     if idle_animation:
@@ -266,7 +269,12 @@ def _start_idle():
             m.fpp.release_overlay()
     except Exception as e:
         log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
-    log("FPP overlay released — lights off, no data stream", module="Idle")
+    try:
+        from twinkly_controller import set_all_off
+        set_all_off()
+    except Exception as e:
+        log(f"Failed to set Twinkly off: {e}", level='WARNING', module="Idle")
+    log("Twinkly 'off' — no data stream while idle", module="Idle")
 
 
 def _stop_idle():
@@ -327,6 +335,17 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
             log("[VIDEO_THREAD] Stop requested before play started",
                 level='INFO', module="PLAYBACK")
             return
+
+        # Re-enter Twinkly RT mode before acquiring overlay.
+        # Controllers may be in 'off' mode from _start_idle(); setting 'rt' mode
+        # here (one HTTP call per controller, ~100-200ms) means fppd can send frames
+        # immediately after acquire_overlay() without needing a full re-auth.
+        try:
+            from twinkly_controller import set_all_rt as _set_rt
+            _set_rt()
+        except Exception as _e:
+            log(f"[VIDEO_THREAD] Twinkly rt pre-warm failed (non-fatal): {_e}",
+                level='WARNING', module="PLAYBACK")
 
         # Enable FPP overlay — fppd manages Twinkly rt mode natively
         if getattr(matrix, 'fpp', None):
@@ -411,6 +430,14 @@ def play_playlist_thread(entries, loop, brightness, playback_fps, transition_dur
             log("[PLAYLIST_THREAD] Stop requested before play started",
                 level='INFO', module="PLAYBACK")
             return
+
+        # Re-enter Twinkly RT mode before acquiring overlay (mirrors VIDEO_THREAD).
+        try:
+            from twinkly_controller import set_all_rt as _set_rt
+            _set_rt()
+        except Exception as _e:
+            log(f"[PLAYLIST_THREAD] Twinkly rt pre-warm failed (non-fatal): {_e}",
+                level='WARNING', module="PLAYBACK")
 
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()

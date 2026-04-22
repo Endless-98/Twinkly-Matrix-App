@@ -145,6 +145,27 @@ def set_all_rt(config_path=_CO_UNIVERSES_PATH):
     return ok, fail
 
 
+def set_all_off(config_path=_CO_UNIVERSES_PATH):
+    """Set all controllers to 'off' mode (LEDs dark, no RT stream).  Returns (ok, fail) counts."""
+    ips = _load_controller_ips(config_path)
+    if not ips:
+        log("No Twinkly IPs found — skipping mode change", level="WARNING", module="Twinkly")
+        return 0, 0
+
+    ok = 0
+    fail = 0
+    with ThreadPoolExecutor(max_workers=len(ips), thread_name_prefix="twinkly") as pool:
+        futures = {pool.submit(_set_mode_one, ip, "off"): ip for ip in ips}
+        for fut in as_completed(futures):
+            if fut.result():
+                ok += 1
+            else:
+                fail += 1
+
+    log(f"Twinkly mode 'off': {ok} ok, {fail} failed (of {len(ips)} controllers)", module="Twinkly")
+    return ok, fail
+
+
 def ensure_rt_mode():
     """Set all controllers to 'rt' now, then keep them there with a background loop.
 
