@@ -727,31 +727,32 @@ def recolor_rendered_video(filename):
         arr = np.load(file_path, allow_pickle=False)
         # Use original frames as the recolor source if available
         original_frames = arr['original_frames'] if 'original_frames' in arr else arr['frames']
-        frames = original_frames.copy().astype(np.float32)
         fps = float(arr['fps']) if 'fps' in arr else 20.0
 
-        # --- brightness (additive) ---
-        if brightness != 0.0:
-            frames = np.clip(frames + brightness, 0.0, 255.0)
+        # Process frame-by-frame to avoid allocating a full float32 copy of all
+        # frames at once (e.g. 13k frames × 50×90×3 × 4 bytes ≈ 677 MB).
+        apply_brightness = brightness != 0.0
+        apply_contrast = contrast != 1.0
+        apply_hsv = hue != 0.0 or saturation != 1.0
 
-        # --- contrast (around mid-grey 128) ---
-        if contrast != 1.0:
-            frames = np.clip(128.0 + (frames - 128.0) * contrast, 0.0, 255.0)
-
-        # --- hue + saturation via HSV ---
-        if hue != 0.0 or saturation != 1.0:
-            n, h_dim, w_dim, c = original_frames.shape
-            for i in range(n):
-                bgr = cv2.cvtColor(frames[i].astype(np.uint8), cv2.COLOR_RGB2BGR)
+        n = len(original_frames)
+        result_frames = np.empty_like(original_frames, dtype=np.uint8)
+        for i in range(n):
+            frame = original_frames[i].astype(np.float32)
+            if apply_brightness:
+                frame = np.clip(frame + brightness, 0.0, 255.0)
+            if apply_contrast:
+                frame = np.clip(128.0 + (frame - 128.0) * contrast, 0.0, 255.0)
+            if apply_hsv:
+                bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
                 hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
                 if hue != 0.0:
                     hsv[:, :, 0] = (hsv[:, :, 0] + hue / 2.0) % 180.0
                 if saturation != 1.0:
                     hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation, 0.0, 255.0)
                 bgr2 = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
-                frames[i] = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB).astype(np.float32)
-
-        result_frames = np.clip(frames, 0, 255).astype(np.uint8)
+                frame = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB).astype(np.float32)
+            result_frames[i] = np.clip(frame, 0, 255).astype(np.uint8)
 
         # Save — preserve original_frames for future recolors
         # Exclude 'fps' from extra to avoid duplicate keyword argument
