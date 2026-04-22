@@ -180,6 +180,9 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
     bool loop = existing?['loop'] ?? true;
     bool enabled = existing?['enabled'] ?? true;
     String color = existing?['color'] ?? '#42A5F5';
+    // 0 = loop forever, N = play exactly N times
+    int playCount = existing?['play_count'] ?? (loop ? 0 : 1);
+    bool randomPick = existing?['random_pick'] ?? false;
     final fppIp = ref.read(fppIpProvider);
 
     final saved = await showDialog<Map<String, dynamic>>(
@@ -249,7 +252,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                         child: Text('No items available',
                             style: TextStyle(color: Colors.grey)),
                       )
-                    else if (targetType == 'playlist')
+                    else if (targetType == 'playlist') ...[
                       DropdownButtonFormField<String>(
                         value: target.isNotEmpty ? target : null,
                         decoration: const InputDecoration(
@@ -266,7 +269,21 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                                 ))
                             .toList(),
                         onChanged: (v) => setDlgState(() => target = v ?? ''),
-                      )
+                      ),
+                      // Random pick toggle
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text('Pick one at random'),
+                        subtitle: const Text(
+                          'Plays a random video from the folder',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                        secondary: const Icon(Icons.shuffle, size: 18, color: Colors.cyanAccent),
+                        value: randomPick,
+                        onChanged: (v) => setDlgState(() => randomPick = v),
+                      ),
+                    ]
                     else ...[
                       // Video thumbnail grid
                       const Text('Select Video',
@@ -468,13 +485,51 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Loop + Enabled
+                    // Loop / play count
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
-                      title: const Text('Loop'),
-                      value: loop,
-                      onChanged: (v) => setDlgState(() => loop = v),
+                      title: const Text('Loop forever'),
+                      value: playCount == 0,
+                      onChanged: (v) => setDlgState(() {
+                        playCount = v ? 0 : 1;
+                      }),
                     ),
+                    // Play count stepper (visible when not looping)
+                    if (playCount > 0)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Row(
+                          children: [
+                            const Text('Times to play',
+                                style: TextStyle(fontSize: 14)),
+                            const Spacer(),
+                            IconButton(
+                              icon: const Icon(Icons.remove_circle_outline),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: playCount <= 1
+                                  ? null
+                                  : () => setDlgState(() => playCount--),
+                            ),
+                            SizedBox(
+                              width: 32,
+                              child: Text(
+                                '$playCount',
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.add_circle_outline),
+                              visualDensity: VisualDensity.compact,
+                              onPressed: playCount >= 99
+                                  ? null
+                                  : () => setDlgState(() => playCount++),
+                            ),
+                          ],
+                        ),
+                      ),
                     SwitchListTile(
                       contentPadding: EdgeInsets.zero,
                       title: const Text('Enabled'),
@@ -544,7 +599,9 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                           'target': target,
                           'time': '$h:$m',
                           'days': (days.toList()..sort()),
-                          'loop': loop,
+                          'loop': playCount == 0,
+                          'play_count': playCount,
+                          'random_pick': randomPick,
                           'color': color,
                         });
                       },

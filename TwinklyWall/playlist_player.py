@@ -68,6 +68,7 @@ class PlaylistPlayer:
         self,
         entries: list[dict],
         loop: bool = False,
+        repeat_count: int = 0,
         brightness: Optional[float] = None,
         playback_fps: Optional[float] = None,
         transition_duration: float = 1.0,
@@ -76,7 +77,8 @@ class PlaylistPlayer:
 
         Args:
             entries: List of {"video": "name", "transition": "fade"|"slide"|...}
-            loop: Loop the entire playlist
+            loop: Loop the entire playlist indefinitely (ignored when repeat_count > 0)
+            repeat_count: Number of full passes to play (0 = respect loop, N = play N times)
             brightness: Initial brightness (0.05–3.0)
             playback_fps: Override per-clip fps
             transition_duration: Seconds for each transition
@@ -94,10 +96,11 @@ class PlaylistPlayer:
         loader = VideoPlayer(self.matrix, self.base_dir, self._stop_event)
         total_rendered = 0
 
-        print(f"\n[PlaylistPlayer] Starting playlist ({len(entries)} entries, loop={loop})")
+        print(f"\n[PlaylistPlayer] Starting playlist ({len(entries)} entries, loop={loop}, repeat_count={repeat_count})")
 
         # last frame carried across loop iterations for the loop-back transition
         loop_last_frame: Optional[np.ndarray] = None
+        _plays = 0
 
         while True:
             # On subsequent loop iterations prev_last_frame starts as the last
@@ -190,7 +193,10 @@ class PlaylistPlayer:
 
             # Carry the last frame into the next loop iteration for loop-back
             loop_last_frame = prev_last_frame
+            _plays += 1
 
+            if repeat_count > 0 and _plays >= repeat_count:
+                break
             if not loop:
                 break
 

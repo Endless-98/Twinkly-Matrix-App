@@ -44,13 +44,13 @@ final captureRegionProvider = StateProvider<Map<String, int>>((ref) {
 
 // Bubble position on the LED curtain (in LED pixel coordinates, 0-89 x, 0-49 y)
 final bubblePositionProvider = StateProvider<Offset>((ref) {
-  return const Offset(22.5, 12.5); // centered for default 45×25 bubble
+  return const Offset(0.0, 0.0); // default: top-left (full curtain)
 });
 
 // Bubble size on the LED curtain (width x height in LED pixels)
-// Default: half the curtain at 90:50 = 1.8:1 aspect ratio
+// Default: full curtain 90×50
 final bubbleSizeProvider = StateProvider<Size>((ref) {
-  return const Size(45.0, 25.0);
+  return const Size(90.0, 50.0);
 });
 
 // Screen crop region for bubble mode (portion of phone screen to capture)

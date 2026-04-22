@@ -307,7 +307,7 @@ def stop_current_playback():
     # to zero the mmap (lights dark) without dropping Twinkly RT mode.
 
 
-def play_video_thread(video_path, loop, speed, brightness, playback_fps, generation):
+def play_video_thread(video_path, loop, speed, brightness, playback_fps, generation, repeat_count: int = 0):
     """Thread function to play video.  Checks _stop_event during load and play."""
     global current_player, current_matrix, playback_active
 
@@ -359,15 +359,28 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
             level='INFO', module="PLAYBACK")
 
         # Play the video — player checks its own _stop flag each frame
-        frames = player.play(
-            video_path,
-            loop=loop,
-            speed=speed,
-            start_frame=0,
-            end_frame=None,
-            brightness=brightness,
-            playback_fps=playback_fps,
-        )
+        # repeat_count>0 overrides loop: play exactly N times then stop
+        if repeat_count > 0:
+            frames = player.play(
+                video_path,
+                loop=False,
+                repeat=repeat_count,
+                speed=speed,
+                start_frame=0,
+                end_frame=None,
+                brightness=brightness,
+                playback_fps=playback_fps,
+            )
+        else:
+            frames = player.play(
+                video_path,
+                loop=loop,
+                speed=speed,
+                start_frame=0,
+                end_frame=None,
+                brightness=brightness,
+                playback_fps=playback_fps,
+            )
 
         log(f"[VIDEO_THREAD] Playback complete: {frames} frames",
             level='INFO', module="PLAYBACK")
@@ -385,7 +398,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
             _start_idle()
 
 
-def play_playlist_thread(entries, loop, brightness, playback_fps, transition_duration, generation):
+def play_playlist_thread(entries, loop, brightness, playback_fps, transition_duration, generation, repeat_count: int = 0):
     """Thread function to play a playlist with transitions."""
     global current_player, current_matrix, playback_active
 
@@ -408,7 +421,8 @@ def play_playlist_thread(entries, loop, brightness, playback_fps, transition_dur
 
         frames = player.play(
             entries=entries,
-            loop=loop,
+            loop=loop if repeat_count == 0 else False,
+            repeat_count=repeat_count,
             brightness=brightness,
             playback_fps=playback_fps,
             transition_duration=transition_duration,
@@ -2189,7 +2203,7 @@ def _save_schedule(sid: str, data: dict):
         json.dump(data, f, indent=2)
 
 
-def _scheduler_trigger_video(video_name: str, loop: bool, brightness):
+def _scheduler_trigger_video(video_name: str, loop: bool, brightness, play_count: int = 0):
     global playback_active, playback_thread, current_video_name, _playback_generation
     rendered = video_name if video_name.endswith('.npz') else get_video_name_from_source(video_name)
     if not rendered:
@@ -2209,12 +2223,13 @@ def _scheduler_trigger_video(video_name: str, loop: bool, brightness):
         playback_thread = threading.Thread(
             target=play_video_thread,
             args=(str(rendered_path), loop, 1.0, brightness, 20.0, gen),
+            kwargs={'repeat_count': play_count},
             daemon=True,
         )
         playback_thread.start()
 
 
-def _scheduler_trigger_playlist(name: str, loop: bool, brightness):
+def _scheduler_trigger_playlist(name: str, loop: bool, brightness, play_count: int = 0):
     global playback_active, playback_thread, current_video_name, _playback_generation
     playlist_data = _load_playlist(name)
     if playlist_data is None:
@@ -2235,9 +2250,31 @@ def _scheduler_trigger_playlist(name: str, loop: bool, brightness):
         playback_thread = threading.Thread(
             target=play_playlist_thread,
             args=(entries, loop, brightness, 20.0, transition_duration, gen),
+            kwargs={'repeat_count': play_count},
             daemon=True,
         )
         playback_thread.start()
+
+
+def _scheduler_trigger_random_from_playlist(name: str, brightness, play_count: int = 0):
+    """Pick a random video from a playlist folder and play it as a single video."""
+    import random as _random
+    playlist_data = _load_playlist(name)
+    if playlist_data is None:
+        log(f"[SCHEDULER] Playlist not found for random pick: {name}", level='WARNING', module="Scheduler")
+        return
+    entries = playlist_data.get('entries', [])
+    if not entries:
+        log(f"[SCHEDULER] Playlist {name} is empty for random pick", level='WARNING', module="Scheduler")
+        return
+    entry = _random.choice(entries)
+    video_name = entry.get('video', '')
+    if not video_name:
+        log(f"[SCHEDULER] Random entry has no video field in playlist {name}", level='WARNING', module="Scheduler")
+        return
+    loop = (play_count == 0)
+    log(f"[SCHEDULER] Random pick from '{name}' → '{video_name}'", module="Scheduler")
+    _scheduler_trigger_video(video_name, loop, brightness, play_count)
 
 
 def _run_scheduler():
@@ -2268,14 +2305,19 @@ def _run_scheduler():
 
                     target_type = s.get('target_type', 'video')
                     target = s.get('target', '')
-                    loop = bool(s.get('loop', True))
+                    play_count = int(s.get('play_count', 0))
+                    loop = bool(s.get('loop', play_count == 0))
+                    random_pick = bool(s.get('random_pick', False))
                     brightness = s.get('brightness')
-                    log(f"[SCHEDULER] Firing '{s.get('name', sid)}' → {target_type}:{target}", module="Scheduler")
+                    log(f"[SCHEDULER] Firing '{s.get('name', sid)}' → {target_type}:{target} (play_count={play_count}, random={random_pick})", module="Scheduler")
 
                     if target_type == 'playlist':
-                        _scheduler_trigger_playlist(target, loop, brightness)
+                        if random_pick:
+                            _scheduler_trigger_random_from_playlist(target, brightness, play_count)
+                        else:
+                            _scheduler_trigger_playlist(target, loop, brightness, play_count)
                     else:
-                        _scheduler_trigger_video(target, loop, brightness)
+                        _scheduler_trigger_video(target, loop, brightness, play_count)
 
                 except Exception as e:
                     log(f"[SCHEDULER] Error on {sid}: {e}", level='ERROR', module="Scheduler")
@@ -2316,6 +2358,8 @@ def create_schedule():
             'time': str(data.get('time', '20:00')),
             'days': [int(d) for d in data.get('days', list(range(7)))],
             'loop': bool(data.get('loop', True)),
+            'play_count': int(data.get('play_count', 0)),
+            'random_pick': bool(data.get('random_pick', False)),
             'color': str(data.get('color', '#42A5F5')),
         }
         _save_schedule(sid, sched)
@@ -2333,7 +2377,7 @@ def update_schedule(sid):
         if existing is None:
             return jsonify({'error': 'Schedule not found'}), 404
         data = request.json or {}
-        for field in ('name', 'enabled', 'target_type', 'target', 'time', 'days', 'loop', 'color'):
+        for field in ('name', 'enabled', 'target_type', 'target', 'time', 'days', 'loop', 'play_count', 'random_pick', 'color'):
             if field in data:
                 existing[field] = data[field]
         _save_schedule(sid, existing)
