@@ -243,13 +243,13 @@ def initialize_matrix():
 
 
 def _start_idle():
-    """Zero the mmap buffer so lights go dark while keeping Twinkly RT mode alive.
+    """Release the FPP overlay (state 0) so fppd stops forwarding pixel data.
 
-    We intentionally do NOT release the FPP overlay (state 0) here because that
-    would stop fppd from sending RT frames, and Twinkly controllers exit RT mode
-    after ~3 seconds of silence — causing them to show their built-in default
-    pattern on the next play.  set_dark() writes zeros (black) to the mmap so
-    the lights are visually off while fppd keeps the RT mode connection alive.
+    fppd maintains its own connection and auth tokens with the Twinkly controllers
+    independently of the overlay state.  Setting state 0 simply tells fppd to stop
+    sending our mmap data; the controllers go dark (or fall back to their built-in
+    pattern) on their own.  When playback resumes, acquire_overlay() sets state 3
+    again and fppd immediately resumes forwarding — no re-auth needed.
     """
     global idle_animation
     if idle_animation:
@@ -263,10 +263,10 @@ def _start_idle():
     try:
         m = current_matrix
         if m and getattr(m, 'fpp', None):
-            m.fpp.set_dark()
+            m.fpp.release_overlay()
     except Exception as e:
-        log(f"Failed to set FPP dark: {e}", level='WARNING', module="Idle")
-    log("FPP mmap zeroed — lights dark, RT mode maintained", module="Idle")
+        log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
+    log("FPP overlay released — lights off, no data stream", module="Idle")
 
 
 def _stop_idle():

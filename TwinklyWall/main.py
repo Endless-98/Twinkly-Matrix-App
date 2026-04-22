@@ -535,7 +535,9 @@ def main():
         # HTTP login to /xled/v1/login INVALIDATES fppd's current token, causing
         # controllers to reject frame data until fppd re-authenticates (~120s).
 
-        # Start idle (overlay released = lights dark until playback)
+        # Start idle: release FPP overlay so fppd stops sending pixel data.
+        # fppd keeps its Twinkly connection alive; acquire_overlay() re-enables
+        # forwarding instantly when playback starts (no re-auth needed).
         _start_idle()
 
         # Run Flask server (blocks)
