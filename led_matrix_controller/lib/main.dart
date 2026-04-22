@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'pages/games_page.dart';
 import 'pages/cast_bubble_page.dart';
 import 'pages/scenes_selector_page.dart';
+import 'pages/schedules_page.dart';
 import 'providers/app_state.dart';
 import 'services/app_logger.dart';
 
@@ -285,6 +286,18 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                           Navigator.of(context).push(
                             MaterialPageRoute(
                               builder: (context) => const CastBubblePage(),
+                            ),
+                          );
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      _ModeButton(
+                        label: 'Schedules',
+                        icon: Icons.calendar_today,
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (context) => const SchedulesPage(),
                             ),
                           );
                         },

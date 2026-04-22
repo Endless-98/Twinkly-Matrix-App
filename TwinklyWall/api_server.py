@@ -4,6 +4,7 @@ Provides REST endpoints for the Flutter app to communicate with.
 """
 
 import atexit
+import datetime
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import tempfile
 import threading
 import time
 import traceback
+import uuid
 from collections import OrderedDict
 from pathlib import Path
 from urllib.parse import unquote
@@ -73,12 +75,14 @@ rendered_videos_dir = MEDIA_ROOT / "rendered"
 source_videos_dir = Path("assets/source_videos")
 uploaded_videos_dir = MEDIA_ROOT / "uploads"
 playlists_dir = MEDIA_ROOT / "playlists"
+schedules_dir = MEDIA_ROOT / "schedules"
 
 # Ensure media directories live on the large (219GB) partition, not /tmp
 os.makedirs(rendered_videos_dir, exist_ok=True)
 os.makedirs(uploaded_videos_dir, exist_ok=True)
 os.makedirs(TMP_UPLOAD_DIR, exist_ok=True)
 os.makedirs(playlists_dir, exist_ok=True)
+os.makedirs(schedules_dir, exist_ok=True)
 
 # Migrate any .npz/.png files from the legacy dotmatrix/rendered_videos/ dir
 # into the canonical rendered_videos_dir so there is one source of truth.
@@ -2153,14 +2157,215 @@ def cleanup_idle_loop():
             print(f"Error in cleanup loop: {e}")
 
 
-def start_cleanup_thread():
-    """Start the background cleanup thread."""
-    global cleanup_thread, cleanup_active
-    if cleanup_thread and cleanup_thread.is_alive():
+# ---------------------------------------------------------------------------
+# Schedule helpers
+# ---------------------------------------------------------------------------
+
+_scheduler_thread = None
+_scheduler_last_fired: dict = {}   # schedule_id -> "YYYY-MM-DD HH:MM"
+
+
+def _schedule_id_safe(sid: str) -> bool:
+    import re
+    return bool(re.match(r'^[0-9a-f\-]{36}$', sid))
+
+
+def _load_schedule(sid: str) -> dict | None:
+    if not _schedule_id_safe(sid):
+        return None
+    path = schedules_dir / f"{sid}.json"
+    if not path.exists():
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _save_schedule(sid: str, data: dict):
+    path = schedules_dir / f"{sid}.json"
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _scheduler_trigger_video(video_name: str, loop: bool, brightness):
+    global playback_active, playback_thread, current_video_name, _playback_generation
+    rendered = video_name if video_name.endswith('.npz') else get_video_name_from_source(video_name)
+    if not rendered:
+        log(f"[SCHEDULER] Video not found: {video_name}", level='WARNING', module="Scheduler")
         return
+    rendered_path = rendered_videos_dir / rendered
+    if not rendered_path.exists():
+        log(f"[SCHEDULER] Rendered file missing: {rendered_path}", level='WARNING', module="Scheduler")
+        return
+    with _playback_lock:
+        stop_current_playback()
+        _stop_event.clear()
+        _playback_generation += 1
+        gen = _playback_generation
+        playback_active = True
+        current_video_name = video_name
+        playback_thread = threading.Thread(
+            target=play_video_thread,
+            args=(str(rendered_path), loop, 1.0, brightness, 20.0, gen),
+            daemon=True,
+        )
+        playback_thread.start()
+
+
+def _scheduler_trigger_playlist(name: str, loop: bool, brightness):
+    global playback_active, playback_thread, current_video_name, _playback_generation
+    playlist_data = _load_playlist(name)
+    if playlist_data is None:
+        log(f"[SCHEDULER] Playlist not found: {name}", level='WARNING', module="Scheduler")
+        return
+    entries = playlist_data.get('entries', [])
+    if not entries:
+        log(f"[SCHEDULER] Playlist {name} is empty", level='WARNING', module="Scheduler")
+        return
+    transition_duration = playlist_data.get('transition_duration', 1.0)
+    with _playback_lock:
+        stop_current_playback()
+        _stop_event.clear()
+        _playback_generation += 1
+        gen = _playback_generation
+        playback_active = True
+        current_video_name = f"playlist:{name}"
+        playback_thread = threading.Thread(
+            target=play_playlist_thread,
+            args=(entries, loop, brightness, 20.0, transition_duration, gen),
+            daemon=True,
+        )
+        playback_thread.start()
+
+
+def _run_scheduler():
+    """Background thread: checks every 30 s and fires matching schedules."""
+    log("Schedule runner started", module="Scheduler")
+    while True:
+        try:
+            now = datetime.datetime.now()
+            current_time_str = now.strftime('%H:%M')
+            current_day = now.weekday()   # 0=Mon … 6=Sun
+            today_str = now.strftime('%Y-%m-%d')
+
+            for sched_file in list(schedules_dir.glob('*.json')):
+                sid = sched_file.stem
+                try:
+                    s = _load_schedule(sid)
+                    if s is None or not s.get('enabled', True):
+                        continue
+                    if s.get('time') != current_time_str:
+                        continue
+                    days = s.get('days', list(range(7)))
+                    if current_day not in days:
+                        continue
+                    fire_key = f"{today_str} {current_time_str}"
+                    if _scheduler_last_fired.get(sid) == fire_key:
+                        continue
+                    _scheduler_last_fired[sid] = fire_key
+
+                    target_type = s.get('target_type', 'video')
+                    target = s.get('target', '')
+                    loop = bool(s.get('loop', True))
+                    brightness = s.get('brightness')
+                    log(f"[SCHEDULER] Firing '{s.get('name', sid)}' → {target_type}:{target}", module="Scheduler")
+
+                    if target_type == 'playlist':
+                        _scheduler_trigger_playlist(target, loop, brightness)
+                    else:
+                        _scheduler_trigger_video(target, loop, brightness)
+
+                except Exception as e:
+                    log(f"[SCHEDULER] Error on {sid}: {e}", level='ERROR', module="Scheduler")
+        except Exception as e:
+            log(f"[SCHEDULER] Loop error: {e}", level='ERROR', module="Scheduler")
+        time.sleep(30)
+
+
+# ---------------------------------------------------------------------------
+# Schedule CRUD endpoints
+# ---------------------------------------------------------------------------
+
+@app.route('/api/schedules', methods=['GET'])
+def list_schedules():
+    """Return all schedules."""
+    try:
+        schedules = []
+        for f in sorted(schedules_dir.glob('*.json')):
+            data = _load_schedule(f.stem)
+            if data is not None:
+                schedules.append({'id': f.stem, **data})
+        return jsonify({'schedules': schedules})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedules', methods=['POST'])
+def create_schedule():
+    """Create a new schedule."""
+    try:
+        data = request.json or {}
+        sid = str(uuid.uuid4())
+        sched = {
+            'name': str(data.get('name', 'Untitled')),
+            'enabled': bool(data.get('enabled', True)),
+            'target_type': str(data.get('target_type', 'video')),
+            'target': str(data.get('target', '')),
+            'time': str(data.get('time', '20:00')),
+            'days': [int(d) for d in data.get('days', list(range(7)))],
+            'loop': bool(data.get('loop', True)),
+            'color': str(data.get('color', '#42A5F5')),
+        }
+        _save_schedule(sid, sched)
+        return jsonify({'id': sid, **sched}), 201
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedules/<sid>', methods=['PUT'])
+def update_schedule(sid):
+    """Update an existing schedule."""
+    try:
+        sid = unquote(sid)
+        existing = _load_schedule(sid)
+        if existing is None:
+            return jsonify({'error': 'Schedule not found'}), 404
+        data = request.json or {}
+        for field in ('name', 'enabled', 'target_type', 'target', 'time', 'days', 'loop', 'color'):
+            if field in data:
+                existing[field] = data[field]
+        _save_schedule(sid, existing)
+        return jsonify({'id': sid, **existing})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/schedules/<sid>', methods=['DELETE'])
+def delete_schedule(sid):
+    """Delete a schedule."""
+    try:
+        sid = unquote(sid)
+        path = schedules_dir / f"{sid}.json"
+        if not path.exists():
+            return jsonify({'error': 'Schedule not found'}), 404
+        path.unlink()
+        return jsonify({'status': 'deleted'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+def start_cleanup_thread():
+    """Start the background cleanup thread and schedule runner."""
+    global cleanup_thread, cleanup_active, _scheduler_thread
     cleanup_active = True
-    cleanup_thread = threading.Thread(target=cleanup_idle_loop, daemon=True)
-    cleanup_thread.start()
+    if not (cleanup_thread and cleanup_thread.is_alive()):
+        cleanup_thread = threading.Thread(target=cleanup_idle_loop, daemon=True)
+        cleanup_thread.start()
+    if not (_scheduler_thread and _scheduler_thread.is_alive()):
+        _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name='schedule-runner')
+        _scheduler_thread.start()
 
 
 if __name__ == '__main__':

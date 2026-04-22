@@ -712,6 +712,77 @@ class ApiService {
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Schedules
+  // ---------------------------------------------------------------------------
+
+  /// Fetch all schedules
+  Future<List<Map<String, dynamic>>> getSchedules() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/schedules'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        return List<Map<String, dynamic>>.from(data['schedules'] ?? []);
+      }
+      throw Exception(_parseError(response));
+    } catch (e) {
+      throw Exception('Schedule fetch error: $e');
+    }
+  }
+
+  /// Create a new schedule; returns the created schedule including its id
+  Future<Map<String, dynamic>> createSchedule(Map<String, dynamic> schedule) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/schedules'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(schedule),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 201) {
+        return Map<String, dynamic>.from(jsonDecode(response.body));
+      }
+      throw Exception(_parseError(response));
+    } catch (e) {
+      throw Exception('Schedule create error: $e');
+    }
+  }
+
+  /// Update fields on an existing schedule
+  Future<void> updateSchedule(String id, Map<String, dynamic> updates) async {
+    try {
+      final response = await http
+          .put(
+            Uri.parse('$_baseUrl/api/schedules/${Uri.encodeComponent(id)}'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(updates),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        throw Exception(_parseError(response));
+      }
+    } catch (e) {
+      throw Exception('Schedule update error: $e');
+    }
+  }
+
+  /// Delete a schedule by id
+  Future<void> deleteSchedule(String id) async {
+    try {
+      final response = await http
+          .delete(Uri.parse('$_baseUrl/api/schedules/${Uri.encodeComponent(id)}'))
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode != 200) {
+        throw Exception(_parseError(response));
+      }
+    } catch (e) {
+      throw Exception('Schedule delete error: $e');
+    }
+  }
+
   /// Play a playlist
   Future<void> playPlaylist(String name,
       {bool loop = false, double? brightness, double playbackFps = 20.0}) async {

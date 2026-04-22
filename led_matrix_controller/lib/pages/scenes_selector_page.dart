@@ -6,6 +6,7 @@ import 'dart:io' as io;import '../services/api_service.dart';
 import '../providers/app_state.dart';
 import '../widgets/video_editor_dialog.dart';
 import '../widgets/rendered_video_trimmer_dialog.dart';
+import 'schedules_page.dart';
 
 class ScenesSelectorPage extends ConsumerStatefulWidget {
   const ScenesSelectorPage({super.key});
@@ -1097,6 +1098,13 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
         title: const Text('Scenes'),
         centerTitle: true,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.calendar_today),
+            tooltip: 'Schedules',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SchedulesPage()),
+            ),
+          ),
           IconButton(icon: const Icon(Icons.create_new_folder_outlined), tooltip: 'New folder', onPressed: _createFolder),
           IconButton(icon: const Icon(Icons.add), tooltip: 'Upload video', onPressed: _uploadAndRenderVideo),
           IconButton(icon: const Icon(Icons.refresh), onPressed: _loadScenes),
