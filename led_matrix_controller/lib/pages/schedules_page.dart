@@ -180,6 +180,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
     bool loop = existing?['loop'] ?? true;
     bool enabled = existing?['enabled'] ?? true;
     String color = existing?['color'] ?? '#42A5F5';
+    final fppIp = ref.read(fppIpProvider);
 
     final saved = await showDialog<Map<String, dynamic>>(
       context: context,
@@ -248,12 +249,12 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                         child: Text('No items available',
                             style: TextStyle(color: Colors.grey)),
                       )
-                    else
+                    else if (targetType == 'playlist')
                       DropdownButtonFormField<String>(
                         value: target.isNotEmpty ? target : null,
-                        decoration: InputDecoration(
-                          labelText: targetType == 'playlist' ? 'Folder' : 'Video',
-                          border: const OutlineInputBorder(),
+                        decoration: const InputDecoration(
+                          labelText: 'Folder',
+                          border: OutlineInputBorder(),
                         ),
                         items: targetOptions
                             .map((t) => DropdownMenuItem(
@@ -265,7 +266,126 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                                 ))
                             .toList(),
                         onChanged: (v) => setDlgState(() => target = v ?? ''),
+                      )
+                    else ...[
+                      // Video thumbnail grid
+                      const Text('Select Video',
+                          style: TextStyle(fontSize: 13, color: Colors.grey)),
+                      const SizedBox(height: 8),
+                      SizedBox(
+                        height: 210,
+                        child: GridView.builder(
+                          gridDelegate:
+                              const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            crossAxisSpacing: 6,
+                            mainAxisSpacing: 6,
+                            childAspectRatio: 1.35,
+                          ),
+                          itemCount: targetOptions.length,
+                          itemBuilder: (_, idx) {
+                            final name = targetOptions[idx];
+                            final isSelected = name == target;
+                            final thumbUrl =
+                                ApiService(host: fppIp).getThumbnailUrl(name);
+                            return GestureDetector(
+                              onTap: () =>
+                                  setDlgState(() => target = name),
+                              child: AnimatedContainer(
+                                duration:
+                                    const Duration(milliseconds: 150),
+                                decoration: BoxDecoration(
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? Colors.cyanAccent
+                                        : Colors.transparent,
+                                    width: 2.5,
+                                  ),
+                                  boxShadow: isSelected
+                                      ? [
+                                          BoxShadow(
+                                            color: Colors.cyanAccent
+                                                .withValues(alpha: 0.45),
+                                            blurRadius: 8,
+                                          )
+                                        ]
+                                      : null,
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(6),
+                                  child: Stack(
+                                    fit: StackFit.expand,
+                                    children: [
+                                      // Thumbnail
+                                      Image.network(
+                                        thumbUrl,
+                                        fit: BoxFit.cover,
+                                        gaplessPlayback: true,
+                                        errorBuilder: (_, __, ___) =>
+                                            Container(
+                                          color: Colors.grey[850],
+                                          child: Icon(Icons.movie,
+                                              size: 24,
+                                              color: Colors.grey[600]),
+                                        ),
+                                      ),
+                                      // Bottom gradient + name
+                                      Positioned(
+                                        bottom: 0,
+                                        left: 0,
+                                        right: 0,
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(
+                                              horizontal: 4, vertical: 3),
+                                          decoration: BoxDecoration(
+                                            gradient: LinearGradient(
+                                              begin: Alignment.bottomCenter,
+                                              end: Alignment.topCenter,
+                                              colors: [
+                                                Colors.black
+                                                    .withValues(alpha: 0.85),
+                                                Colors.transparent,
+                                              ],
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _displayName(name),
+                                            maxLines: 1,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontSize: 9,
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                      // Selection checkmark badge
+                                      if (isSelected)
+                                        Positioned(
+                                          top: 4,
+                                          right: 4,
+                                          child: Container(
+                                            padding: const EdgeInsets.all(2),
+                                            decoration: const BoxDecoration(
+                                              color: Colors.cyanAccent,
+                                              shape: BoxShape.circle,
+                                            ),
+                                            child: const Icon(Icons.check,
+                                                size: 10,
+                                                color: Colors.black),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
+                    ],
                     const SizedBox(height: 16),
 
                     // Time picker
