@@ -28,6 +28,7 @@ class VideoPlayer:
         self.base_dir = Path(base_dir)
         self._stop = False
         self._stop_event = stop_event
+        self.color_override = None  # optional callable(uint8_frame) -> uint8_frame for live color preview
         # Dynamic brightness: can be changed during playback (0.05 to 2.0 = 5% to 200%)
         self._brightness: Optional[float] = None
 
@@ -170,7 +171,10 @@ class VideoPlayer:
                 scale = float(br)
                 if scale != 1.0:
                     arr_f = np.minimum(255.0, arr_f * scale)
-            self.matrix.render_colors(arr_f.astype(np.uint8))
+            out = arr_f.astype(np.uint8)
+            if self.color_override is not None:
+                out = self.color_override(out)
+            self.matrix.render_colors(out)
 
         frames_rendered = 0
 

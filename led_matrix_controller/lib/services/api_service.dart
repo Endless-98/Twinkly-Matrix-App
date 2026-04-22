@@ -536,6 +536,23 @@ class ApiService {
     }
   }
 
+  /// Clear any active live color preview for [fileName].
+  /// Call this when the color-adjust dialog is dismissed (Cancel or Apply).
+  Future<void> clearRecolorPreview(String fileName) async {
+    try {
+      final encoded = Uri.encodeComponent(fileName);
+      await http
+          .post(
+            Uri.parse('$_baseUrl/api/videos/$encoded/recolor_preview'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'clear': true}),
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Best-effort
+    }
+  }
+
   /// Download a video file from the server to local device storage with progress tracking
   Future<String> downloadVideoLocally(String filename, {Function(int, int)? onProgress}) async {
     try {

@@ -362,9 +362,9 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               },
               child: const Text('Reset'),
             ),
-            TextButton(onPressed: () { _previewDebounce?.cancel(); Navigator.pop(ctx, false); }, child: const Text('Cancel')),
+            TextButton(onPressed: () { _previewDebounce?.cancel(); apiService.clearRecolorPreview(videoName); Navigator.pop(ctx, false); }, child: const Text('Cancel')),
             ElevatedButton(
-              onPressed: () { _previewDebounce?.cancel(); Navigator.pop(ctx, true); },
+              onPressed: () { _previewDebounce?.cancel(); apiService.clearRecolorPreview(videoName); Navigator.pop(ctx, true); },
               style: ElevatedButton.styleFrom(backgroundColor: Colors.cyanAccent, foregroundColor: Colors.black),
               child: const Text('Apply'),
             ),

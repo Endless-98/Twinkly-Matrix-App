@@ -61,6 +61,10 @@ _stop_event = threading.Event()
 _playback_generation = 0
 # Lock protecting the play/stop cycle so concurrent API requests don't interleave
 _playback_lock = threading.Lock()
+# Live color-preview params: set by recolor_preview when adjusting the currently
+# playing video so each rendered frame has adjustments applied on-the-fly.
+_live_preview_params = None   # dict or None
+_live_preview_filename = None  # str or None
 # Global render progress tracking: {filename: {'progress': 0.0-1.0, 'status': 'rendering'/'complete'/'error'}}
 render_progress = {}
 MEDIA_ROOT = Path("/home/fpp/TwinklyWall_Project/media")
@@ -104,6 +108,33 @@ cleanup_active = False
 RENDERED_CACHE_MAX = 2
 rendered_frames_cache: OrderedDict[str, dict] = OrderedDict()
 rendered_frames_cache_lock = threading.Lock()
+
+
+def _apply_live_preview_to_frame(frame_uint8):
+    """Apply current _live_preview_params to a uint8 frame; returns uint8 array.
+    Called per-frame from VideoPlayer/PlaylistPlayer while live color preview is active."""
+    params = _live_preview_params
+    if params is None:
+        return frame_uint8
+    brightness = params.get('brightness', 0.0)
+    contrast   = params.get('contrast', 1.0)
+    hue        = params.get('hue', 0.0)
+    saturation = params.get('saturation', 1.0)
+    frame = frame_uint8.astype(np.float32)
+    if brightness != 0.0:
+        frame = np.clip(frame + brightness, 0.0, 255.0)
+    if contrast != 1.0:
+        frame = np.clip(128.0 + (frame - 128.0) * contrast, 0.0, 255.0)
+    if (hue != 0.0 or saturation != 1.0) and HAS_CV2:
+        bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+        hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+        if hue != 0.0:
+            hsv[:, :, 0] = (hsv[:, :, 0] + hue / 2.0) % 180.0
+        if saturation != 1.0:
+            hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation, 0.0, 255.0)
+        bgr2 = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
+        frame = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB).astype(np.float32)
+    return np.clip(frame, 0, 255).astype(np.uint8)
 
 
 def _get_cached_rendered_frames(file_path: Path):
@@ -245,6 +276,7 @@ def _stop_idle():
 def stop_current_playback():
     """Stop the current playback if any.  Blocks until the playback thread exits."""
     global playback_active, current_player, playback_thread, current_video_name
+    global _live_preview_params, _live_preview_filename
 
     _stop_idle()
 
@@ -252,6 +284,8 @@ def stop_current_playback():
     _stop_event.set()
     playback_active = False
     current_video_name = None
+    _live_preview_params = None
+    _live_preview_filename = None
 
     if current_player:
         current_player.stop()
@@ -312,6 +346,7 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
                 log(f"[VIDEO_THREAD] mmap post-acquire diagnostic error: {_diag_e}", module="PLAYBACK")
 
         player = VideoPlayer(matrix, stop_event=_stop_event)
+        player.color_override = _apply_live_preview_to_frame
         current_player = player
 
         log(f"[VIDEO_THREAD] Playing: {video_path}", level='INFO', module="PLAYBACK")
@@ -364,6 +399,7 @@ def play_playlist_thread(entries, loop, brightness, playback_fps, transition_dur
             matrix.fpp.acquire_overlay()
 
         player = PlaylistPlayer(matrix, rendered_videos_dir, stop_event=_stop_event)
+        player.color_override = _apply_live_preview_to_frame
         current_player = player
 
         frames = player.play(
@@ -788,15 +824,28 @@ def recolor_rendered_video(filename):
 
 @app.route('/api/videos/<filename>/recolor_preview', methods=['POST'])
 def recolor_preview(filename):
-    """Apply color adjustments to the middle frame and push to the wall live.
+    """Color-adjustment preview.
 
-    Writes directly to the FPP mmap file — no matrix object required, works
-    regardless of current playback state.
+    Two modes:
+    - If the video is currently playing solo → update _live_preview_params so
+      every rendered frame picks up the adjustments in real-time (no interruption).
+    - Otherwise → pause current playback and push a single middle frame to the wall.
+
+    Pass {"clear": true} to clear any live preview (called on Cancel / Apply).
     """
+    global _live_preview_params, _live_preview_filename
     try:
         filename = unquote(filename)
         if not filename.endswith('.npz'):
             return jsonify({'error': 'Invalid file type'}), 400
+
+        data = request.json or {}
+
+        # --- Clear request (sent when dialog is closed) ---
+        if data.get('clear'):
+            _live_preview_params = None
+            _live_preview_filename = None
+            return jsonify({'status': 'preview_cleared'})
 
         file_path = rendered_videos_dir / filename
         if not file_path.exists():
@@ -805,11 +854,31 @@ def recolor_preview(filename):
         if not HAS_CV2:
             return jsonify({'error': 'cv2 not available on server'}), 500
 
-        data = request.json or {}
         brightness = float(data.get('brightness', 0.0))
         contrast   = float(data.get('contrast', 1.0))
         hue        = float(data.get('hue', 0.0))
         saturation = float(data.get('saturation', 1.0))
+
+        # --- Live preview: video is already playing → inject params into the render loop ---
+        if current_video_name == filename and playback_active:
+            _live_preview_params = {
+                'brightness': brightness,
+                'contrast': contrast,
+                'hue': hue,
+                'saturation': saturation,
+            }
+            _live_preview_filename = filename
+            return jsonify({'status': 'live_preview_active'})
+
+        # --- Static preview: different (or no) video playing → stop and show one frame ---
+        # Clear any stale live params first
+        _live_preview_params = None
+        _live_preview_filename = None
+
+        # Stop current playback so the wall is free for us to write to
+        with _playback_lock:
+            stop_current_playback()
+            _stop_event.clear()
 
         arr = np.load(file_path, allow_pickle=False)
         original_frames = arr['original_frames'] if 'original_frames' in arr else arr['frames']
@@ -834,14 +903,12 @@ def recolor_preview(filename):
         result_frame = np.clip(frame, 0, 255).astype(np.uint8)
 
         # Write via FPPOutput so the routing table (Light Wall Mapping) is applied
-        # — raw tobytes() would produce jumbled pixels due to non-linear wiring.
         try:
             m = current_matrix
             if m is not None and getattr(m, 'fpp', None) is not None:
-                # Reuse the already-initialised FPPOutput on the live matrix
+                m.fpp.acquire_overlay()
                 m.fpp.write(result_frame)
             else:
-                # Instantiate a temporary FPPOutput for the write
                 from dotmatrix.fpp_output import FPPOutput
                 fpp_path = _resolve_fpp_memory_file()
                 fpp_tmp = FPPOutput(

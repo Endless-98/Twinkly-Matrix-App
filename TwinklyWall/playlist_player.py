@@ -30,6 +30,7 @@ class PlaylistPlayer:
         self._stop = False
         self._stop_event = stop_event
         self._brightness: Optional[float] = None
+        self.color_override = None  # optional callable(uint8_frame) -> uint8_frame for live color preview
 
     @property
     def brightness(self) -> Optional[float]:
@@ -58,7 +59,10 @@ class PlaylistPlayer:
         br = self._brightness
         if br is not None and br != 1.0:
             arr_f = np.minimum(255.0, arr_f * float(br))
-        self.matrix.render_colors(arr_f.astype(np.uint8))
+        out = arr_f.astype(np.uint8)
+        if self.color_override is not None:
+            out = self.color_override(out)
+        self.matrix.render_colors(out)
 
     def play(
         self,
