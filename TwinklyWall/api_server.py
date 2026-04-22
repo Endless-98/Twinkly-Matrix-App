@@ -463,32 +463,47 @@ def delete_video(filename):
 
 @app.route('/api/video/<video_stem>/thumbnail', methods=['GET'])
 def get_video_thumbnail(video_stem):
-    """Get thumbnail image for a video (PNG format).
-    
-    If thumbnail doesn't exist but the video does, generates it from the first frame.
+    """Get thumbnail image for a video (PNG or JPG format).
+
+    Priority:
+    1. PNG thumbnail in rendered_videos_dir (generated from first frame)
+    2. JPG thumbnail in rendered_videos_dir (copied from YouTube source)
+    3. JPG thumbnail in uploaded_videos_dir (downloaded alongside YouTube video)
+    4. Auto-generate from first frame of .npz if cv2 available
     """
     try:
-        thumbnail_path = rendered_videos_dir / f"{video_stem}.png"
+        png_path = rendered_videos_dir / f"{video_stem}.png"
+        jpg_path = rendered_videos_dir / f"{video_stem}.jpg"
+        upload_jpg_path = uploaded_videos_dir / f"{video_stem}.jpg"
         video_path = rendered_videos_dir / f"{video_stem}.npz"
 
-        if not thumbnail_path.exists() and video_path.exists() and HAS_CV2:
-            try:
-                data = np.load(video_path)
-                frames = data['frames']
-                if len(frames) > 0:
-                    first_frame = frames[0]  # RGB format
-                    # Convert RGB to BGR for cv2.imwrite
-                    bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
-                    cv2.imwrite(str(thumbnail_path), bgr_frame)
-                    log(f"Generated missing thumbnail: {thumbnail_path.name}", module="API")
-            except Exception as gen_e:
-                log(f"Failed to generate thumbnail for {video_stem}: {gen_e}", level='WARNING', module="API")
+        # If no PNG yet, try to promote a YouTube JPG thumbnail
+        if not png_path.exists():
+            # Check jpg in rendered dir (copied during render)
+            if jpg_path.exists():
+                return send_file(str(jpg_path), mimetype='image/jpeg')
+            # Check jpg in uploads dir (downloaded alongside YouTube video)
+            if upload_jpg_path.exists():
+                return send_file(str(upload_jpg_path), mimetype='image/jpeg')
 
-        if not thumbnail_path.exists():
+            # Fall back to generating from first frame
+            if video_path.exists() and HAS_CV2:
+                try:
+                    data = np.load(video_path)
+                    frames = data['frames']
+                    if len(frames) > 0:
+                        first_frame = frames[0]  # RGB format
+                        bgr_frame = cv2.cvtColor(first_frame, cv2.COLOR_RGB2BGR)
+                        cv2.imwrite(str(png_path), bgr_frame)
+                        log(f"Generated missing thumbnail: {png_path.name}", module="API")
+                except Exception as gen_e:
+                    log(f"Failed to generate thumbnail for {video_stem}: {gen_e}", level='WARNING', module="API")
+
+        if not png_path.exists():
             return jsonify({'error': 'Thumbnail not found'}), 404
 
-        # Return the image file
-        return send_file(thumbnail_path, mimetype='image/png')
+        # Return the PNG file
+        return send_file(str(png_path), mimetype='image/png')
     except Exception as e:
         log(f"Get thumbnail error: {e}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
@@ -675,6 +690,163 @@ def trim_rendered_video(filename):
         })
     except Exception as e:
         log(f"Trim error: {e}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/videos/<filename>/recolor', methods=['POST'])
+def recolor_rendered_video(filename):
+    """Apply color adjustments (brightness/contrast/hue/saturation) to a rendered video.
+
+    The original frames are preserved in a ``_original`` key inside the .npz so
+    subsequent re-edits always start from the pristine source.
+
+    JSON body:
+    - brightness: float, additive offset -100..+100 (0 = no change)
+    - contrast:   float, multiplier 0.5..2.0 (1.0 = no change)
+    - hue:        float, degrees -180..+180 (0 = no change)
+    - saturation: float, multiplier 0.0..3.0 (1.0 = no change)
+    """
+    try:
+        filename = unquote(filename)
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': f'Video not found: {filename}'}), 404
+
+        if not HAS_CV2:
+            return jsonify({'error': 'cv2 not available on server'}), 500
+
+        data = request.json or {}
+        brightness = float(data.get('brightness', 0.0))
+        contrast   = float(data.get('contrast', 1.0))
+        hue        = float(data.get('hue', 0.0))
+        saturation = float(data.get('saturation', 1.0))
+
+        arr = np.load(file_path, allow_pickle=False)
+        # Use original frames as the recolor source if available
+        original_frames = arr['original_frames'] if 'original_frames' in arr else arr['frames']
+        frames = original_frames.copy().astype(np.float32)
+        fps = float(arr['fps']) if 'fps' in arr else 20.0
+
+        # --- brightness (additive) ---
+        if brightness != 0.0:
+            frames = np.clip(frames + brightness, 0.0, 255.0)
+
+        # --- contrast (around mid-grey 128) ---
+        if contrast != 1.0:
+            frames = np.clip(128.0 + (frames - 128.0) * contrast, 0.0, 255.0)
+
+        # --- hue + saturation via HSV ---
+        if hue != 0.0 or saturation != 1.0:
+            n, h_dim, w_dim, c = original_frames.shape
+            for i in range(n):
+                bgr = cv2.cvtColor(frames[i].astype(np.uint8), cv2.COLOR_RGB2BGR)
+                hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+                if hue != 0.0:
+                    hsv[:, :, 0] = (hsv[:, :, 0] + hue / 2.0) % 180.0
+                if saturation != 1.0:
+                    hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation, 0.0, 255.0)
+                bgr2 = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
+                frames[i] = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB).astype(np.float32)
+
+        result_frames = np.clip(frames, 0, 255).astype(np.uint8)
+
+        # Save — preserve original_frames for future recolors
+        extra = {}
+        for key in arr.files:
+            if key not in ('frames', 'original_frames'):
+                extra[key] = arr[key]
+
+        np.savez_compressed(
+            file_path,
+            frames=result_frames,
+            original_frames=original_frames.astype(np.uint8),
+            fps=fps,
+            **extra,
+        )
+
+        # Regenerate thumbnail from first frame
+        try:
+            thumb_path = file_path.with_suffix('.png')
+            bgr = cv2.cvtColor(result_frames[0], cv2.COLOR_RGB2BGR)
+            cv2.imwrite(str(thumb_path), bgr)
+        except Exception as te:
+            log(f"Recolor thumbnail error: {te}", level='WARNING', module="API")
+
+        log(f"Recolored {filename}: brightness={brightness:+.0f}, contrast={contrast:.2f}x, "
+            f"hue={hue:+.0f}°, sat={saturation:.2f}x", module="API")
+
+        return jsonify({'status': 'recolored', 'filename': filename, 'frames': len(result_frames)})
+    except Exception as e:
+        log(f"Recolor error: {e}\n{traceback.format_exc()}", level='ERROR', module="API")
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/videos/<filename>/recolor_preview', methods=['POST'])
+def recolor_preview(filename):
+    """Apply color adjustments to the middle frame and push to the wall live.
+
+    Writes directly to the FPP mmap file — no matrix object required, works
+    regardless of current playback state.
+    """
+    try:
+        filename = unquote(filename)
+        if not filename.endswith('.npz'):
+            return jsonify({'error': 'Invalid file type'}), 400
+
+        file_path = rendered_videos_dir / filename
+        if not file_path.exists():
+            return jsonify({'error': f'Video not found: {filename}'}), 404
+
+        if not HAS_CV2:
+            return jsonify({'error': 'cv2 not available on server'}), 500
+
+        data = request.json or {}
+        brightness = float(data.get('brightness', 0.0))
+        contrast   = float(data.get('contrast', 1.0))
+        hue        = float(data.get('hue', 0.0))
+        saturation = float(data.get('saturation', 1.0))
+
+        arr = np.load(file_path, allow_pickle=False)
+        original_frames = arr['original_frames'] if 'original_frames' in arr else arr['frames']
+
+        # Use the middle frame for a representative preview
+        frame = original_frames[len(original_frames) // 2].astype(np.float32)
+
+        if brightness != 0.0:
+            frame = np.clip(frame + brightness, 0.0, 255.0)
+        if contrast != 1.0:
+            frame = np.clip(128.0 + (frame - 128.0) * contrast, 0.0, 255.0)
+        if hue != 0.0 or saturation != 1.0:
+            bgr = cv2.cvtColor(frame.astype(np.uint8), cv2.COLOR_RGB2BGR)
+            hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV).astype(np.float32)
+            if hue != 0.0:
+                hsv[:, :, 0] = (hsv[:, :, 0] + hue / 2.0) % 180.0
+            if saturation != 1.0:
+                hsv[:, :, 1] = np.clip(hsv[:, :, 1] * saturation, 0.0, 255.0)
+            bgr2 = cv2.cvtColor(np.clip(hsv, 0, 255).astype(np.uint8), cv2.COLOR_HSV2BGR)
+            frame = cv2.cvtColor(bgr2, cv2.COLOR_BGR2RGB).astype(np.float32)
+
+        result_frame = np.clip(frame, 0, 255).astype(np.uint8)
+
+        # Write directly to FPP mmap — no matrix object needed
+        fpp_path = _resolve_fpp_memory_file()
+        expected_size = 90 * 50 * 3
+        rgb_bytes = result_frame.tobytes()
+        try:
+            with open(fpp_path, 'r+b') as f:
+                f.seek(0)
+                f.write(rgb_bytes[:expected_size])
+                f.flush()
+        except Exception as write_err:
+            log(f"recolor_preview mmap write failed: {write_err}", level='WARNING', module="API")
+            return jsonify({'error': f'mmap write failed: {write_err}'}), 500
+
+        return jsonify({'status': 'preview_pushed'})
+    except Exception as e:
+        log(f"recolor_preview error: {e}\n{traceback.format_exc()}", level='ERROR', module="API")
         return jsonify({'error': str(e)}), 500
 
 
@@ -887,6 +1059,21 @@ def render_video_thread(video_path, render_fps, start_time=None, end_time=None, 
             if progress_key in render_progress:
                 render_progress[progress_key]['progress'] = 1.0
                 render_progress[progress_key]['status'] = 'complete'
+
+            # Copy YouTube thumbnail (.jpg from uploads dir) → rendered dir if no .png yet
+            try:
+                import shutil as _shutil
+                rendered_stem = Path(output_path).stem
+                rendered_png = Path(output_path).with_suffix('.png')
+                upload_stem = Path(video_path).stem
+                upload_jpg = uploaded_videos_dir / f"{upload_stem}.jpg"
+                if upload_jpg.exists() and not rendered_png.exists():
+                    dest_jpg = Path(output_path).with_suffix('.jpg')
+                    _shutil.copy2(str(upload_jpg), str(dest_jpg))
+                    log(f"Copied YouTube thumbnail → {dest_jpg.name}", module="API")
+            except Exception as te:
+                log(f"Thumbnail copy error: {te}", level='WARNING', module="API")
+
             # Delete the original uploaded video
             try:
                 os.remove(video_path)
@@ -1220,6 +1407,8 @@ def list_playlists():
                 'entries': data.get('entries', []),
                 'transition_duration': data.get('transition_duration', 1.0),
                 'color': data.get('color', '#42A5F5'),
+                'play_duration': data.get('play_duration', 5.0),
+                'shuffle': data.get('shuffle', False),
             })
         return jsonify({'playlists': playlists})
     except Exception as e:
@@ -1265,7 +1454,7 @@ def get_playlist(name):
 
 @app.route('/api/playlists/<name>', methods=['PUT'])
 def update_playlist(name):
-    """Update an existing playlist (entries, transition_duration)."""
+    """Update an existing playlist (entries, transition_duration, play_duration, shuffle, color)."""
     try:
         name = _sanitize_playlist_name(unquote(name))
         if not (playlists_dir / f"{name}.json").exists():
@@ -1278,6 +1467,10 @@ def update_playlist(name):
             existing['transition_duration'] = float(data['transition_duration'])
         if 'color' in data:
             existing['color'] = data['color']
+        if 'play_duration' in data:
+            existing['play_duration'] = float(data['play_duration'])
+        if 'shuffle' in data:
+            existing['shuffle'] = bool(data['shuffle'])
         _save_playlist(name, existing)
         return jsonify({'status': 'updated', 'name': name})
     except Exception as e:
@@ -1321,6 +1514,26 @@ def play_playlist():
         brightness = data.get('brightness', None)
         playback_fps = data.get('playback_fps', 20.0)
         transition_duration = playlist_data.get('transition_duration', 1.0)
+        folder_play_duration = playlist_data.get('play_duration', 0)
+        shuffle = playlist_data.get('shuffle', False)
+
+        # Inject folder-level play_duration as default for entries that have none
+        resolved_entries = []
+        for entry in entries:
+            e = dict(entry)
+            if 'duration' not in e or not e['duration']:
+                # loop_count overrides duration: play full video N times
+                loop_count = int(e.get('loop_count', 0))
+                if loop_count > 0:
+                    e['loop_count'] = loop_count
+                    e['duration'] = 0  # playlist player handles loop_count
+                elif folder_play_duration:
+                    e['duration'] = folder_play_duration
+            resolved_entries.append(e)
+
+        if shuffle:
+            import random as _random
+            _random.shuffle(resolved_entries)
 
         with _playback_lock:
             stop_current_playback()
@@ -1332,7 +1545,7 @@ def play_playlist():
             current_video_name = f"playlist:{name}"
             playback_thread = threading.Thread(
                 target=play_playlist_thread,
-                args=(entries, loop, brightness, playback_fps, transition_duration, gen),
+                args=(resolved_entries, loop, brightness, playback_fps, transition_duration, gen),
                 daemon=True,
             )
             playback_thread.start()
@@ -1766,7 +1979,37 @@ def download_youtube_video():
             if filepath != safe_filepath and filepath.exists():
                 filepath.rename(safe_filepath)
                 filepath = safe_filepath
-        
+
+            # Download and save thumbnail from YouTube metadata
+            thumbnail_url = info.get('thumbnail')
+            thumbnail_saved = False
+            if thumbnail_url:
+                try:
+                    import urllib.request as _ureq
+                    stem = filepath.stem
+                    thumb_path = uploaded_videos_dir / f"{stem}.jpg"
+                    with _ureq.urlopen(thumbnail_url, timeout=10) as resp:
+                        thumb_data = resp.read()
+                    # Crop to 16:9 if taller (YouTube max-res thumbnails are often letterboxed)
+                    if HAS_CV2:
+                        img_arr = np.frombuffer(thumb_data, dtype=np.uint8)
+                        img = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+                        if img is not None:
+                            h, w = img.shape[:2]
+                            target_h = int(w * 9 / 16)
+                            if target_h < h:
+                                y0 = (h - target_h) // 2
+                                img = img[y0:y0 + target_h, :]
+                            cv2.imwrite(str(thumb_path), img)
+                            thumbnail_saved = True
+                            log(f"Saved YouTube thumbnail: {thumb_path.name}", module="API")
+                    if not thumbnail_saved:
+                        with open(thumb_path, 'wb') as tf:
+                            tf.write(thumb_data)
+                        thumbnail_saved = True
+                except Exception as te:
+                    log(f"YouTube thumbnail download failed: {te}", level='WARNING', module="API")
+
         log(f"Downloaded from YouTube: {filepath.name}", module="API")
         
         return jsonify({
@@ -1774,6 +2017,7 @@ def download_youtube_video():
             'filename': filepath.name,
             'url': f'/api/video/{filepath.name}',  # Serve file via HTTP endpoint
             'size_mb': filepath.stat().st_size / (1024*1024),
+            'has_thumbnail': thumbnail_saved,
         }), 200
         
     except Exception as e:

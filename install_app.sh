@@ -8,13 +8,16 @@ set -e
 #   ./install_app.sh <pairing_code> <pair_ip> <pair_port> <connect_port>
 
 PAIRING_CODE=""
-PAIR_IP="192.168.1.36"
-PAIR_PORT="36583"
-CONNECT_PORT="36583"
+PAIR_IP="192.168.1.58"
+PAIR_PORT=""
+CONNECT_PORT=""
 
 if [ "$#" -eq 1 ]; then
   PAIR_PORT="$1"
   CONNECT_PORT="$1"
+elif [ "$#" -eq 2 ]; then
+  PAIR_PORT="$1"
+  CONNECT_PORT="$2"
 elif [ "$#" -eq 3 ]; then
   PAIR_IP="$1"
   PAIR_PORT="$2"

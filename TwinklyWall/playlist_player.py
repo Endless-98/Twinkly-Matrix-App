@@ -125,16 +125,26 @@ class PlaylistPlayer:
                 frame_dt = 1.0 / fps
                 trans_frames = max(1, int(transition_duration * fps))
 
+                # loop_count: play the clip N full times; overrides duration
+                loop_count = int(entry.get('loop_count', 0))
+
                 # Compute end frame based on entry duration (0 = full video)
                 total_clip_frames = frames.shape[0]
-                if entry_duration and entry_duration > 0:
+                if loop_count > 0:
+                    # Repeat clip loop_count times worth of frames
+                    clip_end_frame = total_clip_frames  # one pass
+                    total_repeats = loop_count
+                elif entry_duration and entry_duration > 0:
                     max_frames = int(entry_duration * fps)
                     clip_end_frame = min(max_frames, total_clip_frames)
+                    total_repeats = 1
                 else:
                     clip_end_frame = total_clip_frames
+                    total_repeats = 1
 
                 first_frame = frames[0]
-                dur_label = f"{entry_duration}s" if entry_duration else "full"
+                dur_label = (f"x{loop_count}" if loop_count > 0
+                             else (f"{entry_duration}s" if entry_duration else "full"))
                 print(f"  [{idx + 1}/{len(entries)}] {video_name}  "
                       f"({clip_end_frame}/{total_clip_frames} frames, "
                       f"duration={dur_label}, transition={transition_name})")
@@ -142,14 +152,11 @@ class PlaylistPlayer:
                 # --- Transition from previous clip (or loop-back if idx==0) ---
                 # prev_last_frame is None only on the very first clip of the very
                 # first play-through, so no transition fires then.
-                # The incoming clip starts playing immediately — we blend its
-                # advancing frames over the outgoing clip's last frame.
                 if prev_last_frame is not None and transition_name != "none":
                     for ti in range(trans_frames):
                         if self._should_stop:
                             return total_rendered
                         t = (ti + 1) / trans_frames
-                        # Use advancing frames of incoming clip during transition
                         in_fi = min(ti, clip_end_frame - 1)
                         blended = trans_fn(prev_last_frame, frames[in_fi], t)
                         t0 = time.perf_counter()
@@ -158,21 +165,22 @@ class PlaylistPlayer:
                         elapsed = time.perf_counter() - t0
                         if frame_dt - elapsed > 0:
                             time.sleep(frame_dt - elapsed)
-                    # Skip the frames already shown during transition
                     clip_start_frame = min(trans_frames, clip_end_frame)
                 else:
                     clip_start_frame = 0
 
-                # --- Play remaining clip frames ---
-                for fi in range(clip_start_frame, clip_end_frame):
-                    if self._should_stop:
-                        return total_rendered
-                    t0 = time.perf_counter()
-                    self._render_frame(frames[fi])
-                    total_rendered += 1
-                    elapsed = time.perf_counter() - t0
-                    if frame_dt - elapsed > 0:
-                        time.sleep(frame_dt - elapsed)
+                # --- Play remaining clip frames (repeated total_repeats times) ---
+                for repeat in range(total_repeats):
+                    start_fi = clip_start_frame if repeat == 0 else 0
+                    for fi in range(start_fi, clip_end_frame):
+                        if self._should_stop:
+                            return total_rendered
+                        t0 = time.perf_counter()
+                        self._render_frame(frames[fi])
+                        total_rendered += 1
+                        elapsed = time.perf_counter() - t0
+                        if frame_dt - elapsed > 0:
+                            time.sleep(frame_dt - elapsed)
 
                 prev_last_frame = frames[min(clip_end_frame - 1, total_clip_frames - 1)].copy()
 

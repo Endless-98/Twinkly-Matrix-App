@@ -479,6 +479,63 @@ class ApiService {
     return '$_baseUrl/api/video/$stem/thumbnail';
   }
 
+  /// Apply color adjustments to a rendered video (recolor in-place, preserving original)
+  Future<void> recolorVideo(
+    String fileName, {
+    double brightness = 0.0,
+    double contrast = 1.0,
+    double hue = 0.0,
+    double saturation = 1.0,
+  }) async {
+    try {
+      final encoded = Uri.encodeComponent(fileName);
+      final response = await http
+          .post(
+            Uri.parse('$_baseUrl/api/videos/$encoded/recolor'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'brightness': brightness,
+              'contrast': contrast,
+              'hue': hue,
+              'saturation': saturation,
+            }),
+          )
+          .timeout(const Duration(minutes: 5));
+      if (response.statusCode != 200) {
+        throw Exception('Recolor failed: ${response.statusCode} - ${response.body}');
+      }
+    } catch (e) {
+      throw Exception('Recolor error: $e');
+    }
+  }
+
+  /// Push a single-frame color-adjusted preview to the LED wall (fire-and-forget, no file save)
+  Future<void> previewRecolorVideo(
+    String fileName, {
+    double brightness = 0.0,
+    double contrast = 1.0,
+    double hue = 0.0,
+    double saturation = 1.0,
+  }) async {
+    try {
+      final encoded = Uri.encodeComponent(fileName);
+      await http
+          .post(
+            Uri.parse('$_baseUrl/api/videos/$encoded/recolor_preview'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'brightness': brightness,
+              'contrast': contrast,
+              'hue': hue,
+              'saturation': saturation,
+            }),
+          )
+          .timeout(const Duration(seconds: 5));
+    } catch (_) {
+      // Silently swallow — this is best-effort live preview
+    }
+  }
+
   /// Download a video file from the server to local device storage with progress tracking
   Future<String> downloadVideoLocally(String filename, {Function(int, int)? onProgress}) async {
     try {
