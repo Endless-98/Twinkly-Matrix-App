@@ -754,9 +754,10 @@ def recolor_rendered_video(filename):
         result_frames = np.clip(frames, 0, 255).astype(np.uint8)
 
         # Save — preserve original_frames for future recolors
+        # Exclude 'fps' from extra to avoid duplicate keyword argument
         extra = {}
         for key in arr.files:
-            if key not in ('frames', 'original_frames'):
+            if key not in ('frames', 'original_frames', 'fps'):
                 extra[key] = arr[key]
 
         np.savez_compressed(
@@ -831,18 +832,27 @@ def recolor_preview(filename):
 
         result_frame = np.clip(frame, 0, 255).astype(np.uint8)
 
-        # Write directly to FPP mmap — no matrix object needed
-        fpp_path = _resolve_fpp_memory_file()
-        expected_size = 90 * 50 * 3
-        rgb_bytes = result_frame.tobytes()
+        # Write via FPPOutput so the routing table (Light Wall Mapping) is applied
+        # — raw tobytes() would produce jumbled pixels due to non-linear wiring.
         try:
-            with open(fpp_path, 'r+b') as f:
-                f.seek(0)
-                f.write(rgb_bytes[:expected_size])
-                f.flush()
+            m = current_matrix
+            if m is not None and getattr(m, 'fpp', None) is not None:
+                # Reuse the already-initialised FPPOutput on the live matrix
+                m.fpp.write(result_frame)
+            else:
+                # Instantiate a temporary FPPOutput for the write
+                from dotmatrix.fpp_output import FPPOutput
+                fpp_path = _resolve_fpp_memory_file()
+                fpp_tmp = FPPOutput(
+                    width=90, height=50,
+                    mapping_file=fpp_path,
+                    color_order='RGB',
+                    gamma=None,
+                )
+                fpp_tmp.write(result_frame)
         except Exception as write_err:
-            log(f"recolor_preview mmap write failed: {write_err}", level='WARNING', module="API")
-            return jsonify({'error': f'mmap write failed: {write_err}'}), 500
+            log(f"recolor_preview write failed: {write_err}", level='WARNING', module="API")
+            return jsonify({'error': f'preview write failed: {write_err}'}), 500
 
         return jsonify({'status': 'preview_pushed'})
     except Exception as e:
