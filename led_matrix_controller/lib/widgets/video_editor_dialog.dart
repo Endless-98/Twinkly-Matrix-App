@@ -240,17 +240,35 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     }
   }
 
-  void _handleCropPanStart(DragStartDetails details, Size viewSize) {
+  /// Computes the rectangle (in container-local pixels) occupied by the video
+  /// when it is centred inside a container of [containerSize], fitting with
+  /// letterboxing/pillarboxing to preserve [videoAspect].
+  Rect _videoRectInContainer(Size containerSize, double videoAspect) {
+    final containerAspect = containerSize.width / containerSize.height;
+    double videoW, videoH;
+    if (containerAspect > videoAspect) {
+      videoH = containerSize.height;
+      videoW = videoH * videoAspect;
+    } else {
+      videoW = containerSize.width;
+      videoH = videoW / videoAspect;
+    }
+    final videoLeft = (containerSize.width - videoW) / 2;
+    final videoTop  = (containerSize.height - videoH) / 2;
+    return Rect.fromLTWH(videoLeft, videoTop, videoW, videoH);
+  }
+
+  void _handleCropPanStart(DragStartDetails details, Rect videoRect) {
     if (_cropRect == null) return;
     final touch = details.localPosition;
     const hitRadius = 28.0; // pixels
 
-    // Check each corner in pixel space
+    // Check each corner in container pixel space (corners may be outside the video)
     final corners = [
-      Offset(_cropRect!.left  * viewSize.width, _cropRect!.top    * viewSize.height), // 0 TL
-      Offset(_cropRect!.right * viewSize.width, _cropRect!.top    * viewSize.height), // 1 TR
-      Offset(_cropRect!.left  * viewSize.width, _cropRect!.bottom * viewSize.height), // 2 BL
-      Offset(_cropRect!.right * viewSize.width, _cropRect!.bottom * viewSize.height), // 3 BR
+      Offset(videoRect.left + _cropRect!.left  * videoRect.width,  videoRect.top + _cropRect!.top    * videoRect.height), // 0 TL
+      Offset(videoRect.left + _cropRect!.right * videoRect.width,  videoRect.top + _cropRect!.top    * videoRect.height), // 1 TR
+      Offset(videoRect.left + _cropRect!.left  * videoRect.width,  videoRect.top + _cropRect!.bottom * videoRect.height), // 2 BL
+      Offset(videoRect.left + _cropRect!.right * videoRect.width,  videoRect.top + _cropRect!.bottom * videoRect.height), // 3 BR
     ];
     for (int i = 0; i < corners.length; i++) {
       if ((touch - corners[i]).distance <= hitRadius) {
@@ -260,7 +278,7 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     }
 
     // If inside the crop rect, enter move mode
-    final norm = _normalizePosition(touch, viewSize);
+    final norm = _normalizePosition(touch, videoRect);
     if (_cropRect!.contains(norm)) {
       setState(() {
         _activeCorner = -1;
@@ -269,19 +287,21 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     }
   }
 
-  void _handleCropPanUpdate(DragUpdateDetails details, Size viewSize) {
+  void _handleCropPanUpdate(DragUpdateDetails details, Rect videoRect) {
     if (_cropRect == null || _activeCorner == null) return;
-    final norm = _normalizePosition(details.localPosition, viewSize);
+    final norm = _normalizePosition(details.localPosition, videoRect);
     final adjustedAspect = _ledAspectRatio / _controller.value.aspectRatio;
 
     if (_activeCorner == -1) {
-      // Move the whole crop rect
+      // Move the whole crop rect — allow dragging outside the video bounds
       if (_dragOffset == null) return;
       final w = _cropRect!.width;
       final h = _cropRect!.height;
-      final newLeft = (norm.dx - _dragOffset!.dx).clamp(0.0, 1.0 - w);
-      final newTop  = (norm.dy - _dragOffset!.dy).clamp(0.0, 1.0 - h);
-      setState(() => _cropRect = Rect.fromLTWH(newLeft, newTop, w, h));
+      setState(() => _cropRect = Rect.fromLTWH(
+        norm.dx - _dragOffset!.dx,
+        norm.dy - _dragOffset!.dy,
+        w, h,
+      ));
       return;
     }
 
@@ -299,31 +319,28 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     final dx = (norm.dx - anchor.dx).abs();
     final dy = (norm.dy - anchor.dy).abs();
     final t  = (adjustedAspect * dx + dy) / (adjustedAspect * adjustedAspect + 1.0);
-    var newW = (adjustedAspect * t).clamp(0.04, 1.0);
-    var newH = newW / adjustedAspect;
+    // Allow the crop to grow beyond the video frame (no upper clamp at 1.0)
+    final newW = (adjustedAspect * t).clamp(0.04, 8.0);
+    final newH = newW / adjustedAspect;
 
-    // Clamp to viewport while preserving aspect ratio
-    if (newW > 1.0) { newW = 1.0; newH = newW / adjustedAspect; }
-    if (newH > 1.0) { newH = 1.0; newW = newH * adjustedAspect; }
-
-    // Position based on which corner is dragged (anchor stays fixed)
+    // Position based on which corner is dragged (anchor stays fixed, no viewport clamping)
     final double left, top;
     switch (_activeCorner) {
       case 0: // TL → anchor BR
-        left = (anchor.dx - newW).clamp(0.0, 1.0 - newW);
-        top  = (anchor.dy - newH).clamp(0.0, 1.0 - newH);
+        left = anchor.dx - newW;
+        top  = anchor.dy - newH;
         break;
       case 1: // TR → anchor BL
-        left = anchor.dx.clamp(0.0, 1.0 - newW);
-        top  = (anchor.dy - newH).clamp(0.0, 1.0 - newH);
+        left = anchor.dx;
+        top  = anchor.dy - newH;
         break;
       case 2: // BL → anchor TR
-        left = (anchor.dx - newW).clamp(0.0, 1.0 - newW);
-        top  = anchor.dy.clamp(0.0, 1.0 - newH);
+        left = anchor.dx - newW;
+        top  = anchor.dy;
         break;
       default: // BR → anchor TL
-        left = anchor.dx.clamp(0.0, 1.0 - newW);
-        top  = anchor.dy.clamp(0.0, 1.0 - newH);
+        left = anchor.dx;
+        top  = anchor.dy;
         break;
     }
 
@@ -337,21 +354,14 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
     });
   }
 
-  Offset _normalizePosition(Offset position, Size viewSize) {
-    // Convert pixel position to normalized 0-1 coordinates, clamped to bounds
+  /// Converts a touch position in container-local pixels to normalised
+  /// video coordinates.  Values outside [0, 1] indicate a position that is
+  /// outside the video frame — this is intentional so the crop rect can
+  /// extend beyond the video (those pixels render as black).
+  Offset _normalizePosition(Offset position, Rect videoRect) {
     return Offset(
-      (position.dx / viewSize.width).clamp(0.0, 1.0),
-      (position.dy / viewSize.height).clamp(0.0, 1.0),
-    );
-  }
-
-  Widget _buildCropOverlay(Size videoSize) {
-    return CustomPaint(
-      painter: CropOverlayPainter(
-        cropRect: _cropRect,
-        videoSize: videoSize,
-      ),
-      child: Container(),
+      (position.dx - videoRect.left) / videoRect.width,
+      (position.dy - videoRect.top)  / videoRect.height,
     );
   }
 
@@ -427,58 +437,66 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
           flex: 3,
           child: Container(
             color: Colors.black,
-            child: Center(
-              child: AspectRatio(
-                aspectRatio: _controller.value.aspectRatio,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final viewSize = Size(constraints.maxWidth, constraints.maxHeight);
-                    return GestureDetector(
-                      onTap: _togglePlayPause,
-                      onPanStart: (details) => _handleCropPanStart(details, viewSize),
-                      onPanUpdate: (details) => _handleCropPanUpdate(details, viewSize),
-                      onPanEnd: _handleCropPanEnd,
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          children: [
-                            // Show color-adjusted still frame in preview mode,
-                            // otherwise show the live video player.
-                            if (_previewMode && _previewBytes != null)
-                              Image.memory(_previewBytes!, fit: BoxFit.fill)
-                            else
-                              VideoPlayer(_controller),
-                            IgnorePointer(child: _buildCropOverlay(viewSize)),
-                            // Loading spinner while generating preview
-                            if (_previewMode && _generatingPreview)
-                              Container(
-                                color: Colors.black54,
-                                child: const Center(
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white70,
-                                  ),
-                                ),
-                              ),
-                            if (!_previewMode && !_controller.value.isPlaying)
-                              Center(
-                                child: Container(
-                                  decoration: BoxDecoration(
-                                    color: Colors.black38,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  padding: const EdgeInsets.all(12),
-                                  child: const Icon(Icons.play_arrow, size: 48, color: Colors.white),
-                                ),
-                              ),
-                          ],
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final containerSize = Size(constraints.maxWidth, constraints.maxHeight);
+                final videoRect = _videoRectInContainer(
+                    containerSize, _controller.value.aspectRatio);
+                return GestureDetector(
+                  onTap: _togglePlayPause,
+                  onPanStart: (details) => _handleCropPanStart(details, videoRect),
+                  onPanUpdate: (details) => _handleCropPanUpdate(details, videoRect),
+                  onPanEnd: _handleCropPanEnd,
+                  child: Stack(
+                    children: [
+                      // Video player positioned within container
+                      Positioned.fromRect(
+                        rect: videoRect,
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: _previewMode && _previewBytes != null
+                              ? Image.memory(_previewBytes!, fit: BoxFit.fill)
+                              : VideoPlayer(_controller),
                         ),
                       ),
-                    );
-                  },
-                ),
-              ),
+                      // Loading spinner while generating preview
+                      if (_previewMode && _generatingPreview)
+                        Container(
+                          color: Colors.black54,
+                          child: const Center(
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white70,
+                            ),
+                          ),
+                        ),
+                      // Play hint icon
+                      if (!_previewMode && !_controller.value.isPlaying)
+                        Center(
+                          child: Container(
+                            decoration: const BoxDecoration(
+                              color: Colors.black38,
+                              shape: BoxShape.circle,
+                            ),
+                            padding: const EdgeInsets.all(12),
+                            child: const Icon(Icons.play_arrow, size: 48, color: Colors.white),
+                          ),
+                        ),
+                      // Crop overlay covering the full container so it can
+                      // render handles that extend outside the video frame
+                      IgnorePointer(
+                        child: CustomPaint(
+                          size: containerSize,
+                          painter: CropOverlayPainter(
+                            cropRect: _cropRect,
+                            videoRect: videoRect,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ),
@@ -857,60 +875,91 @@ class _VideoEditorDialogState extends State<VideoEditorDialog> {
 
 class CropOverlayPainter extends CustomPainter {
   final Rect? cropRect;
-  final Size videoSize;
+  /// Position of the video within the painter's canvas (container coords).
+  final Rect videoRect;
 
   CropOverlayPainter({
     required this.cropRect,
-    required this.videoSize,
+    required this.videoRect,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
     if (cropRect == null) return;
 
-    final rect = Rect.fromLTRB(
-      cropRect!.left  * size.width,
-      cropRect!.top   * size.height,
-      cropRect!.right * size.width,
-      cropRect!.bottom * size.height,
+    // Map crop rect (0-1 relative to video) → container pixel space.
+    // Values outside the video are allowed — those areas render as black.
+    final cropPx = Rect.fromLTRB(
+      videoRect.left + cropRect!.left   * videoRect.width,
+      videoRect.top  + cropRect!.top    * videoRect.height,
+      videoRect.left + cropRect!.right  * videoRect.width,
+      videoRect.top  + cropRect!.bottom * videoRect.height,
     );
 
-    // Darken areas outside crop
+    // Dim video areas that fall outside the crop rect
     final dimPaint = Paint()
       ..color = Colors.black.withValues(alpha: 0.55)
       ..style = PaintingStyle.fill;
-    canvas.drawRect(Rect.fromLTRB(0, 0, size.width, rect.top), dimPaint);
-    canvas.drawRect(Rect.fromLTRB(0, rect.top, rect.left, rect.bottom), dimPaint);
-    canvas.drawRect(Rect.fromLTRB(rect.right, rect.top, size.width, rect.bottom), dimPaint);
-    canvas.drawRect(Rect.fromLTRB(0, rect.bottom, size.width, size.height), dimPaint);
 
-    // Crop border
+    // Intersection of the video frame and the crop (video content inside crop)
+    final ix = videoRect.intersect(cropPx);
+    if (ix.width > 0 && ix.height > 0) {
+      // Above intersection inside video
+      if (ix.top > videoRect.top) {
+        canvas.drawRect(Rect.fromLTRB(videoRect.left, videoRect.top, videoRect.right, ix.top), dimPaint);
+      }
+      // Below intersection inside video
+      if (ix.bottom < videoRect.bottom) {
+        canvas.drawRect(Rect.fromLTRB(videoRect.left, ix.bottom, videoRect.right, videoRect.bottom), dimPaint);
+      }
+      // Left of intersection inside video
+      if (ix.left > videoRect.left) {
+        canvas.drawRect(Rect.fromLTRB(videoRect.left, ix.top, ix.left, ix.bottom), dimPaint);
+      }
+      // Right of intersection inside video
+      if (ix.right < videoRect.right) {
+        canvas.drawRect(Rect.fromLTRB(ix.right, ix.top, videoRect.right, ix.bottom), dimPaint);
+      }
+    } else {
+      // Crop doesn't overlap video at all — dim the entire video
+      canvas.drawRect(videoRect, dimPaint);
+    }
+
+    // Draw a subtle video frame border so the user can see the video boundary
+    // when the crop extends outside it
+    final videoBorderPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.35)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.0;
+    canvas.drawRect(videoRect, videoBorderPaint);
+
+    // Crop border (can extend outside the video)
     final borderPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.9)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
-    canvas.drawRect(rect, borderPaint);
+    canvas.drawRect(cropPx, borderPaint);
 
-    // L-shaped corner handles (easier to grab on touch screens)
+    // L-shaped corner handles
     final handlePaint = Paint()
       ..color = Colors.white
       ..style = PaintingStyle.stroke
       ..strokeWidth = 3.5
       ..strokeCap = StrokeCap.round;
-    const arm = 18.0; // length of each handle arm in pixels
+    const arm = 18.0;
 
     void drawCorner(Offset corner, double hSign, double vSign) {
       canvas.drawLine(corner, corner + Offset(arm * hSign, 0), handlePaint);
       canvas.drawLine(corner, corner + Offset(0, arm * vSign), handlePaint);
     }
 
-    drawCorner(rect.topLeft,     1,  1);
-    drawCorner(rect.topRight,   -1,  1);
-    drawCorner(rect.bottomLeft,  1, -1);
-    drawCorner(rect.bottomRight,-1, -1);
+    drawCorner(cropPx.topLeft,     1,  1);
+    drawCorner(cropPx.topRight,   -1,  1);
+    drawCorner(cropPx.bottomLeft,  1, -1);
+    drawCorner(cropPx.bottomRight,-1, -1);
   }
 
   @override
   bool shouldRepaint(CropOverlayPainter oldDelegate) =>
-      oldDelegate.cropRect != cropRect;
+      oldDelegate.cropRect != cropRect || oldDelegate.videoRect != videoRect;
 }

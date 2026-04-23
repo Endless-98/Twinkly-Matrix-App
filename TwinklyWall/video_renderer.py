@@ -88,20 +88,24 @@ class VideoRenderer:
         start_frame = max(0, min(start_frame, total_frames))
         end_frame = max(start_frame + 1, min(end_frame, total_frames))
         
-        # Calculate crop parameters (normalized 0-1 to pixel coordinates)
+        # Calculate crop parameters (normalized 0-1 to pixel coordinates).
+        # Values outside [0, 1] are allowed — those areas produce black pixels.
         if crop_rect:
-            crop_left = int(crop_rect[0] * source_width)
-            crop_top = int(crop_rect[1] * source_height)
-            crop_right = int(crop_rect[2] * source_width)
-            crop_bottom = int(crop_rect[3] * source_height)
-            # Ensure valid crop dimensions
-            crop_left = max(0, min(crop_left, source_width - 1))
-            crop_top = max(0, min(crop_top, source_height - 1))
-            crop_right = max(crop_left + 1, min(crop_right, source_width))
-            crop_bottom = max(crop_top + 1, min(crop_bottom, source_height))
+            crop_left   = int(round(crop_rect[0] * source_width))
+            crop_top    = int(round(crop_rect[1] * source_height))
+            crop_right  = int(round(crop_rect[2] * source_width))
+            crop_bottom = int(round(crop_rect[3] * source_height))
+            # Ensure at least 1 pixel in each dimension
+            crop_right  = max(crop_left  + 1, crop_right)
+            crop_bottom = max(crop_top   + 1, crop_bottom)
+            crop_out_of_bounds = (
+                crop_left < 0 or crop_top < 0 or
+                crop_right > source_width or crop_bottom > source_height
+            )
         else:
             crop_left, crop_top = 0, 0
             crop_right, crop_bottom = source_width, source_height
+            crop_out_of_bounds = False
         
         target_fps = output_fps if output_fps else source_fps
         
@@ -154,7 +158,24 @@ class VideoRenderer:
 
             # Apply crop first (reduces data to process in subsequent steps)
             if crop_rect:
-                frame = frame[crop_top:crop_bottom, crop_left:crop_right]
+                if crop_out_of_bounds:
+                    # Crop extends outside the video frame; out-of-bounds areas are black.
+                    crop_w = crop_right - crop_left
+                    crop_h = crop_bottom - crop_top
+                    src_l = max(0, crop_left)
+                    src_t = max(0, crop_top)
+                    src_r = min(source_width,  crop_right)
+                    src_b = min(source_height, crop_bottom)
+                    padded = np.zeros((crop_h, crop_w, 3), dtype=frame.dtype)
+                    if src_r > src_l and src_b > src_t:
+                        dst_l = src_l - crop_left
+                        dst_t = src_t - crop_top
+                        dst_r = dst_l + (src_r - src_l)
+                        dst_b = dst_t + (src_b - src_t)
+                        padded[dst_t:dst_b, dst_l:dst_r] = frame[src_t:src_b, src_l:src_r]
+                    frame = padded
+                else:
+                    frame = frame[crop_top:crop_bottom, crop_left:crop_right]
 
             # Resize using INTER_AREA for downscaling (best quality) and convert BGR->RGB in one step
             resized = cv2.resize(frame, (self.downscaled_width, self.downscaled_height),
