@@ -242,45 +242,13 @@ def initialize_matrix():
     return current_matrix
 
 
-def _fpp_set_outputs(command: str) -> bool:
-    """Enable or disable fppd's channel outputs via FPP's local HTTP API.
-
-    POST http://localhost/api/fppd/outputs {"command": "enable" | "disable"}
-
-    When disabled: fppd closes its Twinkly output plugin — no frames sent,
-    zero network traffic, but fppd stays running.
-    When enabled: fppd re-opens its Twinkly output plugin, which runs its own
-    full init sequence (login → verify → set_mode('rt') → start sending).
-    Because OUR code never calls /xled/v1/login, fppd's token is never
-    invalidated and resume completes in < 1 second.
-    """
-    import urllib.request as _req, json as _json
-    url = "http://localhost/api/fppd/outputs"
-    try:
-        data = _json.dumps({"command": command}).encode()
-        req = _req.Request(url, data=data, method="POST",
-                           headers={"Content-Type": "application/json"})
-        with _req.urlopen(req, timeout=5) as resp:
-            body = _json.loads(resp.read())
-        status = body.get("Status", "?")
-        log(f"FPP outputs {command}: {status}", module="FPP")
-        return status == "OK"
-    except Exception as e:
-        log(f"FPP outputs {command} failed: {e}", level="WARNING", module="FPP")
-        return False
-
-
 def _start_idle():
-    """Stop all data to the Twinkly controllers while idle.
+    """Release the FPP overlay so fppd stops forwarding our mmap data.
 
-    1. release_overlay() — sets FPP overlay state 0, stops our keepalive thread.
-    2. _fpp_set_outputs('disable') — tells fppd to close its Twinkly output plugin.
-       fppd stops sending entirely; zero network traffic while idle.
-
-    On resume, play threads call _fpp_set_outputs('enable') before acquire_overlay().
-    fppd re-opens its output plugin and runs its own init (login + set_mode('rt')).
-    Our code never calls Twinkly HTTP, so fppd's token is never invalidated —
-    no 60-second re-auth penalty.
+    With overlay state 0 and no sequence playing, fppd sends zero packets
+    (confirmed by packet capture).  Twinkly controllers exit RT mode after
+    ~3 s of silence; fppd re-enters RT mode autonomously on resume without
+    the ~60 s backoff that happens when external code invalidates its token.
     """
     global idle_animation
     if idle_animation:
@@ -297,8 +265,7 @@ def _start_idle():
             m.fpp.release_overlay()
     except Exception as e:
         log(f"Failed to release FPP overlay: {e}", level='WARNING', module="Idle")
-    _fpp_set_outputs("disable")
-    log("FPP outputs disabled — no data stream while idle", module="Idle")
+    log("Overlay released — fppd sends nothing while idle", module="Idle")
 
 
 def _stop_idle():
@@ -360,12 +327,9 @@ def play_video_thread(video_path, loop, speed, brightness, playback_fps, generat
                 level='INFO', module="PLAYBACK")
             return
 
-        # Re-enable fppd outputs if they were disabled during idle, then acquire overlay.
-        # fppd's own StartOutput() handles Twinkly login + set_mode('rt') internally.
-        # We never call /xled/v1/login ourselves, so fppd's token is never invalidated.
-        _fpp_set_outputs("enable")
-
-        # Enable FPP overlay — fppd manages Twinkly rt mode natively
+        # Enable FPP overlay — fppd re-enters Twinkly RT mode autonomously.
+        # We never call /xled/v1/login, so fppd's token is never invalidated;
+        # re-auth completes in < 2 s (fppd's own login, not a 60 s backoff).
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
             # Log mmap contents immediately after overlay acquire so we can see
@@ -449,9 +413,7 @@ def play_playlist_thread(entries, loop, brightness, playback_fps, transition_dur
                 level='INFO', module="PLAYBACK")
             return
 
-        # Re-enable fppd outputs if they were disabled during idle (mirrors VIDEO_THREAD).
-        _fpp_set_outputs("enable")
-
+        # Enable FPP overlay — fppd re-enters RT mode autonomously (mirrors VIDEO_THREAD).
         if getattr(matrix, 'fpp', None):
             matrix.fpp.acquire_overlay()
 
