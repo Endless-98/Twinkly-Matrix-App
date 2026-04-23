@@ -197,9 +197,12 @@ class _CastBubblePageState extends ConsumerState<CastBubblePage>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Stop casting and close overlay when phone sleeps or app is backgrounded
-    if (state == AppLifecycleState.paused && isCapturing) {
-      logger.info('App paused (screen off?) — stopping cast', module: 'CAST');
+    // The cast foreground service keeps running while the app is backgrounded,
+    // so do NOT stop on AppLifecycleState.paused — that fires when the screen
+    // share picker appears AND when the user simply navigates away.
+    // Only stop when the app is fully detached (process being killed).
+    if (state == AppLifecycleState.detached && isCapturing) {
+      logger.info('App detached — stopping cast', module: 'CAST');
       _stopCapture();
     }
   }

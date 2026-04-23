@@ -231,6 +231,13 @@ class DdpBridge:
         first_frame_written = False
         last_status = time.time()
 
+        # Overlay state: acquire when DDP frames arrive, release after idle.
+        # This mirrors the video/Tetris pattern — fppd sends nothing when the
+        # bridge holds no overlay (phone not casting).
+        _overlay_held = False
+        _last_frame_ts = 0.0
+        _BRIDGE_IDLE_TIMEOUT = 5.0  # seconds of silence before releasing overlay
+
         while self._running:
             # -- batch-receive packets ------------------------------------
             packets_this_loop = 0
@@ -357,6 +364,13 @@ class DdpBridge:
                     self._last_write_ts = time.perf_counter()
                     wrote = True
 
+                    # Acquire overlay on first frame (and re-acquire after idle release).
+                    if not _overlay_held:
+                        self.out.acquire_overlay()
+                        _overlay_held = True
+                        self._log_always("[DDP_BRIDGE] Overlay acquired — DDP active")
+                    _last_frame_ts = time.time()
+
                     if not first_frame_written:
                         first_frame_written = True
                         sample = bytes(latest.buf[:12]).hex()
@@ -370,6 +384,12 @@ class DdpBridge:
 
             # -- stats / idle sleep ---------------------------------------
             self._maybe_log_interval()
+
+            # Release overlay after sustained inactivity so fppd goes quiet.
+            if _overlay_held and _last_frame_ts > 0 and (time.time() - _last_frame_ts) > _BRIDGE_IDLE_TIMEOUT:
+                self.out.release_overlay()
+                _overlay_held = False
+                self._log_always("[DDP_BRIDGE] Overlay released — DDP idle")
 
             if packets_this_loop == 0 and not wrote:
                 time.sleep(0.0001)
@@ -389,6 +409,8 @@ class DdpBridge:
                 break
 
         # -- final summary ------------------------------------------------
+        if _overlay_held:
+            self.out.release_overlay()
         self._reset_interval()  # flush last partial interval into totals
         total_secs = max(1.0, time.time() - run_start)
         self._log_always("=" * 60)

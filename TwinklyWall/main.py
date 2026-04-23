@@ -408,10 +408,14 @@ def main():
                         log(f"🎮 {current_count} player(s) joined Tetris, starting game...", module="TetrisMonitor")
                         # Stop any active video playback and idle pattern
                         try:
-                            from api_server import stop_current_playback, _stop_idle, _playback_lock
+                            from api_server import stop_current_playback, _stop_idle, _start_idle, _playback_lock
                             with _playback_lock:
                                 stop_current_playback()
                                 _stop_idle()
+                                # Release the api_server overlay so any lingering keepalive
+                                # from a prior video session doesn't compete with Tetris's
+                                # acquire_overlay() call below.
+                                _start_idle()
                             log("🔇 Stopped active video playback before starting game", module="TetrisMonitor")
                         except Exception as e:
                             log(f"Error stopping video playback: {e}", level='ERROR', module="TetrisMonitor")

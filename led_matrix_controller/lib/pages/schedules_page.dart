@@ -530,12 +530,6 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                           ],
                         ),
                       ),
-                    SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('Enabled'),
-                      value: enabled,
-                      onChanged: (v) => setDlgState(() => enabled = v),
-                    ),
 
                     // Color
                     const Text('Color',
