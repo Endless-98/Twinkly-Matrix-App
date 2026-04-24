@@ -18,6 +18,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
   List<Map<String, dynamic>> _schedules = [];
   List<String> _videos = [];
   List<Map<String, dynamic>> _playlists = [];
+  Map<String, dynamic> _smartConfig = {};
   bool _isLoading = true;
   String? _error;
 
@@ -66,6 +67,21 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
     return dot > 0 ? name.substring(0, dot) : name;
   }
 
+  String _formatSmartGameTime(String? isoUtc) {
+    if (isoUtc == null) return 'No game today';
+    try {
+      final utc = DateTime.parse(isoUtc.replaceAll('Z', '+00:00'));
+      final mtn = utc.subtract(const Duration(hours: 6));
+      final h = mtn.hour;
+      final m = mtn.minute;
+      final period = h < 12 ? 'AM' : 'PM';
+      final h12 = h % 12 == 0 ? 12 : h % 12;
+      return 'Next: $h12:${m.toString().padLeft(2, '0')} $period MT';
+    } catch (_) {
+      return isoUtc;
+    }
+  }
+
   /// Convert "HH:MM" (24-hour) → "H:MM AM/PM"
   String _formatTime(String hhmm) {
     final parts = hhmm.split(':');
@@ -110,12 +126,14 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
         api.getSchedules(),
         api.getAvailableVideos(),
         api.getPlaylists(),
+        api.getSmartSchedules().catchError((_) => <String, dynamic>{}),
       ]);
       if (mounted) {
         setState(() {
           _schedules = results[0] as List<Map<String, dynamic>>;
           _videos = results[1] as List<String>;
           _playlists = results[2] as List<Map<String, dynamic>>;
+          _smartConfig = results[3] as Map<String, dynamic>;
           _isLoading = false;
         });
       }
@@ -130,6 +148,31 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
   // ---------------------------------------------------------------------------
   // Actions
   // ---------------------------------------------------------------------------
+
+  Future<void> _toggleSmartEnabled(bool enabled) async {
+    final dt = Map<String, dynamic>.from(
+      (_smartConfig['dodger_time'] as Map<String, dynamic>?) ?? {},
+    );
+    setState(() {
+      _smartConfig = {
+        ..._smartConfig,
+        'dodger_time': {...dt, 'enabled': enabled},
+      };
+    });
+    try {
+      final fppIp = ref.read(fppIpProvider);
+      await ApiService(host: fppIp).updateSmartSchedules({
+        'dodger_time': {...dt, 'enabled': enabled},
+      });
+    } catch (e) {
+      _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
 
   Future<void> _toggleEnabled(String id, bool enabled) async {
     // Optimistic update
@@ -760,35 +803,6 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
         ),
       );
     }
-    if (_schedules.isEmpty) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(32),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.calendar_today,
-                  size: 72, color: Colors.grey[700]),
-              const SizedBox(height: 20),
-              const Text(
-                'No schedules yet',
-                style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'Tap + to schedule a video, folder,\nor special action at a set time.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-
     return RefreshIndicator(
       onRefresh: _load,
       child: GridView.builder(
@@ -799,8 +813,11 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
           mainAxisSpacing: 12,
           childAspectRatio: 0.85,
         ),
-        itemCount: _schedules.length,
-        itemBuilder: (_, i) => _buildCard(_schedules[i]),
+        itemCount: _schedules.length + 1,
+        itemBuilder: (_, i) {
+          if (i == 0) return _buildSmartCard();
+          return _buildCard(_schedules[i - 1]);
+        },
       ),
     );
   }
@@ -982,6 +999,174 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSmartCard() {
+    final dt = _smartConfig['dodger_time'] as Map<String, dynamic>? ?? {};
+    final enabled = dt['enabled'] as bool? ?? false;
+    final cardColor = _colorFromHex(dt['color'] as String? ?? '#1565C0');
+    final target = dt['target'] as String? ?? '';
+    final targetType = dt['target_type'] as String? ?? 'video';
+    final nextGameRaw =
+        (_smartConfig['next_game'] as Map<String, dynamic>?)?['dodger_time']
+            as String?;
+    final nextGameDisplay = _formatSmartGameTime(nextGameRaw);
+
+    return Card(
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      elevation: enabled ? 6 : 2,
+      child: InkWell(
+        onTap: () async {
+          final changed = await Navigator.of(context).push<bool>(
+            MaterialPageRoute(builder: (_) => const SmartSchedulePage()),
+          );
+          if (changed == true) _load();
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildSmartThumb(enabled, cardColor),
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: enabled
+                        ? [
+                            cardColor.withValues(alpha: 0.9),
+                            cardColor.withValues(alpha: 0.35),
+                            Colors.grey[900]!,
+                          ]
+                        : [Colors.grey[850]!, Colors.grey[900]!],
+                    stops:
+                        enabled ? const [0.0, 0.5, 1.0] : const [0.0, 1.0],
+                  ),
+                ),
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Transform.scale(
+                          scale: 0.8,
+                          alignment: Alignment.centerLeft,
+                          child: Switch(
+                            value: enabled,
+                            onChanged: _toggleSmartEnabled,
+                            activeColor: Colors.cyanAccent,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.indigoAccent.withValues(alpha: 0.3),
+                            borderRadius: BorderRadius.circular(4),
+                            border: Border.all(
+                              color:
+                                  Colors.indigoAccent.withValues(alpha: 0.6),
+                              width: 0.5,
+                            ),
+                          ),
+                          child: const Text(
+                            'SMART',
+                            style: TextStyle(
+                              fontSize: 8,
+                              color: Colors.indigoAccent,
+                              fontWeight: FontWeight.bold,
+                              letterSpacing: 0.5,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    Text(
+                      nextGameDisplay,
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: enabled ? Colors.white : Colors.white38,
+                        height: 1.1,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 6),
+                    Divider(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      height: 12,
+                    ),
+                    Row(
+                      children: [
+                        Icon(
+                          targetType == 'playlist'
+                              ? Icons.folder
+                              : Icons.movie,
+                          size: 13,
+                          color: Colors.white60,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            target.isEmpty
+                                ? 'No sequence set'
+                                : _displayName(target),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color:
+                                  enabled ? Colors.white : Colors.white38,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSmartThumb(bool enabled, Color cardColor) {
+    final panelBg = enabled
+        ? HSLColor.fromColor(cardColor).withLightness(0.12).toColor()
+        : Colors.grey[900]!;
+    final iconColor = enabled ? cardColor : Colors.grey[600]!;
+    return SizedBox(
+      height: 80,
+      width: double.infinity,
+      child: ColoredBox(
+        color: panelBg,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.auto_awesome, size: 28, color: iconColor),
+              const SizedBox(height: 4),
+              Text(
+                'Dodger Time',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: iconColor,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
