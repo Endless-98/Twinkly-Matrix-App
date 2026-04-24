@@ -2480,7 +2480,20 @@ def _fetch_dodger_next_game(today_str: str) -> 'str | None':
 
 def _check_dodger_time():
     """Fire Dodger Time trigger if a game is starting within ±5 min (Mountain Time)."""
-    from zoneinfo import ZoneInfo
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:
+        try:
+            from backports.zoneinfo import ZoneInfo  # Python 3.8 backport
+        except ImportError:
+            import datetime as _dt
+            # Fallback: UTC-6 fixed offset (Mountain Daylight Time)
+            mountain_tz = _dt.timezone(_dt.timedelta(hours=-6))
+            now_mtn = _dt.datetime.now(mountain_tz)
+            today_str = now_mtn.strftime('%Y-%m-%d')
+            # Inline the rest without ZoneInfo
+            _check_dodger_time_fallback(now_mtn, today_str)
+            return
     mountain_tz = ZoneInfo("America/Denver")
     now_mtn = datetime.datetime.now(mountain_tz)
     today_str = now_mtn.strftime('%Y-%m-%d')
@@ -2528,6 +2541,42 @@ def _check_dodger_time():
         log(f"[SMART] Trigger error: {e}", level='ERROR', module="SmartScheduler")
 
 
+def _check_dodger_time_fallback(now_mtn: 'datetime.datetime', today_str: str):
+    """Fallback version of _check_dodger_time when zoneinfo is unavailable."""
+    config = _load_smart_schedules()
+    dt_config = config.get('dodger_time', {})
+    if not dt_config.get('enabled', False):
+        return
+    target_type = dt_config.get('target_type', 'video')
+    target = dt_config.get('target', '')
+    if not target:
+        return
+    if _smart_last_fired.get('dodger_time') == today_str:
+        return
+    cached = _smart_next_game_cache.get('dodger_time', {})
+    if cached.get('date') != today_str:
+        game_time = _fetch_dodger_next_game(today_str)
+        _smart_next_game_cache['dodger_time'] = {'date': today_str, 'game_time': game_time}
+    game_time_str = _smart_next_game_cache.get('dodger_time', {}).get('game_time')
+    if not game_time_str:
+        return
+    try:
+        import datetime as _dt
+        game_time_utc = _dt.datetime.fromisoformat(game_time_str.replace('Z', '+00:00'))
+        offset = _dt.timezone(_dt.timedelta(hours=-6))
+        game_time_local = game_time_utc.astimezone(offset)
+        diff_sec = (game_time_local - now_mtn).total_seconds()
+        if -300 <= diff_sec <= 300:
+            _smart_last_fired['dodger_time'] = today_str
+            log(f"[SMART] Dodger Time (fallback)! → {target_type}:{target}", module="SmartScheduler")
+            if target_type == 'playlist':
+                _scheduler_trigger_playlist(target, loop=True, brightness=None)
+            else:
+                _scheduler_trigger_video(target, loop=True, brightness=None)
+    except Exception as e:
+        log(f"[SMART] Trigger error (fallback): {e}", level='ERROR', module="SmartScheduler")
+
+
 def _run_smart_scheduler():
     """Background thread: checks smart-schedule triggers every 60 seconds."""
     log("Smart schedule runner started", module="SmartScheduler")
@@ -2570,6 +2619,9 @@ def update_smart_schedules():
         return jsonify(config)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+def start_cleanup_thread():
     """Start the background cleanup thread, schedule runner, and smart scheduler."""
     global cleanup_thread, cleanup_active, _scheduler_thread, _smart_scheduler_thread
     cleanup_active = True
