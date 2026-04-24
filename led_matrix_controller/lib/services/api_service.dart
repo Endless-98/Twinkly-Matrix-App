@@ -783,6 +783,41 @@ class ApiService {
     }
   }
 
+  /// Get smart schedule configuration (Dodger Time, etc.)
+  Future<Map<String, dynamic>> getSmartSchedules() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$_baseUrl/api/smart-schedules'))
+          .timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      throw Exception(_parseError(response));
+    } catch (e) {
+      throw Exception('Smart schedule fetch error: $e');
+    }
+  }
+
+  /// Update smart schedule configuration
+  Future<Map<String, dynamic>> updateSmartSchedules(
+      Map<String, dynamic> data) async {
+    try {
+      final response = await http
+          .put(
+            Uri.parse('$_baseUrl/api/smart-schedules'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(data),
+          )
+          .timeout(const Duration(seconds: 5));
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body) as Map<String, dynamic>;
+      }
+      throw Exception(_parseError(response));
+    } catch (e) {
+      throw Exception('Smart schedule update error: $e');
+    }
+  }
+
   /// Play a playlist
   Future<void> playPlaylist(String name,
       {bool loop = false, double? brightness, double playbackFps = 20.0}) async {

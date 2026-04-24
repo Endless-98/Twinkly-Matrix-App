@@ -4,6 +4,8 @@ import 'dart:async';
 
 import '../services/api_service.dart';
 import '../providers/app_state.dart';
+import 'action_schedule_page.dart';
+import 'smart_schedule_page.dart';
 
 class SchedulesPage extends ConsumerStatefulWidget {
   const SchedulesPage({super.key});
@@ -34,6 +36,27 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
     '#8D6E63': Color(0xFF8D6E63),
     '#78909C': Color(0xFF78909C),
   };
+
+  // Special actions — used only for card display of existing action schedules
+  static const _actions = [
+    {'id': 'turn_off',        'label': 'Turn Off'},
+    {'id': 'set_brightness',  'label': 'Set Brightness'},
+  ];
+
+  IconData _actionIconFor(String actionId) {
+    switch (actionId) {
+      case 'turn_off':       return Icons.power_settings_new;
+      case 'set_brightness': return Icons.brightness_6;
+      default:               return Icons.bolt;
+    }
+  }
+
+  String _actionLabelFor(String actionId) {
+    for (final a in _actions) {
+      if (a['id'] == actionId) return a['label'] as String;
+    }
+    return actionId;
+  }
 
   Color _colorFromHex(String hex) =>
       _colorOptions[hex] ?? const Color(0xFF42A5F5);
@@ -591,6 +614,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
                           'enabled': enabled,
                           'target_type': targetType,
                           'target': target,
+                          'action_params': {},
                           'time': '$h:$m',
                           'days': (days.toList()..sort()),
                           'loop': playCount == 0,
@@ -669,12 +693,51 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
         ],
       ),
       body: _buildBody(),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showEditDialog(),
-        icon: const Icon(Icons.add),
-        label: const Text('New Schedule'),
-        backgroundColor: Colors.cyanAccent,
-        foregroundColor: Colors.black,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          FloatingActionButton.extended(
+            heroTag: 'fab_smart',
+            onPressed: () async {
+              final changed = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => const SmartSchedulePage(),
+                ),
+              );
+              if (changed == true) _load();
+            },
+            icon: const Icon(Icons.auto_awesome),
+            label: const Text('Smart Schedule'),
+            backgroundColor: Colors.indigo.shade700,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'fab_action',
+            onPressed: () async {
+              final changed = await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => const ActionSchedulePage(),
+                ),
+              );
+              if (changed == true) _load();
+            },
+            icon: const Icon(Icons.bolt),
+            label: const Text('Schedule Action'),
+            backgroundColor: Colors.deepPurpleAccent,
+            foregroundColor: Colors.white,
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton.extended(
+            heroTag: 'fab_sequence',
+            onPressed: () => _showEditDialog(),
+            icon: const Icon(Icons.add),
+            label: const Text('Schedule Sequence'),
+            backgroundColor: Colors.cyanAccent,
+            foregroundColor: Colors.black,
+          ),
+        ],
       ),
     );
   }
@@ -716,7 +779,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
               ),
               const SizedBox(height: 10),
               const Text(
-                'Tap + to schedule a video or folder\nto play automatically at a set time.',
+                'Tap + to schedule a video, folder,\nor special action at a set time.',
                 textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.grey),
               ),
@@ -734,7 +797,7 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
           crossAxisCount: 2,
           crossAxisSpacing: 12,
           mainAxisSpacing: 12,
-          childAspectRatio: 0.72,
+          childAspectRatio: 0.85,
         ),
         itemCount: _schedules.length,
         itemBuilder: (_, i) => _buildCard(_schedules[i]),
@@ -752,135 +815,298 @@ class _SchedulesPageState extends ConsumerState<SchedulesPage> {
     final days = List<int>.from(s['days'] ?? List.generate(7, (i) => i));
     final cardColor = _colorFromHex(s['color'] as String? ?? '#42A5F5');
     final isPlaylist = targetType == 'playlist';
+    final isAction = targetType == 'action';
+    final actionParams = s['action_params'] is Map
+        ? Map<String, dynamic>.from(s['action_params'] as Map)
+        : <String, dynamic>{};
+
+    void openEditor() {
+      if (isAction) {
+        Navigator.of(context)
+            .push<bool>(MaterialPageRoute(
+              builder: (_) => ActionSchedulePage(existing: s),
+            ))
+            .then((changed) { if (changed == true) _load(); });
+      } else {
+        _showEditDialog(s);
+      }
+    }
 
     return Card(
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: enabled ? 6 : 2,
       child: InkWell(
-        onTap: () => _showEditDialog(s),
-        child: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
-              colors: enabled
-                  ? [
-                      cardColor.withValues(alpha: 0.9),
-                      cardColor.withValues(alpha: 0.35),
-                      Colors.grey[900]!,
-                    ]
-                  : [
-                      Colors.grey[850]!,
-                      Colors.grey[900]!,
-                    ],
-              stops: enabled ? const [0.0, 0.5, 1.0] : const [0.0, 1.0],
+        onTap: openEditor,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Visual thumbnail / action panel
+            _buildCardThumb(targetType, target, actionParams, enabled, cardColor),
+
+            // Schedule info
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                    colors: enabled
+                        ? [
+                            cardColor.withValues(alpha: 0.9),
+                            cardColor.withValues(alpha: 0.35),
+                            Colors.grey[900]!,
+                          ]
+                        : [
+                            Colors.grey[850]!,
+                            Colors.grey[900]!,
+                          ],
+                    stops: enabled ? const [0.0, 0.5, 1.0] : const [0.0, 1.0],
+                  ),
+                ),
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Top row: enable switch + more menu
+                    Row(
+                      children: [
+                        Transform.scale(
+                          scale: 0.8,
+                          alignment: Alignment.centerLeft,
+                          child: Switch(
+                            value: enabled,
+                            onChanged: (v) => _toggleEnabled(id, v),
+                            activeColor: Colors.cyanAccent,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                          ),
+                        ),
+                        const Spacer(),
+                        PopupMenuButton<String>(
+                          icon: const Icon(Icons.more_vert,
+                              size: 18, color: Colors.white70),
+                          onSelected: (v) {
+                            if (v == 'edit') openEditor();
+                            if (v == 'delete') _delete(id, name);
+                          },
+                          itemBuilder: (_) => [
+                            const PopupMenuItem(
+                              value: 'edit',
+                              child: Row(children: [
+                                Icon(Icons.edit, size: 16),
+                                SizedBox(width: 8),
+                                Text('Edit'),
+                              ]),
+                            ),
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Row(children: [
+                                Icon(Icons.delete,
+                                    size: 16, color: Colors.red),
+                                SizedBox(width: 8),
+                                Text('Delete',
+                                    style: TextStyle(color: Colors.red)),
+                              ]),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+
+                    // Big time display
+                    Text(
+                      _formatTime(timeStr),
+                      style: TextStyle(
+                        fontSize: 26,
+                        fontWeight: FontWeight.bold,
+                        color: enabled ? Colors.white : Colors.white38,
+                        height: 1.0,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+
+                    // Days summary label
+                    Text(
+                      _daysLabel(days),
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: enabled ? Colors.white70 : Colors.white24,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+
+                    // Day dot indicators
+                    _buildDayDots(days, enabled),
+
+                    const SizedBox(height: 6),
+
+                    // Divider
+                    Divider(
+                      color: Colors.white.withValues(alpha: 0.15),
+                      height: 12,
+                    ),
+
+                    // Target info
+                    Row(
+                      children: [
+                        Icon(
+                          isAction
+                              ? _actionIconFor(target)
+                              : (isPlaylist ? Icons.folder : Icons.movie),
+                          size: 13,
+                          color: Colors.white60,
+                        ),
+                        const SizedBox(width: 5),
+                        Expanded(
+                          child: Text(
+                            isAction
+                                ? (target == 'set_brightness'
+                                    ? '${(((actionParams['brightness'] as num?)?.toDouble() ?? 1.0) * 100).round()}%'
+                                    : _actionLabelFor(target))
+                                : (name.isNotEmpty
+                                    ? name
+                                    : _displayName(target)),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: enabled ? Colors.white : Colors.white38,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCardThumb(
+    String targetType,
+    String target,
+    Map<String, dynamic> actionParams,
+    bool enabled,
+    Color cardColor,
+  ) {
+    // --- Action: icon panel ---
+    if (targetType == 'action') {
+      final icon = _actionIconFor(target);
+      final isSetBrightness = target == 'set_brightness';
+      final displayText = isSetBrightness
+          ? '${(((actionParams['brightness'] as num?)?.toDouble() ?? 1.0) * 100).round()}%'
+          : _actionLabelFor(target);
+      final panelBg = enabled
+          ? HSLColor.fromColor(cardColor).withLightness(0.12).toColor()
+          : Colors.grey[900]!;
+      final iconColor = enabled ? cardColor : Colors.grey[600]!;
+      return SizedBox(
+        height: 80,
+        width: double.infinity,
+        child: ColoredBox(
+          color: panelBg,
+          child: Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(icon, size: 28, color: iconColor),
+                const SizedBox(height: 4),
+                Text(
+                  displayText,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: iconColor,
+                  ),
+                ),
+              ],
             ),
           ),
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Top row: enable switch + more menu
-              Row(
-                children: [
-                  Transform.scale(
-                    scale: 0.8,
-                    alignment: Alignment.centerLeft,
-                    child: Switch(
-                      value: enabled,
-                      onChanged: (v) => _toggleEnabled(id, v),
-                      activeColor: Colors.cyanAccent,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                  ),
-                  const Spacer(),
-                  PopupMenuButton<String>(
-                    icon: const Icon(Icons.more_vert,
-                        size: 18, color: Colors.white70),
-                    onSelected: (v) {
-                      if (v == 'edit') _showEditDialog(s);
-                      if (v == 'delete') _delete(id, name);
-                    },
-                    itemBuilder: (_) => [
-                      const PopupMenuItem(
-                        value: 'edit',
-                        child: Row(children: [
-                          Icon(Icons.edit, size: 16),
-                          SizedBox(width: 8),
-                          Text('Edit'),
-                        ]),
-                      ),
-                      const PopupMenuItem(
-                        value: 'delete',
-                        child: Row(children: [
-                          Icon(Icons.delete, size: 16, color: Colors.red),
-                          SizedBox(width: 8),
-                          Text('Delete',
-                              style: TextStyle(color: Colors.red)),
-                        ]),
-                      ),
-                    ],
-                  ),
-                ],
+        ),
+      );
+    }
+
+    final fppIp = ref.read(fppIpProvider);
+    final api = ApiService(host: fppIp);
+
+    // --- Playlist: 2×2 thumbnail grid ---
+    if (targetType == 'playlist') {
+      final playlist = _playlists.firstWhere(
+        (p) => p['name'] == target,
+        orElse: () => const {},
+      );
+      final rawEntries = playlist['entries'];
+      final thumbUrls = rawEntries is List
+          ? rawEntries
+              .whereType<Map>()
+              .where((e) => e['video'] != null)
+              .take(4)
+              .map((e) => api.getThumbnailUrl(e['video'] as String))
+              .toList()
+          : <String>[];
+
+      if (thumbUrls.isEmpty) {
+        return SizedBox(
+          height: 80,
+          width: double.infinity,
+          child: ColoredBox(
+            color: Colors.grey.shade900,
+            child: Center(
+              child: Icon(
+                Icons.folder_open,
+                size: 30,
+                color: enabled ? Colors.white38 : Colors.white12,
               ),
+            ),
+          ),
+        );
+      }
 
-              // Big time display
-              Text(
-                _formatTime(timeStr),
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: enabled ? Colors.white : Colors.white38,
-                  height: 1.0,
-                ),
-              ),
-              const SizedBox(height: 6),
+      // Pad to exactly 4 slots
+      final slots = List<String?>.from(thumbUrls);
+      while (slots.length < 4) slots.add(null);
 
-              // Days summary label
-              Text(
-                _daysLabel(days),
-                style: TextStyle(
-                  fontSize: 11,
-                  color: enabled ? Colors.white70 : Colors.white24,
-                ),
-              ),
-              const SizedBox(height: 6),
+      return SizedBox(
+        height: 80,
+        child: GridView.count(
+          crossAxisCount: 2,
+          physics: const NeverScrollableScrollPhysics(),
+          children: slots
+              .map<Widget>((url) => url == null
+                  ? ColoredBox(color: Colors.grey[850]!)
+                  : Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      gaplessPlayback: true,
+                      errorBuilder: (_, __, ___) =>
+                          ColoredBox(color: Colors.grey[850]!),
+                    ))
+              .toList(),
+        ),
+      );
+    }
 
-              // Day dot indicators
-              _buildDayDots(days, enabled),
-
-              const Spacer(),
-
-              // Divider
-              Divider(
-                color: Colors.white.withValues(alpha: 0.15),
-                height: 16,
-              ),
-
-              // Target info
-              Row(
-                children: [
-                  Icon(
-                    isPlaylist ? Icons.folder : Icons.movie,
-                    size: 14,
-                    color: Colors.white60,
-                  ),
-                  const SizedBox(width: 5),
-                  Expanded(
-                    child: Text(
-                      name.isNotEmpty ? name : _displayName(target),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: enabled ? Colors.white : Colors.white38,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ],
+    // --- Video: single thumbnail ---
+    return SizedBox(
+      height: 80,
+      width: double.infinity,
+      child: Image.network(
+        api.getThumbnailUrl(target),
+        fit: BoxFit.cover,
+        gaplessPlayback: true,
+        errorBuilder: (_, __, ___) => ColoredBox(
+          color: Colors.grey.shade900,
+          child: Center(
+            child: Icon(
+              Icons.movie,
+              size: 30,
+              color: enabled ? Colors.white38 : Colors.white12,
+            ),
           ),
         ),
       ),

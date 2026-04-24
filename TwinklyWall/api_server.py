@@ -76,6 +76,7 @@ source_videos_dir = Path("assets/source_videos")
 uploaded_videos_dir = MEDIA_ROOT / "uploads"
 playlists_dir = MEDIA_ROOT / "playlists"
 schedules_dir = MEDIA_ROOT / "schedules"
+smart_schedules_path = MEDIA_ROOT / "smart_schedules.json"
 
 # Ensure media directories live on the large (219GB) partition, not /tmp
 os.makedirs(rendered_videos_dir, exist_ok=True)
@@ -2178,7 +2179,10 @@ def cleanup_idle_loop():
 # ---------------------------------------------------------------------------
 
 _scheduler_thread = None
+_smart_scheduler_thread = None
 _scheduler_last_fired: dict = {}   # schedule_id -> "YYYY-MM-DD HH:MM"
+_smart_last_fired: dict = {}       # smart_key  -> "YYYY-MM-DD"
+_smart_next_game_cache: dict = {}  # smart_key  -> {'date': str, 'game_time': str|None}
 
 
 def _schedule_id_safe(sid: str) -> bool:
@@ -2279,6 +2283,27 @@ def _scheduler_trigger_random_from_playlist(name: str, brightness, play_count: i
     _scheduler_trigger_video(video_name, loop, brightness, play_count)
 
 
+def _scheduler_trigger_action(action_type: str, params: dict):
+    """Execute a scheduled special action on the curtain."""
+    if action_type == 'turn_off':
+        log("[SCHEDULER] Action: turn_off — stopping playback", module="Scheduler")
+        with _playback_lock:
+            stop_current_playback()
+            _start_idle()
+
+    elif action_type == 'set_brightness':
+        brightness = float(params.get('brightness', 1.0))
+        brightness = max(0.05, min(2.0, brightness))
+        log(f"[SCHEDULER] Action: set_brightness → {brightness:.2f} ({brightness * 100:.0f}%)", module="Scheduler")
+        if current_player:
+            current_player.brightness = brightness
+        else:
+            log("[SCHEDULER] set_brightness: no active player to adjust", level='WARNING', module="Scheduler")
+
+    else:
+        log(f"[SCHEDULER] Unknown action type: '{action_type}'", level='WARNING', module="Scheduler")
+
+
 def _run_scheduler():
     """Background thread: checks every 30 s and fires matching schedules."""
     log("Schedule runner started", module="Scheduler")
@@ -2313,7 +2338,10 @@ def _run_scheduler():
                     brightness = s.get('brightness')
                     log(f"[SCHEDULER] Firing '{s.get('name', sid)}' → {target_type}:{target} (play_count={play_count}, random={random_pick})", module="Scheduler")
 
-                    if target_type == 'playlist':
+                    if target_type == 'action':
+                        action_params = s.get('action_params', {})
+                        _scheduler_trigger_action(target, action_params)
+                    elif target_type == 'playlist':
                         if random_pick:
                             _scheduler_trigger_random_from_playlist(target, brightness, play_count)
                         else:
@@ -2363,6 +2391,7 @@ def create_schedule():
             'play_count': int(data.get('play_count', 0)),
             'random_pick': bool(data.get('random_pick', False)),
             'color': str(data.get('color', '#42A5F5')),
+            'action_params': data.get('action_params', {}),
         }
         _save_schedule(sid, sched)
         return jsonify({'id': sid, **sched}), 201
@@ -2379,7 +2408,7 @@ def update_schedule(sid):
         if existing is None:
             return jsonify({'error': 'Schedule not found'}), 404
         data = request.json or {}
-        for field in ('name', 'enabled', 'target_type', 'target', 'time', 'days', 'loop', 'play_count', 'random_pick', 'color'):
+        for field in ('name', 'enabled', 'target_type', 'target', 'time', 'days', 'loop', 'play_count', 'random_pick', 'color', 'action_params'):
             if field in data:
                 existing[field] = data[field]
         _save_schedule(sid, existing)
@@ -2402,9 +2431,147 @@ def delete_schedule(sid):
         return jsonify({'error': str(e)}), 500
 
 
-def start_cleanup_thread():
-    """Start the background cleanup thread and schedule runner."""
-    global cleanup_thread, cleanup_active, _scheduler_thread
+# ---------------------------------------------------------------------------
+# Smart Schedules  (real-world event triggers)
+# ---------------------------------------------------------------------------
+
+def _load_smart_schedules() -> dict:
+    if not smart_schedules_path.exists():
+        return {
+            'dodger_time': {
+                'enabled': False,
+                'target_type': 'video',
+                'target': '',
+                'color': '#1565C0',
+                'name': 'Dodger Time',
+            },
+        }
+    try:
+        with open(smart_schedules_path) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _save_smart_schedules(data: dict):
+    with open(smart_schedules_path, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+def _fetch_dodger_next_game(today_str: str) -> 'str | None':
+    """Return the ISO UTC game-start string for the first Dodger game today, or None."""
+    import urllib.request as _urlreq
+    url = (
+        f"https://statsapi.mlb.com/api/v1/schedule"
+        f"?sportId=1&teamId=119&date={today_str}"
+    )
+    try:
+        with _urlreq.urlopen(url, timeout=10) as resp:
+            data = json.loads(resp.read().decode())
+        dates = data.get('dates', [])
+        if not dates:
+            return None
+        games = dates[0].get('games', [])
+        return games[0].get('gameDate') if games else None
+    except Exception as e:
+        log(f"[SMART] MLB API error: {e}", level='WARNING', module="SmartScheduler")
+        return None
+
+
+def _check_dodger_time():
+    """Fire Dodger Time trigger if a game is starting within ±5 min (Mountain Time)."""
+    from zoneinfo import ZoneInfo
+    mountain_tz = ZoneInfo("America/Denver")
+    now_mtn = datetime.datetime.now(mountain_tz)
+    today_str = now_mtn.strftime('%Y-%m-%d')
+
+    # Refresh next-game cache once per day
+    cached = _smart_next_game_cache.get('dodger_time', {})
+    if cached.get('date') != today_str:
+        game_time = _fetch_dodger_next_game(today_str)
+        _smart_next_game_cache['dodger_time'] = {'date': today_str, 'game_time': game_time}
+
+    config = _load_smart_schedules()
+    dt_config = config.get('dodger_time', {})
+    if not dt_config.get('enabled', False):
+        return
+
+    target_type = dt_config.get('target_type', 'video')
+    target = dt_config.get('target', '')
+    if not target:
+        return
+
+    # Avoid double-triggering the same game today
+    if _smart_last_fired.get('dodger_time') == today_str:
+        return
+
+    game_time_str = _smart_next_game_cache.get('dodger_time', {}).get('game_time')
+    if not game_time_str:
+        return
+
+    try:
+        game_time_utc = datetime.datetime.fromisoformat(game_time_str.replace('Z', '+00:00'))
+        game_time_mtn = game_time_utc.astimezone(mountain_tz)
+        diff_sec = (game_time_mtn - now_mtn).total_seconds()
+        if -300 <= diff_sec <= 300:  # ±5-minute window
+            _smart_last_fired['dodger_time'] = today_str
+            log(
+                f"[SMART] Dodger Time! Game at {game_time_mtn.strftime('%I:%M %p MT')}"
+                f" → {target_type}:{target}",
+                module="SmartScheduler",
+            )
+            if target_type == 'playlist':
+                _scheduler_trigger_playlist(target, loop=True, brightness=None)
+            else:
+                _scheduler_trigger_video(target, loop=True, brightness=None)
+    except Exception as e:
+        log(f"[SMART] Trigger error: {e}", level='ERROR', module="SmartScheduler")
+
+
+def _run_smart_scheduler():
+    """Background thread: checks smart-schedule triggers every 60 seconds."""
+    log("Smart schedule runner started", module="SmartScheduler")
+    while True:
+        try:
+            _check_dodger_time()
+        except Exception as e:
+            log(f"[SMART] Unhandled error: {e}", level='ERROR', module="SmartScheduler")
+        time.sleep(60)
+
+
+@app.route('/api/smart-schedules', methods=['GET'])
+def get_smart_schedules():
+    """Return smart schedule config plus cached next-game info."""
+    try:
+        config = _load_smart_schedules()
+        next_game = {
+            key: val.get('game_time')
+            for key, val in _smart_next_game_cache.items()
+        }
+        return jsonify({**config, 'next_game': next_game})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/smart-schedules', methods=['PUT'])
+def update_smart_schedules():
+    """Update smart schedule config."""
+    try:
+        data = request.json or {}
+        config = _load_smart_schedules()
+        if 'dodger_time' in data:
+            dt = data['dodger_time']
+            existing = config.get('dodger_time', {})
+            for field in ('enabled', 'target_type', 'target', 'color', 'name'):
+                if field in dt:
+                    existing[field] = dt[field]
+            config['dodger_time'] = existing
+        _save_smart_schedules(config)
+        return jsonify(config)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    """Start the background cleanup thread, schedule runner, and smart scheduler."""
+    global cleanup_thread, cleanup_active, _scheduler_thread, _smart_scheduler_thread
     cleanup_active = True
     if not (cleanup_thread and cleanup_thread.is_alive()):
         cleanup_thread = threading.Thread(target=cleanup_idle_loop, daemon=True)
@@ -2412,6 +2579,9 @@ def start_cleanup_thread():
     if not (_scheduler_thread and _scheduler_thread.is_alive()):
         _scheduler_thread = threading.Thread(target=_run_scheduler, daemon=True, name='schedule-runner')
         _scheduler_thread.start()
+    if not (_smart_scheduler_thread and _smart_scheduler_thread.is_alive()):
+        _smart_scheduler_thread = threading.Thread(target=_run_smart_scheduler, daemon=True, name='smart-schedule-runner')
+        _smart_scheduler_thread.start()
 
 
 if __name__ == '__main__':
