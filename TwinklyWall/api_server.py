@@ -2534,9 +2534,9 @@ def _check_dodger_time():
                 module="SmartScheduler",
             )
             if target_type == 'playlist':
-                _scheduler_trigger_playlist(target, loop=True, brightness=None)
+                _scheduler_trigger_playlist(target, loop=False, brightness=None, play_count=1)
             else:
-                _scheduler_trigger_video(target, loop=True, brightness=None)
+                _scheduler_trigger_video(target, loop=False, brightness=None, play_count=1)
     except Exception as e:
         log(f"[SMART] Trigger error: {e}", level='ERROR', module="SmartScheduler")
 
@@ -2570,9 +2570,9 @@ def _check_dodger_time_fallback(now_mtn: 'datetime.datetime', today_str: str):
             _smart_last_fired['dodger_time'] = today_str
             log(f"[SMART] Dodger Time (fallback)! → {target_type}:{target}", module="SmartScheduler")
             if target_type == 'playlist':
-                _scheduler_trigger_playlist(target, loop=True, brightness=None)
+                _scheduler_trigger_playlist(target, loop=False, brightness=None, play_count=1)
             else:
-                _scheduler_trigger_video(target, loop=True, brightness=None)
+                _scheduler_trigger_video(target, loop=False, brightness=None, play_count=1)
     except Exception as e:
         log(f"[SMART] Trigger error (fallback): {e}", level='ERROR', module="SmartScheduler")
 
