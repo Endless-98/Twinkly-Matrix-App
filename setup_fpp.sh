@@ -1111,3 +1111,22 @@ fi
 echo ''
 echo '💡 To view logs:'
 echo '   sudo journalctl -u twinklywall -f'
+
+# ── Daily self-update cron job (runs at 5:00 AM) ─────────────────────────────
+if [ $DEBUG_MODE -eq 0 ]; then
+    echo ''
+    echo '⏰ Installing/verifying daily 5am cron job...'
+    CRON_JOB="0 5 * * * bash ~/TwinklyWall_Project/setup_fpp.sh >> /home/fpp/TwinklyWall_Project/setup_cron.log 2>&1"
+    if crontab -l 2>/dev/null | grep -qF 'setup_fpp.sh'; then
+        echo '   ✅ Daily 5am cron job already installed'
+    else
+        ( crontab -l 2>/dev/null | grep -v 'setup_fpp.sh'; echo "$CRON_JOB" ) | crontab -
+        echo '   ✅ Daily 5am cron job installed'
+    fi
+fi
+
+# ── Ensure nothing is playing when setup finishes ────────────────────────────
+echo ''
+echo '⏹️  Ensuring no video is playing after setup...'
+curl -sS -m 5 -X POST 'http://localhost:5000/api/stop' >/dev/null 2>&1 || true
+echo '   ✅ Stop signal sent — wall is idle'
