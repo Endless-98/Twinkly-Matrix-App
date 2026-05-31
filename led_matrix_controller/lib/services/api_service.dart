@@ -285,6 +285,29 @@ class ApiService {
     }
   }
 
+  /// Reboot the FPP device. Returns immediately — device will be offline ~30s.
+  Future<void> restartDevice() async {
+    try {
+      final response = await http
+          .post(Uri.parse('$_baseUrl/api/restart_device'))
+          .timeout(const Duration(seconds: 10));
+
+      if (response.statusCode != 200) {
+        throw Exception('Restart failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      // A connection-reset error is expected because the device reboots
+      // before the HTTP response fully arrives. Treat it as success.
+      final msg = e.toString();
+      if (msg.contains('Connection reset') ||
+          msg.contains('Connection closed') ||
+          msg.contains('SocketException')) {
+        return;
+      }
+      throw Exception('Restart error: $e');
+    }
+  }
+
   /// Upload a video file with trim and crop parameters
   Future<Map<String, dynamic>> uploadVideoWithParams(
     List<int> fileBytes,

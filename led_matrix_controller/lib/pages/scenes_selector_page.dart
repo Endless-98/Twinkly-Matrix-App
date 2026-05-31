@@ -1141,7 +1141,6 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               },
             ),
           ),
-          _buildNowPlayingBar(),
         ],
       ),
     );
@@ -1293,63 +1292,7 @@ class _ScenesSelectorPageState extends ConsumerState<ScenesSelectorPage> {
               ],
             ),
           ),
-          _buildNowPlayingBar(),
         ],
-      ),
-    );
-  }
-
-  Widget _buildNowPlayingBar() {
-    if (_currentlyPlaying == null) return const SizedBox.shrink();
-
-    final isPlaylist = _currentlyPlaying!.startsWith('playlist:');
-    final displayTitle = isPlaylist
-        ? '📁 ${_currentlyPlaying!.substring('playlist:'.length)}'
-        : _displayName(_currentlyPlaying!);
-
-    return SafeArea(
-      top: false,
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.green[900]!.withValues(alpha: 0.95),
-          border: Border(top: BorderSide(color: Colors.green[700]!, width: 1)),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.4), blurRadius: 8, offset: const Offset(0, -2))],
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        child: Row(
-          children: [
-            // Animated play icon
-            const Icon(Icons.play_circle_fill, color: Colors.greenAccent, size: 28),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('Now Playing', style: TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.w600, letterSpacing: 0.5)),
-                  const SizedBox(height: 1),
-                  Text(
-                    displayTitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            TextButton.icon(
-              onPressed: _stopPlayback,
-              icon: const Icon(Icons.stop_circle_outlined, size: 20),
-              label: const Text('Stop'),
-              style: TextButton.styleFrom(
-                foregroundColor: Colors.red[300],
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                minimumSize: Size.zero,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

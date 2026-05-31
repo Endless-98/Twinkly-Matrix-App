@@ -1116,12 +1116,22 @@ echo '   sudo journalctl -u twinklywall -f'
 if [ $DEBUG_MODE -eq 0 ]; then
     echo ''
     echo '⏰ Installing/verifying daily 5am cron job...'
-    CRON_JOB="0 5 * * * bash ~/TwinklyWall_Project/setup_fpp.sh >> /home/fpp/TwinklyWall_Project/setup_cron.log 2>&1"
-    if crontab -l 2>/dev/null | grep -qF 'setup_fpp.sh'; then
-        echo '   ✅ Daily 5am cron job already installed'
+    CRON_DAILY="0 5 * * * bash ~/TwinklyWall_Project/setup_fpp.sh >> /home/fpp/TwinklyWall_Project/setup_cron.log 2>&1"
+    CRON_BOOT="@reboot bash ~/TwinklyWall_Project/setup_fpp.sh >> /home/fpp/TwinklyWall_Project/setup_cron.log 2>&1"
+    CURRENT_CRON="$(crontab -l 2>/dev/null || true)"
+    CRON_CHANGED=0
+    if echo "$CURRENT_CRON" | grep -qF 'setup_fpp.sh'; then
+        echo '   ✅ Cron jobs for setup_fpp.sh already installed'
     else
-        ( crontab -l 2>/dev/null | grep -v 'setup_fpp.sh'; echo "$CRON_JOB" ) | crontab -
-        echo '   ✅ Daily 5am cron job installed'
+        # Write both entries fresh
+        ( echo "$CURRENT_CRON" | grep -v 'setup_fpp.sh'; echo "$CRON_BOOT"; echo "$CRON_DAILY" ) | crontab -
+        CRON_CHANGED=1
+        echo '   ✅ Cron jobs installed (@reboot + daily 5am)'
+    fi
+    # Ensure @reboot entry exists (upgrade from old daily-only install)
+    if [ "$CRON_CHANGED" -eq 0 ] && ! crontab -l 2>/dev/null | grep -qF '@reboot'; then
+        ( crontab -l 2>/dev/null; echo "$CRON_BOOT" ) | crontab -
+        echo '   ✅ Added @reboot cron entry'
     fi
 fi
 

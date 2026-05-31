@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../services/ddp_sender.dart';
 import '../services/command_sender.dart';
+import '../services/api_service.dart';
 
 enum ActiveMode { games, mirroring, scenes }
 enum CaptureMode { desktop, appWindow, region }
@@ -75,3 +77,57 @@ final commandSenderProvider = FutureProvider<CommandSender>((ref) async {
   await commandSender.initialize();
   return commandSender;
 });
+
+// ---------------------------------------------------------------------------
+// Now Playing — global state polled from /api/status every 3 seconds
+// ---------------------------------------------------------------------------
+
+class NowPlayingState {
+  final String? videoName;
+  final bool isPlaying;
+  const NowPlayingState({this.videoName, this.isPlaying = false});
+}
+
+class NowPlayingNotifier extends StateNotifier<NowPlayingState> {
+  final Ref _ref;
+  Timer? _timer;
+
+  NowPlayingNotifier(this._ref) : super(const NowPlayingState()) {
+    _poll();
+    _timer = Timer.periodic(const Duration(seconds: 3), (_) => _poll());
+  }
+
+  Future<void> _poll() async {
+    try {
+      final fppIp = _ref.read(fppIpProvider);
+      final api = ApiService(host: fppIp);
+      final status = await api.getStatus();
+      final playing = status['playing'] == true;
+      final video = status['video'] as String?;
+      if (mounted) {
+        state = NowPlayingState(
+          videoName: playing ? video : null,
+          isPlaying: playing,
+        );
+      }
+    } catch (_) {
+      // Keep old state on network error
+    }
+  }
+
+  /// Force-update state immediately (called after a play/stop action in the UI).
+  void setPlaying(String? videoName) {
+    state = NowPlayingState(videoName: videoName, isPlaying: videoName != null);
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+}
+
+final nowPlayingProvider =
+    StateNotifierProvider<NowPlayingNotifier, NowPlayingState>(
+  (ref) => NowPlayingNotifier(ref),
+);

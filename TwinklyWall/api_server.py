@@ -2621,6 +2621,20 @@ def update_smart_schedules():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/restart_device', methods=['POST'])
+def restart_device():
+    """Reboot the FPP device. Sends a response before rebooting."""
+    import subprocess
+
+    def _do_reboot():
+        time.sleep(1)  # Let the HTTP response go out first
+        subprocess.call(['sudo', 'reboot'])
+
+    t = threading.Thread(target=_do_reboot, daemon=True)
+    t.start()
+    return jsonify({'status': 'ok', 'message': 'Device is rebooting...'})
+
+
 def start_cleanup_thread():
     """Start the background cleanup thread, schedule runner, and smart scheduler."""
     global cleanup_thread, cleanup_active, _scheduler_thread, _smart_scheduler_thread

@@ -7,7 +7,9 @@ import 'pages/cast_bubble_page.dart';
 import 'pages/scenes_selector_page.dart';
 import 'pages/schedules_page.dart';
 import 'providers/app_state.dart';
+import 'services/api_service.dart';
 import 'services/app_logger.dart';
+import 'widgets/now_playing_footer.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -32,6 +34,20 @@ class MyApp extends StatelessWidget {
       title: 'LED Matrix Controller',
       theme: ThemeData.dark(),
       home: const HomePage(),
+      builder: (context, child) {
+        // Wraps every screen with the global Now Playing footer overlay.
+        return Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: const NowPlayingFooter(),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -190,7 +206,58 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.settings),
-            onSelected: (value) {},
+            onSelected: (value) async {
+              if (value == 'restart_device') {
+                final confirmed = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    title: const Row(
+                      children: [
+                        Icon(Icons.restart_alt, color: Colors.orange),
+                        SizedBox(width: 8),
+                        Text('Restart FPP Device'),
+                      ],
+                    ),
+                    content: const Text(
+                      'This will reboot the FPP device. Playback will stop and '
+                      'the wall will be unavailable for ~30 seconds.',
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: const Text('Cancel'),
+                      ),
+                      ElevatedButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        style: ElevatedButton.styleFrom(backgroundColor: Colors.orange),
+                        child: const Text('Restart'),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirmed != true || !context.mounted) return;
+                try {
+                  final api = ApiService(host: ref.read(fppIpProvider));
+                  await api.restartDevice();
+                  ref.read(nowPlayingProvider.notifier).setPlaying(null);
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('FPP device is rebooting…'),
+                        backgroundColor: Colors.orange,
+                        duration: Duration(seconds: 5),
+                      ),
+                    );
+                  }
+                } catch (e) {
+                  if (context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Restart failed: $e'), backgroundColor: Colors.red),
+                    );
+                  }
+                }
+              }
+            },
             itemBuilder: (BuildContext context) => [
               PopupMenuItem<String>(
                 enabled: false,
@@ -223,6 +290,17 @@ class _HomePageState extends ConsumerState<HomePage> with WidgetsBindingObserver
                         },
                       ),
                     ),
+                  ],
+                ),
+              ),
+              const PopupMenuDivider(),
+              const PopupMenuItem<String>(
+                value: 'restart_device',
+                child: Row(
+                  children: [
+                    Icon(Icons.restart_alt, color: Colors.orange, size: 20),
+                    SizedBox(width: 10),
+                    Text('Restart FPP Device', style: TextStyle(color: Colors.orange)),
                   ],
                 ),
               ),
